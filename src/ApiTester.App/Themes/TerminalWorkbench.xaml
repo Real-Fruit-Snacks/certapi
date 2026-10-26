@@ -2,7 +2,7 @@
                     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
 
     <!-- ============ RFS palette — Nightshift (default) ============
-         Values from Real-Fruit-Snacks/.github/BRAND.md. Bg.Raised, Border.Strong, Text.Soft and
+         Values from Real-Fruit-Snacks/rfs-brand/BRAND.md. Bg.Raised, Border.Strong, Text.Soft and
          Text.Faint are derived one step from the brand tokens; everything else is verbatim.
          Accent = Ember (brand, one per screen). Signal = Mint and only ever means "OK".
          Dayshift overrides every key in Palette.Light.xaml. -->

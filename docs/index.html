@@ -155,8 +155,8 @@
   <div class="wrap">
     <a class="brand" href="https://github.com/Real-Fruit-Snacks" aria-label="RFS">
       <picture>
-        <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/Real-Fruit-Snacks/.github/main/assets/rfs-lockup-dark.svg">
-        <img alt="RFS" src="https://raw.githubusercontent.com/Real-Fruit-Snacks/.github/main/assets/rfs-lockup-light.svg" data-lockup>
+        <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/Real-Fruit-Snacks/rfs-brand/main/assets/rfs-lockup-dark.svg">
+        <img alt="RFS" src="https://raw.githubusercontent.com/Real-Fruit-Snacks/rfs-brand/main/assets/rfs-lockup-light.svg" data-lockup>
       </picture>
       <span class="sep" aria-hidden="true"></span>
       <span class="name">certapi</span>
@@ -354,7 +354,7 @@ certapi mcp --cert <span class="a">"CN=matt"</span> --allow internal.corp</code>
 <footer>
   <div class="wrap">
     <span>MIT · <a href="https://github.com/Real-Fruit-Snacks/certapi">Source</a> · <a href="https://github.com/Real-Fruit-Snacks/certapi/blob/main/wiki/README.md">Handbook</a> · <a href="https://github.com/Real-Fruit-Snacks/certapi/blob/main/CHANGELOG.md">Changelog</a> · <a href="https://github.com/Real-Fruit-Snacks/certapi/blob/main/SECURITY.md">Security</a></span>
-    <span><a href="https://github.com/Real-Fruit-Snacks">RFS</a> · Real tools. No filler. · <a href="https://github.com/Real-Fruit-Snacks/.github/blob/main/BRAND.md">Brand</a></span>
+    <span><a href="https://github.com/Real-Fruit-Snacks">RFS</a> · Real tools. No filler. · <a href="https://github.com/Real-Fruit-Snacks/rfs-brand/blob/main/BRAND.md">Brand</a></span>
   </div>
 </footer>
 
@@ -372,7 +372,7 @@ certapi mcp --cert <span class="a">"CN=matt"</span> --allow internal.corp</code>
       // <picture> follows the OS, not data-theme; drive the lockup explicitly.
       var lock = document.querySelector('[data-lockup]');
       var lockSrc = lock && lock.parentElement.querySelector('source');
-      var url = 'https://raw.githubusercontent.com/Real-Fruit-Snacks/.github/main/assets/rfs-lockup-' + (dark ? 'dark' : 'light') + '.svg';
+      var url = 'https://raw.githubusercontent.com/Real-Fruit-Snacks/rfs-brand/main/assets/rfs-lockup-' + (dark ? 'dark' : 'light') + '.svg';
       if (lock) lock.src = url;
       if (lockSrc) lockSrc.srcset = url;
       var meta = document.querySelector('meta[name="theme-color"]');

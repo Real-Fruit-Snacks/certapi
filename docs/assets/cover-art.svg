@@ -1,6 +1,6 @@
 <!-- certapi cover panel: certapi send with a store certificate, then serve --check, in their real
      output formats (OutputText.MetaLine, ServeSummary). Hosts, timings and sizes are examples.
-     480x368, origin = panel top-left. Rendered by Real-Fruit-Snacks/.github tools/make-cover.py. -->
+     480x368, origin = panel top-left. Rendered by Real-Fruit-Snacks/rfs-brand tools/make-cover.py. -->
 <rect width="480" height="368" fill="{code-bg}"/>
 <rect width="480" height="34" fill="{surface}"/><rect y="34" width="480" height="1" fill="{line}"/>
 <circle cx="20" cy="17" r="4.5" fill="{line}"/><circle cx="36" cy="17" r="4.5" fill="{line}"/><circle cx="52" cy="17" r="4.5" fill="{line}"/>

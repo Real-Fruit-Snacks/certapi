@@ -9,7 +9,7 @@ Writes:
   src/ApiTester.App/icon.ico                      the WPF app icon
 
 The README cover, og:image and social preview are not made here: they come from
-docs/assets/cover.toml through Real-Fruit-Snacks/.github tools/make-cover.py.
+docs/assets/cover.toml through Real-Fruit-Snacks/rfs-brand tools/make-cover.py.
 Requires: cairosvg, pillow.
 """
 import os, sys, io
