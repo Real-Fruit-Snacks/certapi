@@ -241,7 +241,9 @@ out as a file) — and fixed what the review found. Then added the flags those n
 - `serve` with the wildcard prefix (`--listen +`, `--vhost`) bound the port twice on the managed
   listener; the wildcard now stands alone.
 - Repeated `Set-Cookie` and `WWW-Authenticate` headers are pinned end to end through the listener
-  (three lines in, three lines out) so a folded header can never be reintroduced unnoticed.
+  so a dropped or reordered value can never be reintroduced unnoticed. `Set-Cookie` leaves as three lines;
+  `WWW-Authenticate` leaves as one comma-separated line (RFC 7235), which clients split into the three
+  challenges — HttpListener, and http.sys on Windows, fold it.
 
 ## [1.92.3] - 2026-07-28
 

@@ -196,7 +196,7 @@ either way. `--insecure` overrides both, and says so when it does.
 | `--pac <url\|file>` | the machine's | Decide the proxy for each URL with this PAC script, through WinHTTP's own engine, when the machine's configured PAC is not the one the job needs. Windows only |
 | `--no-env-proxy` | off | Ignore `HTTP_PROXY`, `HTTPS_PROXY` and `NO_PROXY` from the environment and use the machine's proxy settings — for the shell whose stale variables point at a proxy that is no longer there |
 | `--offline` | off | Touch nothing on the network but the request itself: no revocation fetch, no AIA chase, no captive-portal probe, no PAC download. For the air-gapped network, and for proving a request needs nothing it should not |
-| `-4` / `-6` | both | Dial only IPv4 or only IPv6 on direct connections, for the host whose AAAA record resolves but whose IPv6 route does not |
+| `-4` / `-6` (`--ipv4` / `--ipv6`) | both | Dial only IPv4 or only IPv6 on direct connections, for the host whose AAAA record resolves but whose IPv6 route does not |
 
 **Not supported: a proxy that requires a client certificate.** `--proxy https://…` reaches the proxy
 in plaintext and a proxy that demands mutual TLS of its own cannot be answered; .NET's HTTP stack

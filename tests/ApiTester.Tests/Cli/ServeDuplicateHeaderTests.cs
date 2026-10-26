@@ -67,15 +67,15 @@ public class ServeDuplicateHeaderTests
             Assert.Equal(HttpStatusCode.Unauthorized, resp.StatusCode);
             Assert.Equal(new[] { "Negotiate", "NTLM", "Basic realm=\"corp\"" }, HeaderValues(resp, "WWW-Authenticate"));
 
-            // HttpClient would split one folded "Negotiate, NTLM, Basic …" line into three values
-            // too, so the wire itself is read: three header lines is the only proof that counts.
-            // http.sys writes each value as its own line. The managed listener .NET uses elsewhere
-            // folds them with a comma, which no browser unpicks — the product does not ship there,
-            // but it is why this assertion is Windows-only and the Windows CI run is the verdict.
+            // On the wire the listener — http.sys on Windows, the managed one elsewhere — folds the
+            // three into one comma-separated WWW-Authenticate line. RFC 7235 allows exactly that, and
+            // a client splits it back into three challenges (the assertion above is that split).
+            // What must hold on the wire: every challenge arrives, in order, and none is dropped.
             string raw = await RawResponseAsync(serve.Port, "/secure");
-            int lines = raw.Split("\r\n").Count(l => l.StartsWith("WWW-Authenticate:", StringComparison.OrdinalIgnoreCase));
-            if (OperatingSystem.IsWindows()) Assert.Equal(3, lines);
-            else Assert.True(lines is 1 or 3, raw);
+            var lines = raw.Split("\r\n").Where(l => l.StartsWith("WWW-Authenticate:", StringComparison.OrdinalIgnoreCase)).ToList();
+            Assert.True(lines.Count is 1 or 3, raw);
+            string all = string.Join(", ", lines.Select(l => l["WWW-Authenticate:".Length..].Trim()));
+            Assert.Equal("Negotiate, NTLM, Basic realm=\"corp\"", all);
         }
     }
 

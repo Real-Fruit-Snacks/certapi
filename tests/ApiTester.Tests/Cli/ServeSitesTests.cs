@@ -79,7 +79,7 @@ public class SiteSettingsParseTests
         Assert.Equal("/hr", hr.Prefix);
         Assert.Equal("hr", hr.Name);
         Assert.False(hr.Insecure);
-        Assert.Equal(new[] { Path.GetFullPath(Path.Combine(dir, "hr-root.pem")), Path.GetFullPath("/abs/other.pem") }, hr.CaFiles);
+        Assert.Equal(new[] { Path.GetFullPath(Path.Combine(dir, "hr-root.pem")), "/abs/other.pem" }, hr.CaFiles);   // already rooted: kept as written
         Assert.Equal(Path.GetFullPath(Path.Combine(dir, "hr.pem")), hr.CertFile);
         Assert.Equal("online", hr.Revocation);
         Assert.Equal("pw1", hr.WindowsPassword);

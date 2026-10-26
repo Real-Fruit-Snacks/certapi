@@ -62,7 +62,7 @@ public static class TransportFlags
                                   --revocation online is refused), and doctor skips its
                                   internet probe. The proxy decision is unchanged — add
                                   --no-proxy or --proxy when WPAD must not run either
-          -4 / -6                 Dial only IPv4 / only IPv6 addresses (direct connections; a
+          -4 / -6                 (--ipv4 / --ipv6) Dial only IPv4 / only IPv6 addresses (direct; a
                                   proxy resolves the target itself). For the dual-stack host whose
                                   IPv6 route is advertised but blackholed
           --sni <name>            Send this server name in the TLS handshake instead of the URL's
