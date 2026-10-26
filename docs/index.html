@@ -9,6 +9,9 @@
 <meta property="og:description" content="mTLS API client for the Windows certificate store">
 <meta property="og:type" content="website">
 <meta property="og:image" content="https://real-fruit-snacks.github.io/certapi/assets/cover-dark.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="560">
+<meta property="og:image:alt" content="certapi: a request sent with a Windows-store client certificate, then a local gateway's site table">
 <meta name="twitter:card" content="summary_large_image">
 <link rel="icon" href="assets/icon.svg" type="image/svg+xml">
 <link rel="icon" href="assets/favicon.ico" sizes="48x48">
@@ -87,6 +90,7 @@
     background: radial-gradient(closest-side, color-mix(in srgb, var(--rfs-primary) 22%, transparent), transparent); pointer-events: none; }
   @media (prefers-color-scheme: light) { :root:not([data-theme="nightshift"]) .hero .glow { display: none; } }
   .hero .wrap { position: relative; display: grid; grid-template-columns: 1.05fr 1fr; gap: 48px; align-items: center; }
+  .hero .wrap > * { min-width: 0; }
   @media (max-width: 860px) { .hero .wrap { grid-template-columns: 1fr; } }
   .hero h1 { font-family: var(--rfs-font-mono); font-size: 56px; line-height: 1.05; letter-spacing: -0.05em; font-weight: 600; }
   .hero h1::after { content: ""; display: block; width: 72px; height: 4px; border-radius: 2px; background: var(--rfs-primary); margin-top: 16px; }
@@ -99,7 +103,7 @@
   .install .tabs button[aria-selected="true"] { color: var(--rfs-text); background: var(--rfs-surface); box-shadow: inset 0 -2px 0 var(--rfs-primary); }
   .install .pane { display: none; padding: 14px 16px; }
   .install .pane[data-active] { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-  .install pre { border: 0; padding: 0; background: none; flex: 1; }
+  .install pre { border: 0; padding: 0; background: none; flex: 1; min-width: 0; }
   .install .copy { font-family: var(--rfs-font-mono); font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--rfs-mute);
     border: 1px solid var(--rfs-line); background: var(--rfs-raised); border-radius: 6px; padding: 6px 10px; cursor: pointer; white-space: nowrap; }
   .install .copy:hover { color: var(--rfs-text); border-color: var(--rfs-mute); }
@@ -111,7 +115,7 @@
   .term .bar { display: flex; align-items: center; gap: 7px; padding: 11px 14px; background: var(--rfs-raised); border-bottom: 1px solid var(--rfs-line); }
   .term .bar i { width: 9px; height: 9px; border-radius: 50%; background: var(--rfs-line); }
   .term .bar span { margin-left: auto; font-family: var(--rfs-font-mono); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--rfs-mute); }
-  .term pre { border: 0; border-radius: 0; padding: 20px 22px; font-size: 13.5px; }
+  .term pre { border: 0; border-radius: 0; padding: 20px 20px; font-size: 12.5px; }
 
   /* sections */
   section { padding: 56px 0; border-top: 1px solid var(--rfs-line); }
@@ -136,9 +140,10 @@
   .gallery img { width: 100%; height: auto; display: block; border: 1px solid var(--rfs-line); border-radius: 10px; }
   .gallery figcaption { font-size: 13px; color: var(--rfs-mute); margin-top: 10px; }
   .gallery .pair { display: grid; grid-template-columns: 1fr 1fr; gap: 28px; }
+  .gallery .side { align-self: center; color: var(--rfs-mute); font-size: 15px; }
+  .gallery .side p { margin: 0 0 10px; }
   @media (max-width: 760px) { .gallery .pair { grid-template-columns: 1fr; } }
-  .cli-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
-  @media (max-width: 860px) { .cli-grid { grid-template-columns: 1fr; } }
+  .cli-grid { display: grid; grid-template-columns: 1fr; gap: 14px; }
   footer { border-top: 1px solid var(--rfs-line); padding: 28px 0 40px; color: var(--rfs-mute); font-size: 13px; }
   footer .wrap { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 12px; align-items: center; }
   footer a { color: var(--rfs-mute); }
@@ -180,33 +185,32 @@
 
       <div class="install" id="install">
         <div class="tabs" role="tablist">
-          <button role="tab" aria-selected="true" data-pane="pwsh">PowerShell</button>
-          <button role="tab" aria-selected="false" data-pane="exe">Download</button>
+          <button role="tab" aria-selected="true" data-pane="exe">Download</button>
+          <button role="tab" aria-selected="false" data-pane="pwsh">PowerShell</button>
           <button role="tab" aria-selected="false" data-pane="src">Source</button>
         </div>
-        <div class="pane" data-active data-id="pwsh"><pre><code>irm rfs.sh/certapi | iex</code></pre><button class="copy" data-copy="irm rfs.sh/certapi | iex">Copy</button></div>
-        <div class="pane" data-id="exe"><pre><code><span class="c"># two portable exes, no installer, no admin</span>
+        <div class="pane" data-id="pwsh"><pre><code>mkdir "$env:LOCALAPPDATA\certapi" -Force; cd "$env:LOCALAPPDATA\certapi"
+curl.exe -LO https://github.com/Real-Fruit-Snacks/certapi/releases/latest/download/certapi.exe
+curl.exe -LO https://github.com/Real-Fruit-Snacks/certapi/releases/latest/download/ApiTester.App.exe</code></pre><button class="copy" data-copy="mkdir &quot;$env:LOCALAPPDATA\certapi&quot; -Force; cd &quot;$env:LOCALAPPDATA\certapi&quot;&#10;curl.exe -LO https://github.com/Real-Fruit-Snacks/certapi/releases/latest/download/certapi.exe&#10;curl.exe -LO https://github.com/Real-Fruit-Snacks/certapi/releases/latest/download/ApiTester.App.exe">Copy</button></div>
+        <div class="pane" data-active data-id="exe"><pre><code><span class="c"># two portable exes, no installer, no admin</span>
 ApiTester.App.exe   <span class="c"># the desktop app</span>
 certapi.exe         <span class="c"># the command line</span></code></pre><a class="copy" href="https://github.com/Real-Fruit-Snacks/certapi/releases/latest">Releases</a></div>
         <div class="pane" data-id="src"><pre><code>git clone https://github.com/Real-Fruit-Snacks/certapi
 dotnet publish src/ApiTester.Cli -c Release -r win-x64 --self-contained -o publish</code></pre><button class="copy" data-copy="git clone https://github.com/Real-Fruit-Snacks/certapi && cd certapi && dotnet publish src/ApiTester.Cli -c Release -r win-x64 --self-contained -o publish">Copy</button></div>
-        <div class="foot">Self-contained single-file executables. Nothing to install first; the .NET runtime is inside. <a href="https://github.com/Real-Fruit-Snacks/certapi/releases/latest">Latest release</a></div>
+        <div class="foot">Both executables from the <a href="https://github.com/Real-Fruit-Snacks/certapi/releases/latest">latest release</a>, self-contained: no installer, no admin, the .NET runtime is inside. Add the folder to your <code>PATH</code> to run <code>certapi</code> from any prompt.</div>
       </div>
     </div>
     <div class="term" aria-label="Example: certapi send with a Windows-store client certificate">
       <div class="bar"><i></i><i></i><i></i><span>certapi</span></div>
-<pre><code><span class="p">$</span> certapi send <span class="a">https://api.internal/orders</span>
-    --cert <span class="c">"CN=matt"</span>
-
-<span class="s">200 OK</span><span class="c">  ·  48 ms  ·  1.2 kB  ·  application/json</span>
-TLS 1.3<span class="c">  ·  TLS_AES_256_GCM_SHA384</span>
-<span class="c">client certificate</span> <span class="s">presented</span>
-<span class="c">key never left the store</span>
-
+<pre><code><span class="p">PS&gt;</span> certapi send <span class="a">https://api.internal/orders</span> `
+      --cert <span class="a">"CN=matt"</span> --pretty
+<span class="s">200 OK</span><span class="c"> · 41 B · 48 ms · TLS 1.3 · </span><span class="s">client cert presented</span>
 <span class="c">{</span>
   <span class="a">"order"</span>: <span class="s">"A-10422"</span><span class="c">,</span>
   <span class="a">"status"</span>: <span class="s">"shipped"</span>
-<span class="c">}</span></code></pre>
+<span class="c">}</span>
+
+<span class="c"># the private key never left the store</span></code></pre>
     </div>
   </div>
 </div>
@@ -290,10 +294,11 @@ certapi mcp --cert <span class="a">"CN=matt"</span> --allow internal.corp</code>
       </figure>
       <div class="pair">
         <figure><img src="assets/shot-discover.svg" alt="Discover endpoints window, each probe coloured by outcome" loading="lazy"><figcaption>Discover: probe a wordlist and see what exists. Mint means found; nothing else does.</figcaption></figure>
-        <figure><img src="assets/shot-gateway.svg" alt="certapi serve forwarding requests through a client certificate" loading="lazy"><figcaption><code>certapi serve</code>: an app points at the port and reaches a certificate-protected upstream.</figcaption></figure>
-      </div>
-      <div>
         <figure><img src="assets/shot-fuzz.svg" alt="certapi fuzz in a terminal" loading="lazy"><figcaption>The same discovery headless with <code>certapi fuzz</code>.</figcaption></figure>
+      </div>
+      <div class="pair">
+        <figure><img src="assets/shot-gateway.svg" alt="certapi serve forwarding requests through a client certificate" loading="lazy"></figure>
+        <div class="side"><p><code>certapi serve</code>: an app points at the port and reaches a certificate-protected upstream.</p><p>Any local tool that can't present a client certificate gets one this way. Requests to other hosts are refused.</p></div>
       </div>
     </div>
   </div>

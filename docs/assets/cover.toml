@@ -1,0 +1,14 @@
+# Cover + social preview. Regenerate with Real-Fruit-Snacks/.github, from the folder holding both clones:
+#   python3 .github/tools/make-cover.py certapi/docs/assets/cover.toml
+name        = "certapi"
+description = "mTLS API client for the Windows certificate store."
+bullets = [
+  "Signs with a store certificate; the key never leaves",
+  "Desktop app and a headless command line, one engine",
+  "Local gateway for apps that can't do mTLS",
+  "Windows 10 and 11, self-contained, no admin",
+]
+
+[panel]
+kind = "art"
+file = "cover-art.svg"

@@ -16,4 +16,4 @@ Issues and pull requests are welcome. This is a one-maintainer project, so small
 
 Plain, specific, dry, honest. Sentence case in headings, no emoji, no superlatives. Palette values come from [BRAND.md](https://github.com/Real-Fruit-Snacks/.github/blob/main/BRAND.md); Mint only ever means "OK", Ember is the brand colour and never an error.
 
-Brand assets under `docs/assets` are generated: `python3 docs/tools/make-assets.py <path to Real-Fruit-Snacks/.github>`.
+Assets under `docs/assets` are generated. Icons: `python3 docs/tools/make-assets.py`. Cover, og:image and social preview: edit `docs/assets/cover.toml`, then `python3 <path to Real-Fruit-Snacks/.github>/tools/make-cover.py docs/assets/cover.toml`.
