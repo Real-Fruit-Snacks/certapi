@@ -74,8 +74,11 @@ public class ServeDuplicateHeaderTests
             string raw = await RawResponseAsync(serve.Port, "/secure");
             var lines = raw.Split("\r\n").Where(l => l.StartsWith("WWW-Authenticate:", StringComparison.OrdinalIgnoreCase)).ToList();
             Assert.True(lines.Count is 1 or 3, raw);
-            string all = string.Join(", ", lines.Select(l => l["WWW-Authenticate:".Length..].Trim()));
-            Assert.Equal("Negotiate, NTLM, Basic realm=\"corp\"", all);
+            // http.sys joins them with "," and the managed listener with ", "; both are valid lists,
+            // so the challenges are compared, not the separator.
+            var challenges = lines.SelectMany(l => l["WWW-Authenticate:".Length..].Split(','))
+                                  .Select(c => c.Trim()).ToArray();
+            Assert.Equal(new[] { "Negotiate", "NTLM", "Basic realm=\"corp\"" }, challenges);
         }
     }
 
