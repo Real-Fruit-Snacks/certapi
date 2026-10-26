@@ -1,4 +1,4 @@
-# Certificate API Tester — Handbook
+# certapi — Handbook
 
 A Windows-native API (application programming interface) client built around **mutual TLS
 (Transport Layer Security, or mTLS) client-certificate authentication**, with a polished WPF

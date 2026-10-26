@@ -1,4 +1,4 @@
-# GitLab CI for building Certificate API Tester on a self-hosted GitLab.
+# GitLab CI for building certapi on a self-hosted GitLab.
 #
 # Why Windows: the desktop app is WPF (net9.0-windows) and can only be built on
 # Windows, so the build/publish jobs need a runner tagged `windows` that has the

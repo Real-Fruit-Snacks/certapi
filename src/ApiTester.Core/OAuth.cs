@@ -410,7 +410,7 @@ public static class OAuthRedirect
 
             string body = result.Error is null
                 ? "<!doctype html><html><body style='font-family:sans-serif;padding:2rem'>" +
-                  "<h2>Authorization complete</h2><p>You can close this tab and return to Certificate API Tester.</p></body></html>"
+                  "<h2>Authorization complete</h2><p>You can close this tab and return to certapi.</p></body></html>"
                 : "<!doctype html><html><body style='font-family:sans-serif;padding:2rem'>" +
                   $"<h2>Authorization failed</h2><p>{WebUtility.HtmlEncode(result.ErrorDescription ?? result.Error)}</p></body></html>";
             var bytes = Encoding.UTF8.GetBytes(body);

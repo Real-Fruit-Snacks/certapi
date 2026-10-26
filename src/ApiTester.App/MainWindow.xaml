@@ -3,7 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf"
         xmlns:local="clr-namespace:ApiTester.App"
-        Title="Certificate API Tester" Height="780" Width="1180" MinWidth="960" MinHeight="600"
+        Title="certapi" Height="780" Width="1180" MinWidth="960" MinHeight="600"
         Icon="pack://application:,,,/icon.ico"
         WindowStyle="None"
         Background="{DynamicResource Bg.Window}"
@@ -43,7 +43,7 @@
                 <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" Margin="6,0,0,0">
                     <TextBlock Text="&#x276F;" VerticalAlignment="Center" FontWeight="Bold" FontSize="14"
                                Foreground="{DynamicResource Accent}"/>
-                    <TextBlock Text="CERTIFICATE API TESTER" VerticalAlignment="Center" Margin="9,0,0,0"
+                    <TextBlock Text="certapi" VerticalAlignment="Center" Margin="9,0,0,0"
                                FontWeight="Bold" FontSize="13" Foreground="{DynamicResource Text.Normal}"/>
                 </StackPanel>
                 <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,14,0"

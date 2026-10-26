@@ -1,6 +1,6 @@
 # 1. Introduction
 
-**Certificate API Tester** is a desktop API (application programming interface) client for Windows
+**certapi** is a desktop API (application programming interface) client for Windows
 whose reason to exist is one thing the mainstream tools handle poorly: **mutual TLS (Transport Layer
 Security, or mTLS)**. It authenticates HTTP (Hypertext Transfer Protocol) requests with a client
 certificate — either straight from the Windows certificate store or from a `.pfx`/`.pem` file — and

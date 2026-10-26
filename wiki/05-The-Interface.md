@@ -8,7 +8,7 @@ A guided tour of the desktop app. (CLI (command-line interface) users can skip t
 Along the top, from left to right:
 
 - **☰ history toggle** (`Ctrl+H`) — show/hide the request-history sidebar.
-- **CERTIFICATE API TESTER** — the app title.
+- **certapi** — the app title.
 - **ENV** — the active [environment](09-Environments-and-Variables.md) picker, plus **Edit** to
   manage environments and variables.
 - **☀ / ☾ theme toggle** — switch between [light and dark](16-Response-Views.md#themes). Your choice

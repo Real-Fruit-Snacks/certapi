@@ -164,7 +164,7 @@ public partial class HelpWindow : Window
     // ---------- sections ----------
 
     private UIElement GettingStarted() => Section("Getting started",
-        P("Certificate API Tester sends HTTP requests and can authenticate them with a client certificate from your Windows certificate store (mutual TLS). The certificate is optional, so it also works as a general-purpose API client."),
+        P("certapi sends HTTP requests and can authenticate them with a client certificate from your Windows certificate store (mutual TLS). The certificate is optional, so it also works as a general-purpose API client."),
         Sub("SEND YOUR FIRST REQUEST"),
         Bullets(
             "Pick a certificate in the CERTIFICATE row — or leave it on “— no certificate —” for a plain request.",
@@ -606,7 +606,7 @@ public partial class HelpWindow : Window
         links.Children.Add(LinkButton("Documentation", DocsUrl));
 
         return Section("About",
-            P($"Certificate API Tester  •  version {AppVersion()}"),
+            P($"certapi  •  version {AppVersion()}"),
             P("A Windows desktop API tester that authenticates to endpoints with a client certificate from the Windows certificate store (mutual TLS), and renders whatever they return — even a full web page."),
             Sub("LINKS"),
             links,

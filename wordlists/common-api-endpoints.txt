@@ -1,4 +1,4 @@
-# Certificate API Tester — starter endpoint wordlist for `certapi fuzz` / the Discover window.
+# certapi — starter endpoint wordlist for `certapi fuzz` / the Discover window.
 #
 # A curated list of paths worth probing on an undocumented API or web service: operational
 # endpoints, API roots and docs, authentication, common resources, and paths that are often

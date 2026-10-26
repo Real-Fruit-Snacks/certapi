@@ -11,7 +11,7 @@ public partial class PopOutWindow : Window
     public PopOutWindow(string title, UIElement content)
     {
         InitializeComponent();
-        Title = $"{title} — Certificate API Tester";
+        Title = $"{title} — certapi";
         TitleText.Text = title.ToUpperInvariant();
         Host.Content = content;
     }
