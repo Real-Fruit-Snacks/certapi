@@ -28,6 +28,21 @@ public sealed record BrowserOptions(
     /// <summary>How long a browser may cache a preflight answer, in seconds — `serve --cors-max-age`.
     /// <see cref="DefaultCorsMaxAgeSeconds"/> unless the caller asked otherwise.</summary>
     public int CorsMaxAgeSeconds { get; init; } = DefaultCorsMaxAgeSeconds;
+
+    /// <summary>Rewrite the request's <c>Origin</c> and <c>Referer</c> from the gateway's origin to
+    /// the upstream's — `serve --rewrite-origin`. A login form's CSRF check compares them with its
+    /// own host, and a browser talking to the gateway sends the gateway's.</summary>
+    public bool RewriteOrigin { get; init; }
+
+    /// <summary>Drop <c>Content-Security-Policy</c> (and its report-only twin) from responses —
+    /// `serve --strip-csp`. A policy written for the upstream's own origin names hosts the page
+    /// can no longer reach through the gateway, so every fetch it makes is blocked by the browser.</summary>
+    public bool StripCsp { get; init; }
+
+    /// <summary>Where the gateway can serve an absolute upstream URL, as a gateway path — the
+    /// other mounts, and any host on the dynamic allow list. Null means "nowhere but this route":
+    /// a Location to another host then leaves the gateway, as before.</summary>
+    public Func<Uri, string?>? GatewayPathFor { get; init; }
 }
 
 /// <summary>The policy seam that makes an upstream usable from a browser through the gateway:
@@ -106,11 +121,14 @@ public static class BrowserRewriter
             // Access-Control-Allow-Origin values, which it rejects outright.
             if (options.Cors && h.Key.StartsWith("Access-Control-", StringComparison.OrdinalIgnoreCase))
                 continue;
+            if (options.StripCsp && (h.Key.Equals("Content-Security-Policy", StringComparison.OrdinalIgnoreCase) ||
+                                     h.Key.Equals("Content-Security-Policy-Report-Only", StringComparison.OrdinalIgnoreCase)))
+                continue;
             if (options.RewriteCookies && h.Key.Equals("Set-Cookie", StringComparison.OrdinalIgnoreCase))
             {
                 // Rewritten in place, so several Set-Cookie headers stay several headers in the
                 // order the upstream set them.
-                result.Add(new(h.Key, RewriteSetCookie(h.Value, options, notes)));
+                result.Add(new(h.Key, RewriteSetCookie(h.Value, route, options, notes)));
                 continue;
             }
             if (options.RewriteLocation && h.Key.Equals("Location", StringComparison.OrdinalIgnoreCase))
@@ -144,6 +162,42 @@ public static class BrowserRewriter
         return result;
     }
 
+    /// <summary>The request headers as the upstream should see them: Origin and Referer pointing at
+    /// the upstream rather than at the gateway, when <see cref="BrowserOptions.RewriteOrigin"/> is
+    /// on. <paramref name="upstreamFor"/> maps a gateway path to the upstream URL it forwards to, so
+    /// a Referer of <c>http://127.0.0.1:8819/_/https://login.corp/form</c> becomes
+    /// <c>https://login.corp/form</c>. Never mutates the input list.</summary>
+    public static IReadOnlyList<KeyValuePair<string, string>> RewriteRequestHeaders(
+        IReadOnlyList<KeyValuePair<string, string>> headers, GatewayRoute route, BrowserOptions options,
+        Func<string, Uri?> upstreamFor)
+    {
+        if (!options.RewriteOrigin) return headers;
+        string local = options.LocalOrigin.GetLeftPart(UriPartial.Authority);
+        string upstreamOrigin = route.Upstream.GetLeftPart(UriPartial.Authority);
+        var result = new List<KeyValuePair<string, string>>(headers.Count);
+        foreach (var h in headers)
+        {
+            if (h.Key.Equals("Origin", StringComparison.OrdinalIgnoreCase) &&
+                h.Value.TrimEnd('/').Equals(local, StringComparison.OrdinalIgnoreCase))
+            {
+                result.Add(new(h.Key, upstreamOrigin));
+                continue;
+            }
+            if (h.Key.Equals("Referer", StringComparison.OrdinalIgnoreCase) &&
+                h.Value.StartsWith(local, StringComparison.OrdinalIgnoreCase))
+            {
+                string path = h.Value[local.Length..];
+                if (path.Length == 0) path = "/";
+                Uri? mapped = null;
+                try { mapped = upstreamFor(path); } catch { /* a Referer that resolves nowhere is left alone */ }
+                result.Add(new(h.Key, mapped?.ToString() ?? h.Value));
+                continue;
+            }
+            result.Add(h);
+        }
+        return result;
+    }
+
     /// <summary>A Location that keeps the browser on the gateway. Applied to any Location handed
     /// over: the status code is not part of this seam, and a Location outside a 3xx is not something
     /// to second-guess.</summary>
@@ -163,13 +217,23 @@ public static class BrowserRewriter
         // A path-relative Location — "/next", "next", "../up" — is the only form that resolves
         // against the gateway's own origin, so it is the only one with nothing to rewrite and
         // nothing to warn about.
-        if (!Uri.TryCreate(absolute, UriKind.Absolute, out var target)) return location;
+        // "://" is the test, not Uri.TryCreate alone: on a Unix build "/orders/7" parses as an
+        // absolute file URI, and a path-relative Location must never be mistaken for a departure.
+        if (!absolute.Contains("://", StringComparison.Ordinal) ||
+            !Uri.TryCreate(absolute, UriKind.Absolute, out var target)) return location;
 
-        // Anywhere but this route's upstream is left as the upstream wrote it, and said out loud:
-        // the browser is about to leave the gateway, and the client certificate with it.
+        // Another host the gateway can reach — a second mount, or a host on the --allow list — is
+        // sent back through the gateway too, which is what keeps a login → app → login hop chain
+        // (the ordinary shape of single sign-on) on the certificate. Anywhere else is left as the
+        // upstream wrote it, and said out loud: the browser is about to leave the gateway.
         if (!target.GetLeftPart(UriPartial.Authority).Equals(
                 route.Upstream.GetLeftPart(UriPartial.Authority), StringComparison.OrdinalIgnoreCase))
         {
+            // A gateway path under this origin, or — in virtual-host mode — a whole URL on another.
+            if (options.GatewayPathFor?.Invoke(target) is { } elsewhere)
+                return !elsewhere.StartsWith('/')
+                    ? elsewhere
+                    : options.LocalOrigin.GetLeftPart(UriPartial.Authority) + elsewhere;
             notes.Add($"Redirect to '{location}' leaves the gateway; the browser will follow it " +
                       "directly and without the client certificate.");
             return location;
@@ -186,8 +250,14 @@ public static class BrowserRewriter
     /// plaintext loopback origin, Secure and SameSite=None cannot survive as the upstream wrote
     /// them; over the gateway's own https origin (<see cref="BrowserOptions.SecureOrigin"/>, set by
     /// `serve --tls`) they are exactly what the upstream sent, so they are kept.</summary>
-    private static string RewriteSetCookie(string setCookie, BrowserOptions options, List<string> notes)
+    private static string RewriteSetCookie(string setCookie, GatewayRoute route, BrowserOptions options, List<string> notes)
     {
+        // Under a prefix mount the upstream's Path= is a path on the upstream, not on the gateway:
+        // "Path=/" from login.internal mounted at /auth would be sent to every other mount too,
+        // and "Path=/app" would never come back for /auth/app/… at all. Re-rooted under the mount
+        // point, the same way a Location is; the root mount leaves it as written.
+        string mount = route.PathPrefix == "/" ? "" : route.PathPrefix;
+        bool sawPath = false;
         // Attributes are separated by ';' and no attribute value may contain one — an Expires date
         // carries a comma, not a semicolon — so this split is safe.
         var parts = setCookie.Split(';');
@@ -210,6 +280,14 @@ public static class BrowserRewriter
             // talking to; without it the cookie scopes to the gateway itself. True regardless of
             // scheme — the browser is still talking to a different host than the upstream.
             if (attributeName.Equals("Domain", StringComparison.OrdinalIgnoreCase)) continue;
+            if (attributeName.Equals("Path", StringComparison.OrdinalIgnoreCase))
+            {
+                sawPath = true;
+                if (mount.Length == 0) { kept.Add(attribute); continue; }
+                string path = attributeValue.StartsWith('/') ? attributeValue : "/" + attributeValue;
+                kept.Add("Path=" + mount + (path == "/" ? "" : path));
+                continue;
+            }
             if (attributeName.Equals("Secure", StringComparison.OrdinalIgnoreCase))
             {
                 // Secure over http://127.0.0.1 means the browser stores nothing at all, so it is
@@ -237,6 +315,11 @@ public static class BrowserRewriter
         // honest fix. Over the gateway's own https origin Secure survived above, so the prefix works
         // and there is nothing to warn about. The prefixes are case-sensitive, per the cookie prefix
         // specification.
+        // No Path at all means the browser scopes the cookie to the request's own directory, which
+        // under a mount is somewhere beneath the mount point; pin it to the mount instead so every
+        // request to that upstream carries it.
+        if (!sawPath && mount.Length > 0) kept.Add("Path=" + mount);
+
         string name = NameOf(pair);
         if (!options.SecureOrigin &&
             (name.StartsWith("__Host-", StringComparison.Ordinal) ||

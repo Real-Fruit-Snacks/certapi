@@ -6,6 +6,243 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.93.0] - 2026-10-26
+
+Reviewed the whole transport path for three networks — public, corporate (PAC, authenticating
+proxy, TLS interception) and restricted (one explicit proxy, SOCKS over SSH, a private root handed
+out as a file) — and fixed what the review found. Then added the flags those networks were missing.
+
+### Security
+- **A redirect that crossed the proxy boundary went out without the client certificate or any
+  trust policy.** The proxy decision was made once, from the first URL. When a PAC rule said
+  DIRECT (or `--noproxy` matched) and the server redirected to a host that *does* go through the
+  proxy — a login redirect to an SSO host is the common shape — the hop was tunnelled by the HTTP
+  stack's own TLS, which had no certificate, no `--insecure`, no pin, no revocation setting, and
+  no `--ca-file`. The direct handler now carries the same certificate and the same validation on
+  its own TLS options, so a hop that changes disposition is judged exactly as the first request was.
+- **`serve` relayed a WebSocket upgrade to any host a caller named.** The off-host refusal that
+  stops `//evil.example/x` on the HTTP path was not applied to upgrades, so a root-mounted gateway
+  with `--allow-upgrade` would open `wss://evil.example/x` with the client certificate attached.
+  Upgrades now resolve through the same table and the same refusal, before any socket is opened.
+- **The `serve --token` secret was forwarded to every upstream and written into `--record`
+  archives in the clear.** The token header is stripped before forwarding, `X-Certapi-Token` is on
+  the recorder's redaction list, and the comparison is constant-time.
+- **`--proxy http://user:pass@proxy:8080` ignored the credentials and then logged them.**
+  `WebProxy` never reads userinfo, so the proxy was answered with Windows default credentials
+  (407 on a Basic-only proxy) while the URL, password included, went to `--log-file`, `--debug` and
+  the app's transport panel. Credentials are lifted out of the URL and used as `--proxy-user`
+  would be; every place that prints the proxy URL redacts it.
+- **`certapi config show` printed header values, including ones resolved from `${env:…}`.**
+  A header whose value came from the environment, or whose name looks like a credential
+  (`Authorization`, `Cookie`, anything with key/token/secret in it), now shows `(set)`. A proxy URL
+  is shown without its userinfo.
+
+### Added
+- **`--ca-file <pem>`** (repeatable; profile `caFile`, a path or a list, relative to the config
+  file) — trust the root(s) in a file for this run, on top of the Windows store. For the network
+  whose intercepting proxy re-signs every site with a private CA that is handed out as a PEM: the
+  choice used to be `--insecure` or install the root machine-wide. A chain ending in a named root
+  is accepted the way a store-trusted chain is; name, expiry and revocation problems are still
+  refused. Applies to `send`, `run`, `fuzz`, `bench`, `serve` (HTTP and WebSocket), `grpc`,
+  `ws`, `sse`, `token`, `trust add --from-url`, and the MCP server.
+- **`--tls-min 1.2|1.3`** (profile `tlsMin`) — refuse to negotiate below a TLS version.
+- **`--connect-timeout <s>`** (profile `connectTimeout`) — a separate budget for the TCP connect
+  and proxy tunnel, so a blackholed host fails in seconds instead of at `--timeout`.
+- **`--sni <name>`** — send a different server name in the handshake (direct connections only;
+  refused with a proxy, whose tunnel negotiates TLS from the URL).
+- **`serve --allow <hosts>`** — one gateway for many sites. A request to
+  `/_/https://host[:port]/path` is forwarded to that host with the client certificate, for any
+  host on the list (exact names, `*.suffix`, or `*` — which is logged as the open relay it is).
+  Anything else is 403 before a socket opens. Static `--upstream` mounts work beside it, and
+  Location and cookie rewriting follow the dynamic prefix. `/_/` and `/_certapi/` are reserved.
+- **`/_certapi/health`** and **`/_certapi/routes`** on the gateway: its state, mounts and allow
+  list as JSON. Never forwarded; honour `--token`.
+- **`serve --forwarded`** — add `X-Forwarded-For/Proto/Host` and `Via: 1.1 certapi` to forwarded
+  requests, for an upstream that builds links from them. Off by default.
+- **`serve --max-body <bytes>`** (k/m/g suffixes) — refuse a request body over the limit with 413.
+- **Multi-step logins through the gateway.** The pieces a browser needs to complete single
+  sign-on across hosts without ever leaving the certificate:
+  - a 3xx `Location` to **another mount or an allowed dynamic host** comes back through the
+    gateway (`/app/…`, `/_/https://app.corp/…`) instead of leaving it — a login → app → login
+    hop chain stays on the gateway (`--rewrite-location`);
+  - **`serve --rewrite-origin`** — `Origin` and `Referer` on a forwarded request point at the
+    upstream, not at `http://127.0.0.1:<port>`, so a login form's CSRF check passes;
+  - **`serve --strip-csp`** — drop `Content-Security-Policy` from responses, because a policy
+    written for the upstream's origin blocks every fetch the page makes through the gateway;
+  - **`serve --cookie-jar`** — keep upstream cookies on the gateway, stored against the real
+    upstream URL with `Domain` intact, and send them on every forwarded request to a matching
+    host. A browser stores every cookie against the gateway's one origin and so can never carry a
+    `Domain=.corp` session from `login.corp` to `app.corp`; the gateway can. Memory only;
+  - **`serve --auto-token`** — attach a bearer token captured earlier for the upstream's origin
+    (`send --capture`, the app, a session capture) when the request carries none.
+  `--rewrite-origin` and `--strip-csp` join the `--browser` bundle; `--cookie-jar` and
+  `--auto-token` stay opt-in, because they make the gateway hold session state.
+- **`send --cookie-jar <file>` / `run --cookie-jar <file>`** — a cookie jar on disk, loaded before
+  and saved after, so a scripted multi-step login in one invocation is a logged-in session in the
+  next (curl's `-b`/`-c` in one flag). Plain JSON; session cookies are kept, expired ones dropped.
+- **`trust add --from-url` takes the proxy, bypass and `--ca-file` flags** `send` takes, so a pin
+  can be captured from behind an explicit proxy; it refuses a URL whose host is not the host being
+  pinned, and says plainly when a proxy tunnel made the certificate unobservable.
+- **`serve --referer-fallback`** — an absolute path from a page the gateway served (`/static/app.js`
+  from a page under `/app`) is sent, with a 307, to the same path under that page's mount, read
+  from the `Referer`. Part of `--browser`.
+- **`serve --windows-auth`** / **`--windows-user` + `--windows-password`** — answer an upstream's
+  Negotiate/NTLM challenge on the caller's behalf, as the signed-in account or as named credentials,
+  so a browser on another machine (or a script with no Windows identity) reaches an IWA-protected
+  site through the gateway.
+- **`--cert-pin <pin>`** / **`CERTAPI_CERT_PIN`** — unlock a smart-card or HSM key ahead of the
+  provider's prompt, so a headless job is not stopped by a PIN dialog. CNG providers on Windows;
+  the PIN is never stored or logged.
+- **`--cert-issuer <name>`** and **`--cert-serial <hex>`** — pick a store certificate by who issued
+  it or by its serial, alone or to narrow `--cert`, for the store that holds two certificates with
+  the same subject.
+- **`trust add --ca <thumbprint>`** and **`trust add --spki <sha256>`** — pin an issuer or a public
+  key for a host instead of the leaf, so a pin survives the routine renewal that keeps the issuer
+  (or the key). `trust list` shows the kind.
+- **`--pac <url|file>`** — decide the proxy for each URL with a named PAC script, through WinHTTP's
+  own engine, when the machine's configured PAC is not the one the job needs.
+- **`--no-env-proxy`** — ignore `HTTP_PROXY`, `HTTPS_PROXY` and `NO_PROXY` from the environment and
+  use the machine's proxy settings, for the shell whose stale variables point at a proxy that is
+  no longer there.
+- **`--offline`** — touch nothing on the network but the request itself: no revocation fetch, no
+  AIA chase, no captive-portal probe, no PAC download. For the air-gapped network and for proving
+  that a request needs nothing it should not.
+- **`-4` / `-6`** — dial only one address family on direct connections, for the host whose AAAA
+  record resolves but whose IPv6 route does not.
+- **`serve --listen <address>`** — also answer on a LAN address, `0.0.0.0` or `+`, so a VM, a
+  container or a teammate can use the gateway. Requires `--token`; not with `--tls`. On Windows a
+  non-loopback prefix needs a one-time URL reservation, and the exact `netsh` command is printed.
+- **`serve --cookie-jar [<file>]`** — the gateway jar can now be named a file: loaded at start,
+  written at shutdown, always encrypted for your Windows user (DPAPI) and never in the clear, so a
+  browser session the gateway established survives a restart without sitting readable on disk.
+  Where the machine cannot encrypt, the file form is refused up front.
+- **`serve --routes <file>`** — mounts from a JSON file, each with its own client certificate
+  (`cert` from the Windows store, or `certFile` with `certPassword`/`keyFile`, relative to the
+  file). One gateway in front of many upstreams that each expect a different identity; connection
+  pools are kept per upstream and certificate, the WebSocket relay presents the route's certificate,
+  and `/_certapi/routes` says which identity each mount carries. A certificate that cannot be found
+  is a startup error naming the mount.
+- **`serve --vhost [<suffix>]`** — one origin per upstream instead of one prefix each: the `/api`
+  mount answers at `http://api.gw.localhost:<port>/`, the root mount at `http://gw.localhost:<port>/`,
+  and an allowed dynamic host at `http://<host>.gw.localhost:<port>/` (`hr.corp--8443` for a port,
+  `http--pub.corp` for plain http). Paths, cookies and origins reach the browser as the upstream
+  wrote them, which is what an application that uses absolute paths or compares origins needs;
+  a cross-mount redirect lands on the other host. Browsers resolve `*.localhost` to loopback by
+  themselves. The wildcard prefix this needs answers only loopback callers unless `--listen` is
+  given; `127.0.0.1` keeps working in path form beside it.
+- **Profile `headers` reach every request.** A profile's standing headers are merged into `send`,
+  `run` (collections and HAR replay) behind any name the command line or the saved request sets
+  itself, so a typed `Authorization` replaces the profile's rather than doubling it.
+- **`certapi doctor`** tells a skewed clock from an expired certificate (a chain whose dates are
+  within tolerance of now is reported as a clock problem with the skew), names the per-path
+  client-certificate shape (a 401/403 from a server that never asked for the certificate on this
+  path), and speaks Negotiate/NTLM on `CONNECT` with the signed-in account instead of stopping at
+  the proxy's 407.
+- **`--cert-file` with a PEM that carries intermediates** says, once, which of them the Windows CA
+  store does not have and prints the `certutil` command that imports them — the TLS stack builds
+  the client chain from the store, so an intermediate that lives only in the file never reaches the
+  server.
+- **Named gateway sites.** `serve --upstream api=https://api.corp` names a site: mounted at `/api`
+  and, under `--vhost`, at `api.gw.localhost`. The `/path=url` form is unchanged.
+- **Per-site settings.** A `--routes` site (or a profile's `serve.sites` entry) can set `insecure`,
+  `caFile`, `revocation`, `windowsAuth` / `windowsUser` / `windowsPassword` and `headers`, each
+  overriding the gateway's flag for that site only; anything left out is inherited. Paths resolve
+  against the file and values may be `${env:NAME}`. Sites on one host with different settings get
+  separate connection pools, and the WebSocket relay connects as the site.
+- **A startup table.** `serve` prints one aligned row per site — name, the URL to open (path or
+  virtual-host form), upstream, the certificate it presents and what it does differently — and one
+  `every site:` line for the gateway-wide settings. No secret appears in it. `/_certapi/routes`
+  carries the same names and settings.
+- **`serve --check`** resolves and validates every site, certificate, file and flag, prints the
+  table, and exits 0 — or 2/3 with the error a real start would give. Nothing is bound, installed or
+  contacted, so it runs while the port is in use and in CI.
+- **A whole gateway in a profile.** A profile's `serve` section holds the gateway's settings (`port`,
+  `vhost`, `browser`, `cors`, `token`, `allow`, `listen`, `cookieJar`, `autoToken`, Windows auth,
+  `forwarded`, `maxBody`, `timeout`, `tls`) and its `sites`, in the `--routes` format.
+  `certapi serve --profile corp` is then the whole command. Typed flags win; sites typed on the
+  command line replace the profile's list and say so. `config show` lists the sites with every
+  secret masked.
+- **`--name=value`** is accepted for every long option, and **`--`** ends option parsing.
+- **Encrypted PEM private keys** (`ENCRYPTED PRIVATE KEY`) load with `--cert-password`; a DER
+  `.crt` or a `.pfx` with the wrong extension is recognised by content.
+
+### Changed
+- **`serve --timeout` now covers the wait for response headers only.** The `HttpClient` timeout
+  used to apply to the whole exchange, so a Server-Sent Events stream, a long poll or a large
+  download through the gateway was cut off at 100 seconds. A slow upstream is now 504 with the
+  reason; a body streams for as long as it streams.
+- **The gateway forwards a declared `Content-Length` as such** instead of re-framing every body as
+  chunked, and sends `Content-Length: 0` on a bodiless POST/PUT — strict servers (IIS, WAFs,
+  signed-upload endpoints) answered 411 or refused the chunked form.
+- **The WebSocket relay reaches the upstream the way the HTTP relay does**: through the same
+  proxy, bypass list, `--resolve` pins, revocation setting, pinned thumbprints and `--ca-file`
+  (it used to use the system proxy and OS trust regardless of flags), and it carries the browser's
+  upgrade headers — Cookie, Authorization, Origin, custom — and every offered subprotocol. A
+  cookie-authenticated socket behind a login the browser completed through the gateway now works.
+- **Cookie `Path` is re-rooted under a prefix mount.** `Path=/` from an upstream mounted at `/auth`
+  was sent to every other mount; `Path=/app` was never sent back for `/auth/app/…`.
+- **A CORS preflight is answered before the `--token` check.** A browser cannot attach a header to
+  a preflight, so `--token` with `--cors` was 401 on every one.
+- **`certapi proxy` compares the two engines by host and port.** WinHTTP answers `proxy:8080` or a
+  `;`-separated failover list; .NET answers an absolute URL. They were compared as strings and
+  disagreed on every machine with a proxy.
+- **`certapi doctor`** copies the server chain while it is still alive (the chain lines and the
+  TLS-interception note were silently missing on every successful handshake), writes plain-http
+  requests through a proxy in absolute form, and says plainly that its staged probe cannot speak
+  SOCKS instead of blaming the proxy for a refusal that never happened.
+- **`trust add` normalises what it stores**: a thumbprint pasted with colons, spaces or in lower
+  case becomes the 40 upper-case hex digits a certificate reports (anything else — a SHA-256
+  fingerprint, `ABC123` — is refused rather than pinned uselessly); a host typed as a URL or with
+  a port is reduced to the bare host, with a note, because that is what pins are looked up by.
+- **Profile `insecure` is honoured by every command**, not only `send` and `connections`.
+- **Help menus match what each command reads.** An audit of every command's help against the flags
+  it parses found `--cert-issuer`, `--cert-serial` and `--cert-pin` missing from eight commands,
+  `--insecure` from `doctor`, `--trace-include-secrets` from the global options, and `mcp`'s trust
+  and network flags unlisted. `serve`'s help opens with its three usages and examples for each.
+- **Global options take `--name=value`** (`--profile=corp`) like every other option; a single-value
+  global given twice is refused, and nothing after `--` is read as one.
+- **`serve` says when a site URL carries a path.** Only scheme, host and port are used, so
+  `--upstream api=https://api.corp/v1` now prints how to reach `/v1` instead of dropping it unseen.
+- **The handbook and site were brought up to date** for everything in this release; the README named
+  the wrong per-user configuration path (`%APPDATA%\CertApiTester` — it is
+  `%APPDATA%\certapi\config.json`).
+- **List-valued options add up when repeated.** `--noproxy`, `--retry-on`, and on `serve`
+  `--allow`, `--cors <origins>` and `--routes` refused a second occurrence; each now appends to its
+  list (`--allow a.corp --allow "*.lab"`), the way `-H` and `--upstream` always have. Single-value
+  options given twice are still a usage error.
+- **IPv6 literals are pinned under one spelling.** `trust add [::1]`, `::1` and
+  `https://[::1]:8443/` store and match the same host, and `--resolve` accepts a bracketed host
+  and an IPv6 address.
+- **`NO_PROXY` from the environment is read leniently.** An entry the parser cannot read is warned
+  about once and skipped rather than failing every command in that shell; `--noproxy` on the
+  command line is still refused outright.
+- **The system proxy's PAC failover is kept when a bypass list is set.** Wrapping the system proxy
+  to apply `--noproxy` had hidden the second proxy a PAC names; a destination the list does not
+  bypass now reaches the system proxy unwrapped.
+- **`--trace` redacts every credential header and URL secret in a payload.** Only the first
+  credential header in a block was redacted (a `Cookie` after an `Authorization` went through),
+  and URLs in events — a proxy's `user:pw@`, an `access_token=` query value — were not touched.
+  Every `Authorization`/`Cookie`/`Set-Cookie`/API-key-shaped line now loses its value and keeps its
+  name; `WWW-Authenticate` and `Proxy-Authenticate` stay readable. The `--verbose` request lines use
+  the same URL rule.
+- **A proxy that requires a client certificate is documented as unsupported** (the tunnel is
+  negotiated by WinHTTP and the HTTP stack, neither of which presents one); `doctor` names it when
+  it sees the shape.
+- **A broken profile no longer breaks the others.** Profiles are read when resolved, so an unset
+  `${env:…}` in `prod` does not stop `--profile dev`, `config profiles` or `config path`.
+- `--key-file` with a `.pfx`/`.p12` is a usage error instead of being silently ignored.
+- `--cert --insecure` is "option needs a value", not a certificate called `--insecure`; a
+  repeated single-value option says it was repeated.
+
+### Fixed
+- `--wire` sends leaked a copy of the client certificate until the finalizer ran.
+- A path-relative `Location` (`/orders/7`) was judged a departure from the gateway on a Unix
+  build, where it parses as an absolute file URI.
+- `serve` with the wildcard prefix (`--listen +`, `--vhost`) bound the port twice on the managed
+  listener; the wildcard now stands alone.
+- Repeated `Set-Cookie` and `WWW-Authenticate` headers are pinned end to end through the listener
+  (three lines in, three lines out) so a folded header can never be reintroduced unnoticed.
+
 ## [1.92.3] - 2026-07-28
 
 ### Security
@@ -2529,7 +2766,8 @@ Initial release.
 - Save any response (including binary) to a file.
 - Self-contained single-file executable — no installer, no admin rights, no runtime dependency.
 
-[Unreleased]: https://github.com/Real-Fruit-Snacks/windows-cert-api-tester/compare/v1.92.3...HEAD
+[Unreleased]: https://github.com/Real-Fruit-Snacks/windows-cert-api-tester/compare/v1.93.0...HEAD
+[1.93.0]: https://github.com/Real-Fruit-Snacks/windows-cert-api-tester/compare/v1.92.3...v1.93.0
 [1.92.3]: https://github.com/Real-Fruit-Snacks/windows-cert-api-tester/compare/v1.92.2...v1.92.3
 [1.92.2]: https://github.com/Real-Fruit-Snacks/windows-cert-api-tester/compare/v1.92.1...v1.92.2
 [1.92.1]: https://github.com/Real-Fruit-Snacks/windows-cert-api-tester/compare/v1.92.0...v1.92.1

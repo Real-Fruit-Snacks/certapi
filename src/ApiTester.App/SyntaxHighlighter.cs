@@ -6,7 +6,7 @@ using ApiTester.Core;
 
 namespace ApiTester.App;
 
-/// <summary>Builds a colored FlowDocument for JSON/XML using the Terminal Workbench palette. Two
+/// <summary>Builds a colored FlowDocument for JSON/XML using the RFS Nightshift/Dayshift palette. Two
 /// token palettes are kept — bright hues for the dark theme, deeper hues that read on white for the
 /// light theme — and the active one is chosen per render from <see cref="App.CurrentTheme"/>.</summary>
 internal static class SyntaxHighlighter
@@ -23,12 +23,12 @@ internal static class SyntaxHighlighter
         SolidColorBrush Punct, SolidColorBrush Default, SolidColorBrush Tag, SolidColorBrush Attr);
 
     private static readonly Palette Dark = new(
-        Key: B("#6bdcff"), String: B("#63f2ab"), Number: B("#f7a35c"), Literal: B("#b78cff"),
-        Punct: B("#63736f"), Default: B("#b4c3bd"), Tag: B("#6bdcff"), Attr: B("#f0c674"));
+        Key: B("#5CB8FF"), String: B("#3DDC97"), Number: B("#FFC247"), Literal: B("#B78CFF"),
+        Punct: B("#5E636D"), Default: B("#C4C3BE"), Tag: B("#5CB8FF"), Attr: B("#FF6A3D"));
 
     private static readonly Palette Light = new(
-        Key: B("#0b6b8a"), String: B("#0f7a45"), Number: B("#b5560f"), Literal: B("#6d3bd1"),
-        Punct: B("#8a968f"), Default: B("#33413b"), Tag: B("#0b6b8a"), Attr: B("#9a6a12"));
+        Key: B("#0B5FA5"), String: B("#167A4E"), Number: B("#9A6700"), Literal: B("#6D3BD1"),
+        Punct: B("#8E929B"), Default: B("#3A3C42"), Tag: B("#0B5FA5"), Attr: B("#C43F11"));
 
     private static Palette Current =>
         string.Equals((Application.Current as App)?.CurrentTheme, "Light", StringComparison.OrdinalIgnoreCase)

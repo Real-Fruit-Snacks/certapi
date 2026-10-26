@@ -29,14 +29,14 @@ public class TrustCliTests
         try
         {
             int addCode = CliApp.Run(
-                new[] { "trust", "add", "internal.corp", "--thumbprint", "ABC123", "--workspace", workspace },
+                new[] { "trust", "add", "internal.corp", "--thumbprint", "0123456789ABCDEF0123456789ABCDEF01234567", "--workspace", workspace },
                 new StringWriter(), new StringWriter(), services: Services(live));
             Assert.Equal(0, addCode);
 
             var saved = AppState.LoadFrom(workspace);
             var pin = Assert.Single(saved.TrustedServerCerts);
             Assert.Equal("internal.corp", pin.Host);   // lowercased by TrustService
-            Assert.Equal("ABC123", pin.Thumbprint);
+            Assert.Equal("0123456789ABCDEF0123456789ABCDEF01234567", pin.Thumbprint);
 
             var so = new StringWriter();
             int listCode = CliApp.Run(
@@ -44,7 +44,7 @@ public class TrustCliTests
                 so, new StringWriter(), services: Services(live));
             Assert.Equal(0, listCode);
             Assert.Contains("internal.corp", so.ToString());
-            Assert.Contains("ABC123", so.ToString());
+            Assert.Contains("0123456789ABCDEF0123456789ABCDEF01234567", so.ToString());
         }
         finally
         {
@@ -61,11 +61,11 @@ public class TrustCliTests
         try
         {
             Assert.Equal(0, CliApp.Run(
-                new[] { "trust", "add", "internal.corp", "--thumbprint", "ABC123", "--workspace", workspace },
+                new[] { "trust", "add", "internal.corp", "--thumbprint", "0123456789ABCDEF0123456789ABCDEF01234567", "--workspace", workspace },
                 new StringWriter(), new StringWriter(), services: Services(live)));
 
             int removeCode = CliApp.Run(
-                new[] { "trust", "remove", "internal.corp", "--thumbprint", "ABC123", "--workspace", workspace },
+                new[] { "trust", "remove", "internal.corp", "--thumbprint", "0123456789ABCDEF0123456789ABCDEF01234567", "--workspace", workspace },
                 new StringWriter(), new StringWriter(), services: Services(live));
             Assert.Equal(0, removeCode);
 

@@ -36,6 +36,11 @@ public static class SendCommand
           --cert-file <path>      Client certificate from a file (.pfx/.p12 or .pem/.crt) instead
           --cert-password <pw>    Password for a .pfx/.p12 certificate file
           --key-file <path>       Private-key file for a PEM cert whose key is in a separate file
+          --cert-issuer <substr>  Narrow --cert to certificates issued by a matching CA (or use alone)
+          --cert-serial <hex>     Pick the certificate with this serial number (or use alone)
+          --cert-pin <pin>        Smart-card / HSM PIN for the key, supplied ahead of time so a
+                                  headless job is not stopped by the prompt. Prefer CERTAPI_CERT_PIN,
+                                  which keeps it out of the shell history. Windows (CNG) only
           --insecure              Ignore server certificate errors
 
 
@@ -53,6 +58,10 @@ public static class SendCommand
           Later sends to the same host attach it automatically — unless you pass explicit auth
           (--bearer / --basic / an Authorization header).
           --no-auto-token         Disable token capture/reuse and captured-cookie attach for this send
+          --cookie-jar <file>     Load cookies from this file before the send and save every cookie
+                                  the response (and each redirect hop) set back into it, so a
+                                  scripted multi-step login carries across invocations. Plain JSON,
+                                  like curl's -b/-c in one flag; created on first use
 
         Variables:
           --env <name>            Environment ({{var}} values) from your workspace
@@ -191,6 +200,7 @@ public static class SendCommand
         var captureSpecs = args.Values("--capture");
         var assertSpecs = args.Values("--assert");
         bool noAutoToken = args.Flag("--no-auto-token");
+        string? cookieJarPath = args.Value("--cookie-jar");
         bool windowsAuth = args.Flag("--windows-auth", "--ntlm", "--negotiate");
         string? winUser = args.Value("--windows-user");
         string? winPass = args.Value("--windows-password");
@@ -330,6 +340,9 @@ public static class SendCommand
         if (bearer is not null) headerPairs.Add(new("Authorization", "Bearer " + R(bearer)));
         if (basic is not null) headerPairs.Add(new("Authorization",
             "Basic " + Convert.ToBase64String(Encoding.UTF8.GetBytes(R(basic)))));
+        // The profile's standing headers fill in behind whatever was typed: a name set here wins.
+        if (services.Profile is { } sendProfile)
+            headerPairs = new List<KeyValuePair<string, string>>(sendProfile.WithStandingHeaders(headerPairs));
         if (body is not null) body = R(body);
         if (graphql is not null)
         {
@@ -358,7 +371,7 @@ public static class SendCommand
         // --insecure bypass; --insecure (above) already trusts anything and is untouched.
         string host = TokenService.HostOf(url);
         Func<System.Security.Cryptography.X509Certificates.X509Certificate2?, bool> trustCert = c =>
-            c is not null && TrustService.IsTrusted(state, host, c.Thumbprint!);
+            c is not null && TrustService.IsTrusted(state, host, c, TrustContext.CurrentChain);
 
         // ---- diff baseline ----
         // Resolved after the URL is fully variable-resolved but before anything goes over the wire:
@@ -407,7 +420,7 @@ public static class SendCommand
                        : null,
             Timeout = TimeSpan.FromSeconds(timeout)
         };
-        services.Log.Debug($"{request.Method} {request.Url}");
+        services.Log.Debug($"{request.Method} {MarkdownSecrets.RedactUrl(request.Url)}");
         foreach (var h in headerPairs)
             services.Log.Debug("header: " + (h.Key.Equals("Authorization", StringComparison.OrdinalIgnoreCase)
                 ? $"{h.Key}: {TokenService.MaskAuthorization(h.Value)}" : $"{h.Key}: {h.Value}"));
@@ -420,6 +433,11 @@ public static class SendCommand
         // and the workspace's AutoCookies switch).
         var cookieJar = new System.Net.CookieContainer();
         if (!noAutoToken) CookieService.SeedContainer(state, url, cookieJar);
+        if (cookieJarPath is not null)
+        {
+            try { services.Log.Debug($"cookie jar: loaded {CookieJarFile.Load(cookieJarPath, cookieJar)} cookie(s) from {cookieJarPath}"); }
+            catch (InvalidDataException ex) { throw new CliDataException(ex.Message); }
+        }
 
         string harVersion = HarCreatorVersion();
 
@@ -459,6 +477,11 @@ public static class SendCommand
             cookies: cookieJar, wireLog: wireLog, cancellationToken: services.Cancel).GetAwaiter().GetResult();
 
         if (wireLog is not null) WriteWire(wireLog, wireFile, wireIncludeSecrets, frames, stdout, stderr);
+        if (cookieJarPath is not null)
+        {
+            try { services.Log.Debug($"cookie jar: saved {CookieJarFile.Save(cookieJarPath, cookieJar)} cookie(s) to {cookieJarPath}"); }
+            catch (IOException ex) { stderr.WriteLine($"warning: could not write --cookie-jar {cookieJarPath}: {ex.Message}"); }
+        }
         services.Log.Debug("result: " + (response.Error is null
             ? $"{response.StatusCode} {response.ReasonPhrase}".Trim()
             : $"[{response.Error.Kind}] {response.Error.Message}")
@@ -499,6 +522,12 @@ public static class SendCommand
         if (!quiet && response.Error is null && response.Connection?.ServerCertificateThumbprint is { } thumb &&
             TrustService.IsTrusted(state, host, thumb))
             stderr.WriteLine($"note: trusting pinned certificate for {host}");
+        // A certificate was chosen, the handshake never sent it, and the server then refused: the
+        // per-path-certificate shape, which is otherwise indistinguishable from a bad token.
+        if (!quiet && response.Error is null && cert is not null && response.StatusCode is 401 or 403 &&
+            response.Connection is { ViaProxy: false, ClientCertificateSent: false } &&
+            request.Url.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+            stderr.WriteLine("note: " + DoctorReport.PerPathCertificateAdvice);
         // Ruling 5: --insecure keeps overriding revocation exactly as it overrides every other chain
         // problem, but doing so silently would be the tool lying by omission — a user who passes
         // --insecure is not necessarily reading --debug, so this goes to stderr unconditionally
@@ -601,7 +630,7 @@ public static class SendCommand
     /// <summary>The transport configuration in one --debug line, so a support log says how the
     /// request was actually routed rather than only where it was pointed.</summary>
     private static string DescribeTransport(TransportOptions t) =>
-        $"proxy {(t.Proxy switch { ProxyMode.None => "off", ProxyMode.Explicit => t.ProxyUrl ?? "explicit", _ => "system" })}"
+        $"proxy {(t.Proxy switch { ProxyMode.None => "off", ProxyMode.Explicit => t.ProxyUrl is null ? "explicit" : MarkdownSecrets.RedactUrl(t.ProxyUrl), _ => "system" })}"
         + $" · redirects {(t.FollowRedirects ? $"follow (max {t.MaxRedirects})" : "off")}"
         + $" · decompress {(t.Decompress ? "on" : "off")}"
         + $" · http {(t.Version switch { HttpVersionMode.Http11 => "1.1", HttpVersionMode.Http2 => "2", _ => "auto" })}"

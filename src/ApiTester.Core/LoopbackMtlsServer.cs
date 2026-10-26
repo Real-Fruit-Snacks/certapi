@@ -90,7 +90,8 @@ public sealed class LoopbackMtlsServer : IAsyncDisposable
         string expectedClientThumbprint,
         IReadOnlyList<KeyValuePair<string, string>> extraHeaders,
         string responseBody = "{\"ok\":true}",
-        string responseContentType = "application/json")
+        string responseContentType = "application/json",
+        int status = 200)
     {
         var listener = new TcpListener(IPAddress.Loopback, 0);
         listener.Start();
@@ -99,7 +100,7 @@ public sealed class LoopbackMtlsServer : IAsyncDisposable
         var server = new LoopbackMtlsServer(listener, port,
             (client, ct) => HandleWithHeadersAsync(
                 client, serverCertificate, expectedClientThumbprint,
-                extraHeaders, responseBody, responseContentType, ct));
+                extraHeaders, responseBody, responseContentType, status, ct));
 
         return Task.FromResult(server);
     }
@@ -754,10 +755,45 @@ public sealed class LoopbackMtlsServer : IAsyncDisposable
         await ssl.FlushAsync(ct);
     }
 
+    /// <summary>A server that never asks for a client certificate during the handshake and answers
+    /// every request with <paramref name="status"/> — the shape of a server that requires the
+    /// certificate only for some paths and refuses when it was not renegotiated.</summary>
+    public static Task<LoopbackMtlsServer> StartNoClientCertStatusAsync(X509Certificate2 serverCertificate, int status)
+    {
+        var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        int port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        var server = new LoopbackMtlsServer(listener, port, async (client, ct) =>
+        {
+            await using var ssl = new SslStream(client.GetStream(), leaveInnerStreamOpen: false);
+            await ssl.AuthenticateAsServerAsync(new SslServerAuthenticationOptions
+            {
+                ClientCertificateRequired = false,
+                EnabledSslProtocols = SslProtocols.Tls12 | SslProtocols.Tls13,
+                ServerCertificate = serverCertificate
+            }, ct);
+            var buffer = new byte[4096];
+            var request = new StringBuilder();
+            while (!request.ToString().Contains("\r\n\r\n"))
+            {
+                int n = await ssl.ReadAsync(buffer, ct);
+                if (n == 0) break;
+                request.Append(Encoding.ASCII.GetString(buffer, 0, n));
+            }
+            var body = Encoding.UTF8.GetBytes("{\"refused\":true}");
+            string head = $"HTTP/1.1 {status} {(status == 403 ? "Forbidden" : status == 401 ? "Unauthorized" : "Status")}\r\n" +
+                          $"Content-Type: application/json\r\nContent-Length: {body.Length}\r\nConnection: close\r\n\r\n";
+            await ssl.WriteAsync(Encoding.ASCII.GetBytes(head), ct);
+            await ssl.WriteAsync(body, ct);
+            await ssl.FlushAsync(ct);
+        });
+        return Task.FromResult(server);
+    }
+
     private static async Task HandleWithHeadersAsync(
         TcpClient client, X509Certificate2 serverCert, string expectedClientThumbprint,
         IReadOnlyList<KeyValuePair<string, string>> extraHeaders,
-        string body, string contentType, CancellationToken ct)
+        string body, string contentType, int status, CancellationToken ct)
     {
         await using var ssl = await AuthenticateServerAsync(client, serverCert, expectedClientThumbprint, ct);
 
@@ -773,7 +809,7 @@ public sealed class LoopbackMtlsServer : IAsyncDisposable
 
         var bodyBytes = Encoding.UTF8.GetBytes(body);
         var head = new StringBuilder()
-            .Append("HTTP/1.1 200 OK\r\n")
+            .Append($"HTTP/1.1 {status} {(status == 200 ? "OK" : status == 401 ? "Unauthorized" : "Status")}\r\n")
             .Append($"Content-Type: {contentType}\r\n")
             .Append($"Content-Length: {bodyBytes.Length}\r\n")
             .Append("Connection: close\r\n");

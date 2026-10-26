@@ -84,7 +84,7 @@ public partial class MockServerWindow : Window
         }
 
         UrlBox.Text = _server.BaseUrl;
-        UrlBox.SetResourceReference(ForegroundProperty, "Accent"); // green = live, muted = stopped
+        UrlBox.SetResourceReference(ForegroundProperty, "Signal"); // mint = live, muted = stopped
         CopyUrlButton.IsEnabled = true;
         StartButton.IsEnabled = false;
         StopButton.IsEnabled = true;

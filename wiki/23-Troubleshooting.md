@@ -327,9 +327,17 @@ The TLS handshake completed but the server rejected your client certificate. Che
 
 ## "The server's own certificate isn't trusted"
 
-Your machine doesn't trust the **server's** certificate (common with internal/private CAs). This is
-separate from your client cert. Tick **Ignore server certificate errors** (app) or add `--insecure`
-(CLI) if you trust the server. To fix it properly, install the internal CA in your trust store.
+Your machine doesn't trust the **server's** certificate (common with internal/private CAs, and with a
+proxy that intercepts TLS and re-signs every site). This is separate from your client cert. In order
+of preference:
+
+- **`--ca-file corp-root.pem`** trusts that one root for the run (profile `caFile`), and still refuses
+  a wrong name or an expired certificate (and a revoked one, with `--revocation` on).
+- **`certapi trust add <host> --from-url https://<host>/`** pins what that host presents; `--ca`
+  pins its issuer and `--spki` its key, so the pin survives a renewal.
+- **Install the internal CA** in your trust store, which fixes it for every program.
+- **`--insecure`** (or **Ignore server certificate errors** in the app) accepts anything — only for a
+  server you already trust. Through the gateway it can be set per site (`"insecure": true`).
 
 ## "The server's certificate was revoked"
 
@@ -363,6 +371,36 @@ an internal service the proxy can't route to, say — list it with `--noproxy` (
 rather than turning the proxy off for everything. To tell whether a request went direct because a
 bypass rule matched or because there was no proxy at all, check Diagnostics or `--debug`: a matched
 rule prints `Bypassed by` naming it.
+
+## A site through the gateway doesn't work
+
+Start with **`certapi serve … --check`** (or `serve --profile <name> --check`): it validates every
+site, certificate and file and prints the table the gateway would start with, without starting it.
+The SETTINGS column shows what each site does differently; `/_certapi/routes` on a running gateway
+says the same.
+
+- **404 from the gateway** — the path is under no site. Each site lives at `/<name>/…` (or at
+  `<name>.gw.localhost` with `--vhost`); a host that is not a site needs `--allow`.
+- **401 from the gateway** — it runs with `--token` and the request did not send it
+  (`Authorization: Bearer <token>` or `X-Certapi-Token`).
+- **403 from the gateway** — the host is not on `--allow`, or the caller is not on loopback and
+  `--listen` was not given.
+- **404 for `/_/https://…`** — the gateway was started without `--allow`, so dynamic hosts are off.
+- **400** — the request target walks off the site's host (`//other.host/…`); the gateway refuses it
+  before the certificate can reach that host.
+- **413** — the body is larger than `--max-body`.
+- **403 to a browser's preflight** — the page's origin is not in `--cors <origins>`.
+- **502 for one site, others fine** — that site's own connection failed: its certificate, its trust
+  (`"insecure"`, `"caFile"`), or the proxy. The per-request log line names the error.
+- **504** — the upstream sent no response headers within `--timeout` (default 100 seconds).
+- **The page loads, but its scripts, styles or links break** — the application uses absolute paths
+  (`/static/app.js`) or compares origins. Use `--vhost`, which gives each site its own origin, or
+  `--referer-fallback`.
+- **A login works, then the app says you are signed out** — the session cookie was set for a
+  different host (`Domain=.corp` from `login.corp`). Add `--cookie-jar`, and `--rewrite-location` so
+  the redirects stay on the gateway (`--browser` includes it).
+- **An intranet site asks for a password** — it wants Windows auth. Add `--windows-auth`, or
+  `"windowsAuth": true` on that site.
 
 ## A timeout
 

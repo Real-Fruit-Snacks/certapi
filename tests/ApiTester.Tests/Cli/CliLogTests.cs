@@ -110,3 +110,45 @@ public class CliLogTests
         finally { if (File.Exists(path)) File.Delete(path); }
     }
 }
+
+public class GlobalOptionFormTests
+{
+    [Fact]
+    public void Global_options_take_the_equals_form_like_every_other_option()
+    {
+        var e = GlobalOptions.ExtractEverything(new[] { "serve", "--profile=corp", "--config=c.json", "--log-file=x.log", "--trace-filter=dns,tls", "--check" });
+        Assert.Equal("corp", e.Profile);
+        Assert.Equal("c.json", e.Config);
+        Assert.Equal("x.log", e.LogFile);
+        Assert.True(e.Trace);
+        Assert.Equal(new[] { "dns", "tls" }, e.TraceFilters);
+        Assert.Equal(new[] { "serve", "--check" }, e.Remaining);
+    }
+
+    [Theory]
+    [InlineData("--profile")]
+    [InlineData("--config")]
+    [InlineData("--log-file")]
+    [InlineData("--trace-file")]
+    public void A_single_value_global_given_twice_is_refused(string name)
+    {
+        var ex = Assert.Throws<CliUsageException>(() => GlobalOptions.ExtractEverything(new[] { "certs", name, "a", name + "=b" }));
+        Assert.Contains("more than once", ex.Message);
+    }
+
+    [Fact]
+    public void Nothing_after_double_dash_is_a_global_option()
+    {
+        var e = GlobalOptions.ExtractEverything(new[] { "send", "--debug", "--", "--profile", "x" });
+        Assert.True(e.Debug);
+        Assert.Null(e.Profile);
+        Assert.Equal(new[] { "send", "--", "--profile", "x" }, e.Remaining);
+    }
+
+    [Fact]
+    public void Trace_filter_still_repeats()
+    {
+        var e = GlobalOptions.ExtractEverything(new[] { "certs", "--trace-filter", "dns", "--trace-filter=tls" });
+        Assert.Equal(new[] { "dns", "tls" }, e.TraceFilters);
+    }
+}

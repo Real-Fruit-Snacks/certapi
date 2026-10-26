@@ -1,78 +1,78 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="860" height="400" viewBox="0 0 860 400" role="img" aria-label="certapi fuzz — discovering endpoints from a wordlist against an mTLS API">
   <defs>
     <style>
-      .mono { font-family: 'JetBrains Mono','Cascadia Code',Consolas,'DejaVu Sans Mono',monospace; }
+      .mono { font-family: 'IBM Plex Mono','Cascadia Code',Consolas,'DejaVu Sans Mono',monospace; }
     </style>
   </defs>
 
   <!-- window -->
-  <rect x="1" y="1" width="858" height="398" rx="10" fill="#0e1214" stroke="#2a363d" stroke-width="1.5"/>
+  <rect x="1" y="1" width="858" height="398" rx="10" fill="#13151A" stroke="#262A33" stroke-width="1.5"/>
 
   <!-- title bar -->
-  <path d="M1,11 a10,10 0 0 1 10,-10 H849 a10,10 0 0 1 10,10 V40 H1 Z" fill="#13191c"/>
-  <line x1="1" y1="40" x2="859" y2="40" stroke="#2a363d" stroke-width="1.5"/>
-  <circle cx="24" cy="20.5" r="5" fill="#39484f"/>
-  <circle cx="44" cy="20.5" r="5" fill="#39484f"/>
-  <circle cx="64" cy="20.5" r="5" fill="#39484f"/>
-  <text class="mono" x="430" y="25" font-size="12" font-weight="600" letter-spacing="1.5" fill="#879994" text-anchor="middle">certapi fuzz &#8212; endpoint discovery</text>
+  <path d="M1,11 a10,10 0 0 1 10,-10 H849 a10,10 0 0 1 10,10 V40 H1 Z" fill="#13151A"/>
+  <line x1="1" y1="40" x2="859" y2="40" stroke="#262A33" stroke-width="1.5"/>
+  <circle cx="24" cy="20.5" r="5" fill="#333945"/>
+  <circle cx="44" cy="20.5" r="5" fill="#333945"/>
+  <circle cx="64" cy="20.5" r="5" fill="#333945"/>
+  <text class="mono" x="430" y="25" font-size="12" font-weight="600" letter-spacing="1.5" fill="#8A8F99" text-anchor="middle">certapi fuzz &#8212; endpoint discovery</text>
 
   <!-- body -->
   <g class="mono" font-size="14.5">
     <!-- command -->
-    <text x="24" y="74" fill="#63f2ab">$</text>
-    <text x="42" y="74" fill="#dce4df">certapi fuzz <tspan fill="#6bdcff">https://api.corp.internal</tspan> -w <tspan fill="#b4c3bd">common-api-endpoints.txt</tspan> --cert <tspan fill="#b4c3bd">"CN=matt"</tspan></text>
+    <text x="24" y="74" fill="#FF6A3D">$</text>
+    <text x="42" y="74" fill="#E8E6E1">certapi fuzz <tspan fill="#FFC247">https://api.corp.internal</tspan> -w <tspan fill="#C4C3BE">common-api-endpoints.txt</tspan> --cert <tspan fill="#C4C3BE">"CN=matt"</tspan></text>
 
-    <text x="42" y="100" fill="#63736f">  probing 42/42&#8230;</text>
+    <text x="42" y="100" fill="#5E636D">  probing 42/42&#8230;</text>
 
     <!-- column header -->
-    <text x="42"  y="132" fill="#63736f" font-size="12" letter-spacing="0.5">OUTCOME   STATUS  METHOD  SIZE      PATH</text>
-    <line x1="24" y1="142" x2="836" y2="142" stroke="#1c2529" stroke-width="1"/>
+    <text x="42"  y="132" fill="#5E636D" font-size="12" letter-spacing="0.5">OUTCOME   STATUS  METHOD  SIZE      PATH</text>
+    <line x1="24" y1="142" x2="836" y2="142" stroke="#22262F" stroke-width="1"/>
 
     <!-- results -->
-    <text x="42"  y="164" fill="#63f2ab" font-weight="700">found</text>
-    <text x="150" y="164" fill="#63f2ab">200</text>
-    <text x="222" y="164" fill="#b4c3bd">GET</text>
-    <text x="316" y="164" fill="#63736f">1.2 KB</text>
-    <text x="410" y="164" fill="#dce4df">/api/v1</text>
+    <text x="42"  y="164" fill="#3DDC97" font-weight="700">found</text>
+    <text x="150" y="164" fill="#3DDC97">200</text>
+    <text x="222" y="164" fill="#C4C3BE">GET</text>
+    <text x="316" y="164" fill="#5E636D">1.2 KB</text>
+    <text x="410" y="164" fill="#E8E6E1">/api/v1</text>
 
-    <text x="42"  y="188" fill="#63f2ab" font-weight="700">found</text>
-    <text x="150" y="188" fill="#63f2ab">200</text>
-    <text x="222" y="188" fill="#b4c3bd">GET</text>
-    <text x="316" y="188" fill="#63736f">418 B</text>
-    <text x="410" y="188" fill="#dce4df">/health</text>
+    <text x="42"  y="188" fill="#3DDC97" font-weight="700">found</text>
+    <text x="150" y="188" fill="#3DDC97">200</text>
+    <text x="222" y="188" fill="#C4C3BE">GET</text>
+    <text x="316" y="188" fill="#5E636D">418 B</text>
+    <text x="410" y="188" fill="#E8E6E1">/health</text>
 
-    <text x="42"  y="212" fill="#f2c94c" font-weight="700">auth</text>
-    <text x="150" y="212" fill="#f2c94c">401</text>
-    <text x="222" y="212" fill="#b4c3bd">GET</text>
-    <text x="316" y="212" fill="#63736f">73 B</text>
-    <text x="410" y="212" fill="#dce4df">/admin</text>
-    <text x="560" y="212" fill="#63736f">exists &#183; needs auth</text>
+    <text x="42"  y="212" fill="#FFC247" font-weight="700">auth</text>
+    <text x="150" y="212" fill="#FFC247">401</text>
+    <text x="222" y="212" fill="#C4C3BE">GET</text>
+    <text x="316" y="212" fill="#5E636D">73 B</text>
+    <text x="410" y="212" fill="#E8E6E1">/admin</text>
+    <text x="560" y="212" fill="#5E636D">exists &#183; needs auth</text>
 
-    <text x="42"  y="236" fill="#56ccf2" font-weight="700">method</text>
-    <text x="150" y="236" fill="#56ccf2">405</text>
-    <text x="222" y="236" fill="#b4c3bd">POST</text>
-    <text x="316" y="236" fill="#63736f">0 B</text>
-    <text x="410" y="236" fill="#dce4df">/users</text>
-    <text x="560" y="236" fill="#63736f">exists &#183; wrong method</text>
+    <text x="42"  y="236" fill="#5CB8FF" font-weight="700">method</text>
+    <text x="150" y="236" fill="#5CB8FF">405</text>
+    <text x="222" y="236" fill="#C4C3BE">POST</text>
+    <text x="316" y="236" fill="#5E636D">0 B</text>
+    <text x="410" y="236" fill="#E8E6E1">/users</text>
+    <text x="560" y="236" fill="#5E636D">exists &#183; wrong method</text>
 
-    <text x="42"  y="260" fill="#f2637a" font-weight="700">5xx</text>
-    <text x="150" y="260" fill="#f2637a">500</text>
-    <text x="222" y="260" fill="#b4c3bd">GET</text>
-    <text x="316" y="260" fill="#63736f">614 B</text>
-    <text x="410" y="260" fill="#dce4df">/metrics</text>
+    <text x="42"  y="260" fill="#FF6E7A" font-weight="700">5xx</text>
+    <text x="150" y="260" fill="#FF6E7A">500</text>
+    <text x="222" y="260" fill="#C4C3BE">GET</text>
+    <text x="316" y="260" fill="#5E636D">614 B</text>
+    <text x="410" y="260" fill="#E8E6E1">/metrics</text>
 
-    <text x="42"  y="284" fill="#9b8cf2" font-weight="700">redirect</text>
-    <text x="150" y="284" fill="#9b8cf2">302</text>
-    <text x="222" y="284" fill="#b4c3bd">GET</text>
-    <text x="316" y="284" fill="#63736f">0 B</text>
-    <text x="410" y="284" fill="#dce4df">/login</text>
+    <text x="42"  y="284" fill="#B78CFF" font-weight="700">redirect</text>
+    <text x="150" y="284" fill="#B78CFF">302</text>
+    <text x="222" y="284" fill="#C4C3BE">GET</text>
+    <text x="316" y="284" fill="#5E636D">0 B</text>
+    <text x="410" y="284" fill="#E8E6E1">/login</text>
 
     <!-- 404s and connection errors hidden by default -->
-    <text x="42" y="312" fill="#4d5b57" font-style="italic" font-size="12.5">30 not-found and 2 connection errors hidden (pass --all to show)</text>
+    <text x="42" y="312" fill="#5E636D" font-style="italic" font-size="12.5">30 not-found and 2 connection errors hidden (pass --all to show)</text>
 
     <!-- summary -->
-    <line x1="24" y1="330" x2="836" y2="330" stroke="#1c2529" stroke-width="1"/>
-    <text x="42" y="356" fill="#879994">42 probed &#183; <tspan fill="#63f2ab" font-weight="700">12 discovered</tspan> &#183; found 8 &#183; auth 2 &#183; method 1 &#183; 5xx 1 &#183; redirect 0 &#183; 404 30</text>
-    <text x="42" y="380" fill="#63736f" font-size="12.5"># captured token from /login is reused automatically on later probes to the same host</text>
+    <line x1="24" y1="330" x2="836" y2="330" stroke="#22262F" stroke-width="1"/>
+    <text x="42" y="356" fill="#8A8F99">42 probed &#183; <tspan fill="#3DDC97" font-weight="700">12 discovered</tspan> &#183; found 8 &#183; auth 2 &#183; method 1 &#183; 5xx 1 &#183; redirect 0 &#183; 404 30</text>
+    <text x="42" y="380" fill="#5E636D" font-size="12.5"># captured token from /login is reused automatically on later probes to the same host</text>
   </g>
 </svg>

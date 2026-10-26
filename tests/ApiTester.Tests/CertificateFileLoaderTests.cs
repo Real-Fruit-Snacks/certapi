@@ -112,3 +112,40 @@ public class CertificateFileLoaderTests
         finally { File.Delete(crt); }
     }
 }
+
+public class PemIntermediateTests
+{
+    [Fact]
+    public void Intermediates_in_a_pem_bundle_are_found_whichever_order_they_come_in()
+    {
+        using var root = SelfSignedCertificateFactory.CreateCertificateAuthority("Root");
+        using var intermediate = SelfSignedCertificateFactory.CreateSignedCertificate("Intermediate", root, false, false);
+        using var rsa = System.Security.Cryptography.RSA.Create(2048);
+        var req = new System.Security.Cryptography.X509Certificates.CertificateRequest(
+            "CN=leaf", rsa, System.Security.Cryptography.HashAlgorithmName.SHA256, System.Security.Cryptography.RSASignaturePadding.Pkcs1);
+        using var leaf = req.CreateSelfSigned(DateTimeOffset.UtcNow.AddDays(-1), DateTimeOffset.UtcNow.AddDays(1));
+
+        string pem = System.IO.Path.GetTempFileName() + ".pem";
+        try
+        {
+            // Root first, then the intermediate, leaf last with its key: the awkward order.
+            System.IO.File.WriteAllText(pem, root.ExportCertificatePem() + "\n" + intermediate.ExportCertificatePem() + "\n" +
+                                             leaf.ExportCertificatePem() + "\n" + rsa.ExportPkcs8PrivateKeyPem());
+            var extras = CertificateFileLoader.LoadIntermediates(pem, leaf.Thumbprint!);
+            Assert.Equal(2, extras.Count);
+            Assert.DoesNotContain(extras, c => c.Subject == "CN=leaf");
+
+            // A leaf-only PEM has nothing to report; a .pfx is not a PEM at all.
+            System.IO.File.WriteAllText(pem, leaf.ExportCertificatePem() + "\n" + rsa.ExportPkcs8PrivateKeyPem());
+            Assert.Empty(CertificateFileLoader.LoadIntermediates(pem, leaf.Thumbprint!));
+
+            var note = new System.IO.StringWriter();
+            System.IO.File.WriteAllText(pem, leaf.ExportCertificatePem() + "\n" + intermediate.ExportCertificatePem() + "\n" + rsa.ExportPkcs8PrivateKeyPem());
+            ApiTester.Cli.CliCert.NoteMissingIntermediates(pem, leaf.Thumbprint!, note);
+            // The test CA is not in any store on any machine, so the note always fires here.
+            Assert.Contains("CN=Intermediate", note.ToString());
+            Assert.Contains("certutil", note.ToString());
+        }
+        finally { System.IO.File.Delete(pem); }
+    }
+}

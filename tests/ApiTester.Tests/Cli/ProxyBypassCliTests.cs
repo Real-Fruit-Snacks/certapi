@@ -118,14 +118,22 @@ public class ProxyBypassCliTests
     }
 
     [Fact]
-    public void A_malformed_injected_NO_PROXY_variable_is_a_usage_error_naming_the_variable()
+    public void A_malformed_injected_NO_PROXY_variable_is_warned_about_and_skipped_not_fatal()
     {
-        Func<string, string?> env = name => name == "NO_PROXY" ? "a*b.corp" : null;
-
-        var ex = Assert.Throws<CliUsageException>(() =>
-            TransportFlags.Parse(new Args(new[] { "https://x" }), out _, env));
-
-        Assert.Contains("NO_PROXY", ex.Message);
+        // Ambient, not typed for this run: refusing every command on the machine over a variable
+        // somebody else set helped nobody. The entry is named once and ignored.
+        Func<string, string?> env = name => name == "NO_PROXY" ? "a*b.corp,good.corp" : null;
+        var warnings = new List<string>();
+        TransportFlags.Warn = warnings.Add;
+        try
+        {
+            var t = TransportFlags.Parse(new Args(new[] { "https://x" }), out _, env).ApplyTo(new TransportOptions());
+            Assert.Single(warnings);
+            Assert.Contains("NO_PROXY", warnings[0]);
+            Assert.Contains("a*b.corp", warnings[0]);
+            Assert.True(ProxyBypass.IsBypassed(t.NoProxy, new Uri("https://good.corp/")));
+        }
+        finally { TransportFlags.Warn = null; }
     }
 
     [Fact]

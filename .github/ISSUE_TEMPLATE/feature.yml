@@ -1,0 +1,20 @@
+name: Feature
+description: Something it should do and doesn't
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What you are trying to do against which kind of endpoint, and what gets in the way today
+    validations:
+      required: true
+  - type: textarea
+    id: shape
+    attributes:
+      label: What it might look like
+      description: A flag, a tab, a command. Optional.
+  - type: textarea
+    id: workaround
+    attributes:
+      label: Current workaround

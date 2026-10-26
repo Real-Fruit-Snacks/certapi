@@ -39,7 +39,7 @@ know what you want to do but not what it is called.
 | 15 | [Live Streaming](15-Live-Streaming.md) | WebSocket and Server-Sent Events |
 | 16 | [Response Views](16-Response-Views.md) | Pretty, Raw, Diagnostics, Rendered, Network |
 | 26 | [Session Capture](26-Session-Capture.md) | Log in once in a browser, reuse that session here |
-| 27 | [Configuration](27-Configuration.md) | Profiles that carry the tedious half of every command line |
+| 27 | [Configuration](27-Configuration.md) | Profiles that carry the tedious half of every command line — and whole gateways |
 
 ## Tooling
 
@@ -47,7 +47,7 @@ know what you want to do but not what it is called.
 |---|---|---|
 | 17 | [Import & Export](17-Import-and-Export.md) | cURL, OpenAPI, Postman, Insomnia, WSDL, HAR — and markdown notes for a vault |
 | 18 | [Mock Server](18-Mock-Server.md) | A local endpoint to fire requests at, including one that misbehaves on purpose |
-| 19 | [Local Gateway](19-Local-Gateway.md) | `serve` — an mTLS front door for apps that can't do client certificates |
+| 19 | [Local Gateway](19-Local-Gateway.md) | `serve` — an mTLS front door, for one site or many, for apps that can't do client certificates |
 | 20 | [MCP Server](20-MCP-Server.md) | Letting AI agents make mutual-TLS calls through this tool |
 | 21 | [CLI Reference](21-CLI-Reference.md) | Every `certapi` command and option |
 

@@ -23,13 +23,16 @@ public static class StreamTransport
     public static SocketsHttpHandler CreateHandler(
         X509Certificate2? clientCertificate,
         TransportOptions options,
-        Func<X509Certificate2?, bool>? trustServerCertificate = null)
+        Func<X509Certificate2?, bool>? trustServerCertificate = null,
+        Uri? destination = null)
     {
         var handler = new SocketsHttpHandler
         {
             DefaultProxyCredentials = CredentialCache.DefaultCredentials
         };
-        ProxyConfiguration.Apply(handler, options);
+        // A stream, an upgrade or a token fetch has one destination, so the system proxy's own
+        // failover list survives for a host the bypass list does not match.
+        ProxyConfiguration.Apply(handler, options, destination);
 
         var ssl = new SslClientAuthenticationOptions
         {
@@ -37,17 +40,29 @@ public static class StreamTransport
             // flag, and no pin, Decide accepts exactly when the ordinary rules would have, so the
             // default path is behaviorally the platform's own validation.
             RemoteCertificateValidationCallback = (_, cert, chain, errors) =>
-                RevocationCheck.Decide(
-                    options.Revocation, options.RevocationStrict, options.IgnoreServerCertificateErrors,
-                    errors, RevocationCheck.ChainFlagsOf(chain),
-                    trustServerCertificate is null
-                        ? null
-                        : () => trustServerCertificate(cert as X509Certificate2)).Accepted
+                Judge(options, cert, chain, errors, trustServerCertificate)
         };
-        RevocationCheck.Apply(ssl, options.Revocation);
+        RevocationCheck.Apply(ssl, options);
+        TlsPolicy.Apply(ssl, options with { Sni = null });
+        if (options.ConnectTimeout is { } connect) handler.ConnectTimeout = connect;
         if (clientCertificate is not null)
             ssl.ClientCertificates = new X509CertificateCollection { clientCertificate };
         handler.SslOptions = ssl;
         return handler;
+    }
+
+    /// <summary>One validation for every stream: the user's extra roots (--ca-file) reconsidered
+    /// first, then the shared revocation/pin table.</summary>
+    private static bool Judge(TransportOptions options, X509Certificate? cert, X509Chain? chain,
+        SslPolicyErrors errors, Func<X509Certificate2?, bool>? trustServerCertificate)
+    {
+        var (judgedErrors, judgedFlags) = ExtraRoots.Reconsider(
+            errors, RevocationCheck.ChainFlagsOf(chain), cert, chain, options.ExtraRoots);
+        return RevocationCheck.Decide(
+            options.Revocation, options.RevocationStrict, options.IgnoreServerCertificateErrors,
+            judgedErrors, judgedFlags,
+            trustServerCertificate is null
+                ? null
+                : () => TrustContext.Run(chain, () => trustServerCertificate(cert as X509Certificate2))).Accepted;
     }
 }

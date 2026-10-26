@@ -1,29 +1,33 @@
 <ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
                     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
 
-    <!-- ============ Terminal Workbench palette (dark) ============ -->
-    <SolidColorBrush x:Key="Bg.Window"   Color="#090c0d"/>
-    <SolidColorBrush x:Key="Bg.Panel"    Color="#0e1214"/>
-    <SolidColorBrush x:Key="Bg.Input"    Color="#13191c"/>
-    <SolidColorBrush x:Key="Bg.Raised"   Color="#182024"/>
-    <SolidColorBrush x:Key="Border"        Color="#2a363d"/>
-    <SolidColorBrush x:Key="Border.Strong" Color="#39484f"/>
-    <SolidColorBrush x:Key="Accent"      Color="#63f2ab"/>
-    <SolidColorBrush x:Key="Accent.Alt"  Color="#6bdcff"/>
-    <SolidColorBrush x:Key="Warm"        Color="#f0c674"/>
-    <SolidColorBrush x:Key="Text.Normal" Color="#dce4df"/>
-    <SolidColorBrush x:Key="Text.Soft"   Color="#b4c3bd"/>
-    <SolidColorBrush x:Key="Text.Muted"  Color="#879994"/>
-    <SolidColorBrush x:Key="Text.Faint"  Color="#63736f"/>
-    <SolidColorBrush x:Key="Text.OnAccent" Color="#07100d"/>
-    <SolidColorBrush x:Key="Red"         Color="#ff6e7a"/>
-    <!-- Accent interaction states + a translucent selection tint, so buttons and selected rows
-         track the theme instead of a fixed mint. Overridden in Palette.Light.xaml. -->
-    <SolidColorBrush x:Key="Accent.Hover"   Color="#7bf6bb"/>
-    <SolidColorBrush x:Key="Accent.Pressed" Color="#4fd396"/>
-    <SolidColorBrush x:Key="Accent.Tint"    Color="#1b63f2ab"/>
+    <!-- ============ RFS palette — Nightshift (default) ============
+         Values from Real-Fruit-Snacks/.github/BRAND.md. Bg.Raised, Border.Strong, Text.Soft and
+         Text.Faint are derived one step from the brand tokens; everything else is verbatim.
+         Accent = Ember (brand, one per screen). Signal = Mint and only ever means "OK".
+         Dayshift overrides every key in Palette.Light.xaml. -->
+    <SolidColorBrush x:Key="Bg.Window"   Color="#0C0D10"/>
+    <SolidColorBrush x:Key="Bg.Panel"    Color="#13151A"/>
+    <SolidColorBrush x:Key="Bg.Input"    Color="#1A1D24"/>
+    <SolidColorBrush x:Key="Bg.Raised"   Color="#22262F"/>
+    <SolidColorBrush x:Key="Border"        Color="#262A33"/>
+    <SolidColorBrush x:Key="Border.Strong" Color="#333945"/>
+    <SolidColorBrush x:Key="Accent"      Color="#FF6A3D"/>
+    <SolidColorBrush x:Key="Accent.Alt"  Color="#FFC247"/>
+    <SolidColorBrush x:Key="Warm"        Color="#FFC247"/>
+    <SolidColorBrush x:Key="Signal"      Color="#3DDC97"/>
+    <SolidColorBrush x:Key="Text.Normal" Color="#E8E6E1"/>
+    <SolidColorBrush x:Key="Text.Soft"   Color="#C4C3BE"/>
+    <SolidColorBrush x:Key="Text.Muted"  Color="#8A8F99"/>
+    <SolidColorBrush x:Key="Text.Faint"  Color="#5E636D"/>
+    <SolidColorBrush x:Key="Text.OnAccent" Color="#0C0D10"/>
+    <SolidColorBrush x:Key="Red"         Color="#FF6E7A"/>
+    <!-- Accent interaction states + a translucent selection tint. Overridden in Palette.Light.xaml. -->
+    <SolidColorBrush x:Key="Accent.Hover"   Color="#FF8259"/>
+    <SolidColorBrush x:Key="Accent.Pressed" Color="#E85A2E"/>
+    <SolidColorBrush x:Key="Accent.Tint"    Color="#24FF6A3D"/>
 
-    <FontFamily x:Key="Mono">Cascadia Code, Consolas, Courier New</FontFamily>
+    <FontFamily x:Key="Mono">IBM Plex Mono, Cascadia Code, Consolas, Courier New</FontFamily>
 
     <!-- ============ Scrollbars (thin, dark) ============ -->
     <Style x:Key="ScrollPage" TargetType="RepeatButton">
@@ -577,7 +581,7 @@
         <Setter Property="Foreground" Value="{DynamicResource Text.Soft}"/>
         <Setter Property="BorderThickness" Value="0"/>
         <Setter Property="Padding" Value="10"/>
-        <Setter Property="FontFamily" Value="Consolas"/>
+        <Setter Property="FontFamily" Value="{StaticResource Mono}"/>
         <Setter Property="CaretBrush" Value="{DynamicResource Accent}"/>
         <Setter Property="SelectionBrush" Value="{DynamicResource Accent}"/>
     </Style>

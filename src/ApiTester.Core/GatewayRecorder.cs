@@ -86,7 +86,7 @@ public sealed class GatewayRecorder
                 : new HarNameValue(h.Key, "REDACTED"))
             .ToList();
 
-    private static readonly string[] SecretHeaders = { "Authorization", "Cookie", "Set-Cookie", "Proxy-Authorization" };
+    private static readonly string[] SecretHeaders = { "Authorization", "Cookie", "Set-Cookie", "Proxy-Authorization", "X-Certapi-Token" };
     private static readonly string[] FramingHeaders = { "Transfer-Encoding", "Connection", "Content-Length" };
 
     private static string? ContentTypeOf(IReadOnlyList<KeyValuePair<string, string>> headers) =>

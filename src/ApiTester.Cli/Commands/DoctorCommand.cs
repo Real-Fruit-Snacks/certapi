@@ -27,6 +27,12 @@ public static class DoctorCommand
           --cert-file <path>      Client certificate from a file (.pfx/.p12 or .pem/.crt) instead
           --cert-password <pw>    Password for a .pfx/.p12 certificate file
           --key-file <path>       Private-key file for a PEM certificate whose key is separate
+          --cert-issuer <substr>  Narrow --cert to certificates issued by a matching CA (or use alone)
+          --cert-serial <hex>     Pick the certificate with this serial number (or use alone)
+          --cert-pin <pin>        Smart-card / HSM PIN for the key, supplied ahead of time so a
+                                  headless job is not stopped by the prompt. Prefer CERTAPI_CERT_PIN,
+                                  which keeps it out of the shell history. Windows (CNG) only
+          --insecure              Ignore server certificate errors while probing
           --json                  Print the whole report as JSON instead of text
           -q, --quiet             Only print stages that failed or carry advice
           --md <file>             Also write the diagnosis as a markdown note — the stage table,
@@ -60,7 +66,7 @@ public static class DoctorCommand
         string store = args.Value("--store") ?? services.Profile?.Store ?? "CurrentUser";
         bool json = args.Flag("--json");
         bool quiet = args.Flag("-q", "--quiet");
-        bool insecure = args.Flag("--insecure");
+        bool insecure = args.FlagOrNull("--insecure") ?? services.Profile?.Insecure ?? false;
         string? mdFile = args.Value("--md");
         string? mdVault = args.Value("--md-vault");
         bool mdOpen = args.Flag("--md-open");

@@ -220,3 +220,180 @@ public class ConnectionDoctorTests
         Assert.Equal("tcp", report.FirstFailure!.Name);
     }
 }
+
+public class PerPathCertificateDiagnosisTests
+{
+    [Fact]
+    public async Task Doctor_names_the_per_path_certificate_shape_when_the_handshake_never_asked_and_the_server_refused()
+    {
+        using var ca = SelfSignedCertificateFactory.CreateCertificateAuthority("CA");
+        using var serverCert = SelfSignedCertificateFactory.CreateSignedCertificate("localhost", ca, true, false, new[] { "localhost" });
+        using var clientCert = SelfSignedCertificateFactory.CreateSignedCertificate("Client", ca, false, true);
+        await using var server = await LoopbackMtlsServer.StartNoClientCertStatusAsync(serverCert, 403);
+
+        var report = await ConnectionDoctor.RunAsync(
+            server.BaseUrl, clientCert, new[] { clientCert }, new TransportOptions { IgnoreServerCertificateErrors = true, Proxy = ProxyMode.None });
+
+        var http = report.Stages.Single(s => s.Name == "http");
+        Assert.Contains("403", http.Summary);
+        Assert.Equal(DoctorReport.PerPathCertificateAdvice, http.Advice);
+        Assert.Contains("--http1.1", http.Advice!);
+
+        // Without a certificate chosen there is nothing to renegotiate, so the ordinary advice stands.
+        var plain = await ConnectionDoctor.RunAsync(
+            server.BaseUrl, null, Array.Empty<System.Security.Cryptography.X509Certificates.X509Certificate2>(),
+            new TransportOptions { IgnoreServerCertificateErrors = true, Proxy = ProxyMode.None });
+        Assert.NotEqual(DoctorReport.PerPathCertificateAdvice, plain.Stages.Single(s => s.Name == "http").Advice);
+    }
+
+    [Fact]
+    public async Task Send_prints_the_same_note_on_a_403_with_a_certificate_the_handshake_never_sent()
+    {
+        using var ca = SelfSignedCertificateFactory.CreateCertificateAuthority("CA");
+        using var serverCert = SelfSignedCertificateFactory.CreateSignedCertificate("localhost", ca, true, false, new[] { "localhost" });
+        using var clientCert = SelfSignedCertificateFactory.CreateSignedCertificate("Client", ca, false, true);
+        await using var server = await LoopbackMtlsServer.StartNoClientCertStatusAsync(serverCert, 403);
+
+        var services = new ApiTester.Cli.CliServices
+        {
+            ListCertificates = _ => new[]
+            {
+                new CertificateInfo
+                {
+                    Subject = "CN=Client", Issuer = "CN=CA", Thumbprint = clientCert.Thumbprint!,
+                    NotBefore = DateTime.Now.AddDays(-1), NotAfter = DateTime.Now.AddDays(30),
+                    HasClientAuthEku = true, Certificate = clientCert
+                }
+            }
+        };
+        var stderr = new StringWriter();
+        ApiTester.Cli.CliApp.Run(new[] { "send", server.BaseUrl, "--cert", "Client", "--insecure", "--no-proxy" }, TextWriter.Null, stderr, services: services);
+        Assert.Contains("did not ask for a client certificate during the handshake", stderr.ToString());
+    }
+}
+
+public class ClockSkewTests
+{
+    private static readonly DateTimeOffset Now = new(2026, 10, 26, 12, 0, 0, TimeSpan.Zero);
+
+    [Fact]
+    public void Within_tolerance_there_is_no_note()
+    {
+        Assert.Null(DoctorReport.ClockSkewNote(Now, Now.AddMinutes(4), chainNotTimeValid: false));
+        Assert.Null(DoctorReport.ClockSkewNote(Now, Now.AddMinutes(-5), chainNotTimeValid: true));
+    }
+
+    [Fact]
+    public void A_skewed_clock_is_named_with_its_direction_and_blamed_for_a_time_invalid_chain()
+    {
+        string? behind = DoctorReport.ClockSkewNote(Now, Now.AddHours(3), chainNotTimeValid: true);
+        Assert.NotNull(behind);
+        Assert.Contains("3 hours behind", behind);
+        Assert.Contains("not the certificate", behind);
+        Assert.Contains("w32tm", behind);
+
+        string? ahead = DoctorReport.ClockSkewNote(Now.AddDays(2), Now, chainNotTimeValid: false);
+        Assert.Contains("2 days ahead", ahead);
+        Assert.DoesNotContain("not the certificate", ahead);
+    }
+
+    [Fact]
+    public async Task Doctor_reads_the_servers_date_header_and_reports_skew()
+    {
+        using var ca = SelfSignedCertificateFactory.CreateCertificateAuthority("CA");
+        using var serverCert = SelfSignedCertificateFactory.CreateSignedCertificate("localhost", ca, true, false, new[] { "localhost" });
+        using var clientCert = SelfSignedCertificateFactory.CreateSignedCertificate("Client", ca, false, true);
+        // A server whose clock is a day behind.
+        var headers = new[] { new KeyValuePair<string, string>("Date", DateTime.UtcNow.AddDays(-1).ToString("R")) };
+        await using var server = await LoopbackMtlsServer.StartWithHeadersAsync(serverCert, clientCert.Thumbprint!, headers);
+
+        var report = await ConnectionDoctor.RunAsync(server.BaseUrl, clientCert, new[] { clientCert },
+            new TransportOptions { IgnoreServerCertificateErrors = true, Proxy = ProxyMode.None });
+        var http = report.Stages.Single(s => s.Name == "http");
+        Assert.Contains(http.Detail, d => d.Contains("ahead of the server's"));
+    }
+}
+
+public class DoctorNegotiateProxyTests
+{
+    /// <summary>A proxy that demands Negotiate and accepts any Negotiate token it is shown.</summary>
+    private static (System.Net.Sockets.TcpListener listener, Task serving, List<string> seen) FakeNegotiateProxy()
+    {
+        var listener = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
+        listener.Start();
+        var seen = new List<string>();
+        var serving = Task.Run(async () =>
+        {
+            using var client = await listener.AcceptTcpClientAsync();
+            using var stream = client.GetStream();
+            var buffer = new byte[8192];
+            for (int round = 0; round < 3; round++)
+            {
+                var head = new System.Text.StringBuilder();
+                while (!head.ToString().Contains("\r\n\r\n"))
+                {
+                    int n = await stream.ReadAsync(buffer);
+                    if (n == 0) return;
+                    head.Append(System.Text.Encoding.ASCII.GetString(buffer, 0, n));
+                }
+                string request = head.ToString();
+                lock (seen) seen.Add(request.Split("\r\n")[0] + (request.Contains("Proxy-Authorization: Negotiate") ? " +token" : ""));
+                string reply = request.Contains("Proxy-Authorization: Negotiate ")
+                    ? "HTTP/1.1 200 Connection established\r\n\r\n"
+                    : "HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Negotiate\r\nProxy-Authenticate: Basic realm=\"corp\"\r\nContent-Length: 0\r\nProxy-Connection: Keep-Alive\r\n\r\n";
+                await stream.WriteAsync(System.Text.Encoding.ASCII.GetBytes(reply));
+                if (reply.StartsWith("HTTP/1.1 200")) return;
+            }
+        });
+        return (listener, serving, seen);
+    }
+
+    [Fact]
+    public async Task Doctor_answers_a_negotiate_challenge_with_the_signed_in_account_or_says_why_it_cannot()
+    {
+        var (listener, serving, seen) = FakeNegotiateProxy();
+        try
+        {
+            int port = ((System.Net.IPEndPoint)listener.LocalEndpoint).Port;
+            var report = await ConnectionDoctor.RunAsync("https://target.example:443/", null,
+                Array.Empty<System.Security.Cryptography.X509Certificates.X509Certificate2>(),
+                new TransportOptions { Proxy = ProxyMode.Explicit, ProxyUrl = $"http://127.0.0.1:{port}" },
+                probe: _ => Task.FromResult<string?>(null));
+            var connect = report.Stages.Single(s => s.Name == "connect");
+
+            // Either the token was produced and the fake proxy accepted it (a machine with a
+            // usable credential), or the security package refused and the advice names THAT
+            // rather than blaming the proxy or asking for --proxy-user as the only way out.
+            if (connect.Ok)
+            {
+                Assert.Contains("Negotiate", connect.Summary);
+                lock (seen) Assert.Contains(seen, s => s.EndsWith("+token"));
+            }
+            else
+            {
+                Assert.Contains("credential", connect.Advice ?? "", StringComparison.OrdinalIgnoreCase);
+                Assert.DoesNotContain("supply --proxy-user, or use a proxy", connect.Advice ?? "");
+            }
+            Assert.Contains(connect.Detail, d => d.Contains("407"));
+        }
+        finally { listener.Stop(); try { await serving.WaitAsync(TimeSpan.FromSeconds(5)); } catch { } }
+    }
+
+    [Fact]
+    public async Task Explicit_proxy_credentials_still_take_the_basic_path()
+    {
+        var (listener, serving, seen) = FakeNegotiateProxy();
+        try
+        {
+            int port = ((System.Net.IPEndPoint)listener.LocalEndpoint).Port;
+            var report = await ConnectionDoctor.RunAsync("https://target.example:443/", null,
+                Array.Empty<System.Security.Cryptography.X509Certificates.X509Certificate2>(),
+                new TransportOptions { Proxy = ProxyMode.Explicit, ProxyUrl = $"http://127.0.0.1:{port}", ProxyUser = "u", ProxyPassword = "p" },
+                probe: _ => Task.FromResult<string?>(null));
+            var connect = report.Stages.Single(s => s.Name == "connect");
+            Assert.False(connect.Ok);
+            lock (seen) Assert.DoesNotContain(seen, s => s.EndsWith("+token"));
+        }
+        finally { listener.Stop(); try { await serving.WaitAsync(TimeSpan.FromSeconds(5)); } catch { } }
+    }
+}

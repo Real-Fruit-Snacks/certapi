@@ -4,7 +4,7 @@ using System.Windows;
 
 namespace ApiTester.Tests;
 
-/// <summary>Constructs the StreamWindow with the real Terminal Workbench theme merged, on an STA
+/// <summary>Constructs the StreamWindow with the real RFS theme merged, on an STA
 /// thread, to prove its XAML loads (StaticResource keys resolve, markup is well-formed) — the
 /// failure mode a plain build can't catch, since StaticResource resolution happens at load time.</summary>
 public class StreamWindowSmokeTests

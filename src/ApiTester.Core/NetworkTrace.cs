@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using System.Diagnostics.Tracing;
 using System.Text;
 
@@ -152,19 +153,26 @@ public sealed class NetworkTrace : EventListener
 
     private static readonly string[] SecretNames = { "authorization", "cookie", "token", "password", "secret" };
 
+    /// <summary>Headers whose value is a credential wherever they appear in a payload. Challenges
+    /// (<c>WWW-Authenticate</c>, <c>Proxy-Authenticate</c>) are deliberately not here: they are what
+    /// a trace of a failing proxy or SSO handshake is read for, and they carry no secret.</summary>
+    private static readonly Regex CredentialHeader = new(
+        @"(?<=^|[\r\n])(?<name>Authorization|Proxy-Authorization|Cookie|Set-Cookie|X-Api-Key|X-Auth-Token|X-Csrf-Token|X-XSRF-Token|[A-Za-z0-9-]*(?:token|secret|password|api-?key)[A-Za-z0-9-]*):[^\r\n]*",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+
+    /// <summary>Anything shaped like a URL inside a payload: the runtime's events carry request
+    /// and proxy addresses, and those can hold <c>user:pass@</c> or an <c>access_token=</c>.</summary>
+    private static readonly Regex UrlInPayload = new(
+        @"[A-Za-z][A-Za-z0-9+.-]*://[^\s""'<>]+", RegexOptions.CultureInvariant);
+
     internal static string Redact(string name, string value)
     {
         if (SecretNames.Any(s => name.Contains(s, StringComparison.OrdinalIgnoreCase)))
             return "(redacted)";
-        // A payload can carry a whole header block as one string; catch the credential inside it.
-        foreach (var header in new[] { "Authorization:", "Cookie:", "Proxy-Authorization:" })
-        {
-            int at = value.IndexOf(header, StringComparison.OrdinalIgnoreCase);
-            if (at < 0) continue;
-            int end = value.IndexOfAny(new[] { '\r', '\n' }, at);
-            string tail = end < 0 ? "" : value[end..];
-            return value[..(at + header.Length)] + " (redacted)" + tail;
-        }
-        return value;
+        // A payload can carry a whole header block as one string; every credential line in it
+        // loses its value and keeps its name — the fact it was sent is what a reader needs.
+        value = CredentialHeader.Replace(value, m => m.Groups["name"].Value + ": (redacted)");
+        // A URL keeps its address and loses its userinfo password and credential-named query values.
+        return UrlInPayload.Replace(value, m => MarkdownSecrets.RedactUrl(m.Value));
     }
 }

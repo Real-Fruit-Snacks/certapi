@@ -3,359 +3,404 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Certificate API Tester — Windows client-certificate (mTLS) API client</title>
-<meta name="description" content="A Windows desktop API tester that authenticates to endpoints with a client certificate from the Windows certificate store (mTLS) and renders responses of any format.">
-<meta property="og:title" content="Certificate API Tester">
-<meta property="og:description" content="Authenticate to endpoints with a client certificate from the Windows store (mTLS), and read whatever they return.">
+<title>certapi — mTLS API client for the Windows certificate store</title>
+<meta name="description" content="certapi sends requests with a client certificate from the Windows certificate store. The private key never leaves the store. Desktop app plus a headless command line.">
+<meta property="og:title" content="certapi">
+<meta property="og:description" content="mTLS API client for the Windows certificate store">
 <meta property="og:type" content="website">
-<meta property="og:image" content="https://real-fruit-snacks.github.io/windows-cert-api-tester/assets/banner.svg">
-<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2016%2016'%3E%3Crect%20width='16'%20height='16'%20rx='3'%20fill='%23090c0d'/%3E%3Crect%20x='3'%20y='3'%20width='4.4'%20height='4.4'%20rx='1'%20fill='%2363f2ab'/%3E%3Crect%20x='8.6'%20y='3'%20width='4.4'%20height='4.4'%20rx='1'%20fill='%236bdcff'/%3E%3Crect%20x='3'%20y='8.6'%20width='4.4'%20height='4.4'%20rx='1'%20fill='%23f0c674'/%3E%3Crect%20x='8.6'%20y='8.6'%20width='4.4'%20height='4.4'%20rx='1'%20fill='%23dce4df'/%3E%3C/svg%3E">
-<link rel="stylesheet" href="assets/tokens.css">
+<meta property="og:image" content="https://real-fruit-snacks.github.io/windows-cert-api-tester/assets/cover-dark.png">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="assets/icon.svg" type="image/svg+xml">
+<link rel="icon" href="assets/favicon.ico" sizes="48x48">
+<link rel="apple-touch-icon" href="assets/apple-touch-icon.png">
+<link rel="manifest" href="assets/manifest.webmanifest">
+<meta name="theme-color" content="#0C0D10">
+<script>
+  // Theme before first paint: saved choice wins, otherwise follow the OS. Keyed on data-theme per BRAND.md.
+  (function () {
+    try {
+      var t = localStorage.getItem('rfs-theme');
+      if (t === 'nightshift' || t === 'dayshift') document.documentElement.setAttribute('data-theme', t);
+    } catch (e) {}
+  })();
+</script>
+<link rel="stylesheet" href="assets/rfs.css">
 <style>
+  @font-face { font-family: "IBM Plex Sans"; font-weight: 400; font-display: swap; src: url(assets/fonts/ibm-plex-sans-latin-400-normal.woff2) format("woff2"); }
+  @font-face { font-family: "IBM Plex Sans"; font-weight: 600; font-display: swap; src: url(assets/fonts/ibm-plex-sans-latin-600-normal.woff2) format("woff2"); }
+  @font-face { font-family: "IBM Plex Sans"; font-weight: 700; font-display: swap; src: url(assets/fonts/ibm-plex-sans-latin-700-normal.woff2) format("woff2"); }
+  @font-face { font-family: "IBM Plex Mono"; font-weight: 400; font-display: swap; src: url(assets/fonts/ibm-plex-mono-latin-400-normal.woff2) format("woff2"); }
+  @font-face { font-family: "IBM Plex Mono"; font-weight: 500; font-display: swap; src: url(assets/fonts/ibm-plex-mono-latin-500-normal.woff2) format("woff2"); }
+  @font-face { font-family: "IBM Plex Mono"; font-weight: 600; font-display: swap; src: url(assets/fonts/ibm-plex-mono-latin-600-normal.woff2) format("woff2"); }
+
+  :root { --glow: 0 0 0 transparent; --card-shadow: none; color-scheme: dark; }
+  :root[data-theme="dayshift"] { color-scheme: light; --card-shadow: 0 1px 0 rgba(0,0,0,.04); }
+  @media (prefers-color-scheme: light) { :root:not([data-theme="nightshift"]) { color-scheme: light; --card-shadow: 0 1px 0 rgba(0,0,0,.04); } }
+
   * { box-sizing: border-box; }
-  html { background: var(--twb-bg-0); scroll-behavior: smooth; }
-  body {
-    margin: 0;
-    background: var(--twb-bg-0);
-    color: var(--twb-text-normal);
-    font-family: var(--twb-font-ui);
-    font-size: 16px;
-    line-height: var(--twb-line-height);
-    -webkit-font-smoothing: antialiased;
-  }
-  ::selection { background: var(--twb-selection); }
-  a { color: var(--twb-accent-alt); text-decoration: none; border-bottom: 1px solid transparent; }
-  a:hover { border-bottom-color: var(--twb-accent-alt); }
-  code { font-family: var(--twb-font-mono); font-size: 0.9em; color: var(--twb-text-soft);
-    background: var(--twb-bg-2); border: 1px solid var(--twb-border); border-radius: var(--twb-radius-s); padding: 1px 6px; }
-  pre { font-family: var(--twb-font-mono); font-size: 13.5px; line-height: 1.62; background: var(--twb-bg-2);
-    border: 1px solid var(--twb-border); border-radius: var(--twb-radius-m); padding: 16px 18px; overflow-x: auto; color: var(--twb-text-soft); }
-  pre code { background: none; border: none; padding: 0; color: inherit; }
-  .wrap { max-width: 920px; margin: 0 auto; padding: 0 24px; }
-  .manifest { font-family: var(--twb-font-mono); font-size: 11px; font-weight: 700; letter-spacing: 0.09em;
-    text-transform: uppercase; color: var(--twb-text-muted); }
-  .manifest .chev { color: var(--twb-accent); }
+  html { background: var(--rfs-bg); scroll-behavior: smooth; }
+  body { margin: 0; background: var(--rfs-bg); color: var(--rfs-text); font-family: var(--rfs-font-sans);
+    font-size: 15px; line-height: 1.6; -webkit-font-smoothing: antialiased; }
+  ::selection { background: color-mix(in srgb, var(--rfs-primary) 28%, transparent); }
+  a { color: var(--rfs-text); text-decoration: underline; text-decoration-color: var(--rfs-line); text-underline-offset: 3px; }
+  a:hover { text-decoration-color: var(--rfs-primary); }
+  code, kbd { font-family: var(--rfs-font-mono); font-size: 13px; }
+  code { background: var(--rfs-raised); border: 1px solid var(--rfs-line); border-radius: 4px; padding: 1px 6px; }
+  pre { font-family: var(--rfs-font-mono); font-size: 13px; line-height: 1.7; background: var(--rfs-code-bg); color: var(--rfs-text);
+    border: 1px solid var(--rfs-line); border-radius: 8px; padding: 16px 18px; overflow-x: auto; margin: 0; }
+  pre code { background: none; border: 0; padding: 0; font-size: inherit; }
+  pre .c { color: var(--rfs-mute); } pre .p { color: var(--rfs-primary); } pre .a { color: var(--rfs-accent); } pre .s { color: var(--rfs-signal); }
+  .wrap { max-width: 1040px; margin: 0 auto; padding: 0 24px; }
+  .label { font-family: var(--rfs-font-mono); font-size: 11px; font-weight: 500; letter-spacing: .08em; text-transform: uppercase; color: var(--rfs-mute); margin: 0 0 10px; }
+  .label::before { content: ""; display: inline-block; width: 18px; height: 3px; border-radius: 2px; background: var(--rfs-primary); vertical-align: middle; margin-right: 10px; }
+  h1, h2, h3 { margin: 0; font-weight: 700; letter-spacing: -0.02em; }
+  h2 { font-size: 22px; font-weight: 600; letter-spacing: -0.01em; line-height: 1.2; margin-bottom: 14px; }
+  p { margin: 0 0 12px; }
+  .mute { color: var(--rfs-mute); }
 
-  header.site { border-bottom: 1px solid var(--twb-border); background: var(--twb-bg-1);
-    position: sticky; top: 0; z-index: 10; backdrop-filter: blur(6px); }
-  header.site .wrap { display: flex; align-items: center; justify-content: space-between; height: 52px; }
-  .brand { display: flex; align-items: center; gap: 10px; }
-  .brand .logo { display: grid; grid-template-columns: 1fr 1fr; gap: 2px; width: 18px; }
-  .brand .logo i { display: block; width: 8px; height: 8px; border-radius: 2px; }
-  .brand .name { font-family: var(--twb-font-mono); font-weight: 700; letter-spacing: 0.04em; color: var(--twb-text-normal); font-size: 14px; }
-  header.site nav a { color: var(--twb-text-muted); font-size: 14px; margin-left: 20px; border: none; }
-  header.site nav a:hover { color: var(--twb-text-normal); }
+  /* header */
+  header.site { position: sticky; top: 0; z-index: 10; background: color-mix(in srgb, var(--rfs-bg) 86%, transparent);
+    backdrop-filter: blur(8px); border-bottom: 1px solid var(--rfs-line); }
+  header.site .wrap { display: flex; align-items: center; justify-content: space-between; height: 56px; gap: 16px; }
+  .brand { display: flex; align-items: center; gap: 12px; text-decoration: none; }
+  .brand img { height: 26px; display: block; }
+  .brand .sep { width: 1px; height: 20px; background: var(--rfs-line); }
+  .brand .name { font-family: var(--rfs-font-mono); font-weight: 600; font-size: 15px; letter-spacing: -0.02em; color: var(--rfs-text); }
+  nav { display: flex; align-items: center; gap: 22px; }
+  nav a { color: var(--rfs-mute); font-size: 14px; text-decoration: none; }
+  nav a:hover { color: var(--rfs-text); }
+  .toggle { font-family: var(--rfs-font-mono); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--rfs-mute);
+    background: var(--rfs-surface); border: 1px solid var(--rfs-line); border-radius: 6px; padding: 7px 10px; cursor: pointer; }
+  .toggle:hover { color: var(--rfs-text); border-color: var(--rfs-mute); }
+  .toggle .night, .toggle .day { display: none; }
+  :root:not([data-theme="dayshift"]) .toggle .night { display: inline; }
+  :root[data-theme="dayshift"] .toggle .day { display: inline; }
+  @media (prefers-color-scheme: light) { :root:not([data-theme="nightshift"]) .toggle .night { display: none; } :root:not([data-theme="nightshift"]) .toggle .day { display: inline; } }
+  @media (max-width: 760px) { nav a:not(.keep) { display: none; } }
+  @media (max-width: 480px) { nav { gap: 12px; } nav a.keep[href*="/wiki/"] { display: none; } }
 
-  .hero { text-align: center; padding: 56px 0 8px; }
-  .hero img.banner { width: 100%; max-width: 820px; height: auto; border: 1px solid var(--twb-border); border-radius: var(--twb-radius-l); }
-  .hero p.lead { font-size: 18px; color: var(--twb-text-soft); max-width: 660px; margin: 26px auto 0; }
-  .cta { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; margin: 28px 0 8px; }
-  .btn { font-family: var(--twb-font-mono); font-size: 13px; font-weight: 700; letter-spacing: 0.04em;
-    padding: 11px 20px; border-radius: var(--twb-radius-m); border: 1px solid var(--twb-border-strong);
-    color: var(--twb-text-normal); background: var(--twb-bg-2); cursor: pointer; }
-  .btn:hover { border-color: var(--twb-accent); }
-  .btn.primary { background: var(--twb-accent); color: var(--twb-text-on-accent); border-color: var(--twb-accent); }
-  .btn.primary:hover { filter: brightness(1.06); }
+  /* hero */
+  .hero { padding: 72px 0 40px; position: relative; overflow: hidden; }
+  .hero .grid-bg { position: absolute; inset: 0; background-image: radial-gradient(var(--rfs-line) 1px, transparent 1px); background-size: 28px 28px; opacity: .55;
+    -webkit-mask-image: linear-gradient(to bottom, #000 40%, transparent); mask-image: linear-gradient(to bottom, #000 40%, transparent); pointer-events: none; }
+  :root:not([data-theme="dayshift"]) .hero .glow { position: absolute; left: -10%; top: -30%; width: 60%; height: 120%;
+    background: radial-gradient(closest-side, color-mix(in srgb, var(--rfs-primary) 22%, transparent), transparent); pointer-events: none; }
+  @media (prefers-color-scheme: light) { :root:not([data-theme="nightshift"]) .hero .glow { display: none; } }
+  .hero .wrap { position: relative; display: grid; grid-template-columns: 1.05fr 1fr; gap: 48px; align-items: center; }
+  @media (max-width: 860px) { .hero .wrap { grid-template-columns: 1fr; } }
+  .hero h1 { font-family: var(--rfs-font-mono); font-size: 56px; line-height: 1.05; letter-spacing: -0.05em; font-weight: 600; }
+  .hero h1::after { content: ""; display: block; width: 72px; height: 4px; border-radius: 2px; background: var(--rfs-primary); margin-top: 16px; }
+  .hero .lead { font-size: 22px; font-weight: 600; letter-spacing: -0.01em; margin: 22px 0 10px; line-height: 1.3; }
+  .hero .sub { color: var(--rfs-mute); font-size: 15px; max-width: 48ch; }
+  .install { margin-top: 26px; background: var(--rfs-surface); border: 1px solid var(--rfs-line); border-radius: 10px; overflow: hidden; box-shadow: var(--card-shadow); }
+  .install .tabs { display: flex; border-bottom: 1px solid var(--rfs-line); background: var(--rfs-raised); }
+  .install .tabs button { font-family: var(--rfs-font-mono); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--rfs-mute);
+    background: none; border: 0; border-right: 1px solid var(--rfs-line); padding: 10px 16px; cursor: pointer; }
+  .install .tabs button[aria-selected="true"] { color: var(--rfs-text); background: var(--rfs-surface); box-shadow: inset 0 -2px 0 var(--rfs-primary); }
+  .install .pane { display: none; padding: 14px 16px; }
+  .install .pane[data-active] { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .install pre { border: 0; padding: 0; background: none; flex: 1; }
+  .install .copy { font-family: var(--rfs-font-mono); font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--rfs-mute);
+    border: 1px solid var(--rfs-line); background: var(--rfs-raised); border-radius: 6px; padding: 6px 10px; cursor: pointer; white-space: nowrap; }
+  .install .copy:hover { color: var(--rfs-text); border-color: var(--rfs-mute); }
+  .install .foot { border-top: 1px solid var(--rfs-line); padding: 10px 16px; font-size: 13px; color: var(--rfs-mute); }
+  .install .foot a { color: var(--rfs-text); }
+  .term { background: var(--rfs-code-bg); border: 1px solid var(--rfs-line); border-radius: 12px; overflow: hidden; box-shadow: var(--card-shadow); }
+  :root:not([data-theme="dayshift"]) .term { box-shadow: 0 0 80px color-mix(in srgb, var(--rfs-primary) 14%, transparent); }
+  @media (prefers-color-scheme: light) { :root:not([data-theme="nightshift"]) .term { box-shadow: var(--card-shadow); } }
+  .term .bar { display: flex; align-items: center; gap: 7px; padding: 11px 14px; background: var(--rfs-raised); border-bottom: 1px solid var(--rfs-line); }
+  .term .bar i { width: 9px; height: 9px; border-radius: 50%; background: var(--rfs-line); }
+  .term .bar span { margin-left: auto; font-family: var(--rfs-font-mono); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--rfs-mute); }
+  .term pre { border: 0; border-radius: 0; padding: 20px 22px; font-size: 13.5px; }
 
-  .shot { max-width: 960px; margin: 40px auto 0; padding: 0 24px; }
-  .shot img { width: 100%; height: auto; border: 1px solid var(--twb-border); border-radius: var(--twb-radius-l); display: block; }
-
-  section { padding: 44px 0; border-top: 1px solid var(--twb-border); }
-  h2 { font-size: 26px; font-weight: 740; color: var(--twb-accent); margin: 10px 0 6px; letter-spacing: -0.01em; }
-  section > .wrap > p { color: var(--twb-text-soft); max-width: 700px; }
-
-  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 16px; margin-top: 26px; }
-  .card { background: var(--twb-bg-1); border: 1px solid var(--twb-border); border-radius: var(--twb-radius-l); padding: 20px; }
-  .card h3 { font-family: var(--twb-font-mono); font-size: 12px; font-weight: 700; letter-spacing: 0.06em;
-    text-transform: uppercase; color: var(--twb-accent); margin: 0 0 8px; }
-  .card p { margin: 0; font-size: 14.5px; color: var(--twb-text-soft); line-height: 1.6; }
-
-  .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-top: 22px; }
-  @media (max-width: 680px) { .cols { grid-template-columns: 1fr; } }
-  .cols h3 { font-size: 16px; color: var(--twb-accent-alt); margin: 0 0 8px; }
-
-  table.keys { width: 100%; border-collapse: collapse; margin-top: 22px; font-size: 14.5px; }
-  table.keys td { border-bottom: 1px solid var(--twb-border); padding: 9px 6px; color: var(--twb-text-soft); }
-  table.keys td.k { font-family: var(--twb-font-mono); color: var(--twb-accent-alt); white-space: nowrap; width: 40%; }
-
-  footer { border-top: 1px solid var(--twb-border); background: var(--twb-bg-1); padding: 28px 0; color: var(--twb-text-muted); font-size: 13.5px; }
-  footer .wrap { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
-
-  .gallery { display: grid; gap: 22px; margin-top: 26px; }
+  /* sections */
+  section { padding: 56px 0; border-top: 1px solid var(--rfs-line); }
+  .two { display: grid; grid-template-columns: 1fr 1fr; gap: 28px; }
+  @media (max-width: 760px) { .two { grid-template-columns: 1fr; } }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(290px, 1fr)); gap: 14px; }
+  .card { background: var(--rfs-surface); border: 1px solid var(--rfs-line); border-radius: 10px; padding: 18px 20px; box-shadow: var(--card-shadow); }
+  .card h3 { font-size: 15px; font-weight: 600; margin-bottom: 8px; }
+  .card p { margin: 0; color: var(--rfs-mute); font-size: 14px; }
+  .card p code, li code, .mute code { font-size: 12px; white-space: nowrap; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th { text-align: left; font-family: var(--rfs-font-mono); font-size: 11px; font-weight: 500; letter-spacing: .08em; text-transform: uppercase; color: var(--rfs-mute);
+    padding: 0 10px 10px; border-bottom: 1px solid var(--rfs-line); }
+  td { padding: 9px 10px; border-bottom: 1px solid var(--rfs-line); vertical-align: top; }
+  td:first-child { font-family: var(--rfs-font-mono); font-size: 13px; white-space: nowrap; }
+  td .k { background: var(--rfs-raised); border: 1px solid var(--rfs-line); border-radius: 4px; padding: 1px 6px; }
+  ul.plain { margin: 0; padding-left: 18px; }
+  ul.plain li { margin: 6px 0; }
+  ul.plain li::marker { color: var(--rfs-primary); }
+  .gallery { display: grid; gap: 28px; }
   .gallery figure { margin: 0; }
-  .gallery img { width: 100%; height: auto; border: 1px solid var(--twb-border); border-radius: var(--twb-radius-l); display: block; }
-  .gallery figcaption { font-family: var(--twb-font-mono); font-size: 12.5px; color: var(--twb-text-muted); margin-top: 10px; letter-spacing: 0.02em; }
-  .gallery .two { display: grid; grid-template-columns: 1.55fr 1fr; gap: 22px; align-items: start; }
-  @media (max-width: 680px) { .gallery .two { grid-template-columns: 1fr; } }
+  .gallery img { width: 100%; height: auto; display: block; border: 1px solid var(--rfs-line); border-radius: 10px; }
+  .gallery figcaption { font-size: 13px; color: var(--rfs-mute); margin-top: 10px; }
+  .gallery .pair { display: grid; grid-template-columns: 1fr 1fr; gap: 28px; }
+  @media (max-width: 760px) { .gallery .pair { grid-template-columns: 1fr; } }
+  .cli-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  @media (max-width: 860px) { .cli-grid { grid-template-columns: 1fr; } }
+  footer { border-top: 1px solid var(--rfs-line); padding: 28px 0 40px; color: var(--rfs-mute); font-size: 13px; }
+  footer .wrap { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 12px; align-items: center; }
+  footer a { color: var(--rfs-mute); }
 </style>
 </head>
 <body>
 
 <header class="site">
   <div class="wrap">
-    <div class="brand">
-      <span class="logo" aria-hidden="true">
-        <i style="background:#63f2ab"></i><i style="background:#6bdcff"></i><i style="background:#f0c674"></i><i style="background:#dce4df"></i>
-      </span>
-      <span class="name">cert-api-tester</span>
-    </div>
+    <a class="brand" href="https://github.com/Real-Fruit-Snacks" aria-label="RFS">
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/Real-Fruit-Snacks/.github/main/assets/rfs-lockup-dark.svg">
+        <img alt="RFS" src="https://raw.githubusercontent.com/Real-Fruit-Snacks/.github/main/assets/rfs-lockup-light.svg" data-lockup>
+      </picture>
+      <span class="sep" aria-hidden="true"></span>
+      <span class="name">certapi</span>
+    </a>
     <nav>
-      <a href="#features">Features</a>
-      <a href="#screenshots">Screenshots</a>
-      <a href="#get">Get it</a>
-      <a href="#how">How it works</a>
-      <a href="https://github.com/Real-Fruit-Snacks/windows-cert-api-tester">GitHub</a>
+      <a href="#install">Install</a>
+      <a href="#whats-in-it">What's in it</a>
+      <a href="#headless">Headless</a>
+      <a href="#screens">Screens</a>
+      <a class="keep" href="https://github.com/Real-Fruit-Snacks/windows-cert-api-tester/blob/main/wiki/README.md">Handbook</a>
+      <a class="keep" href="https://github.com/Real-Fruit-Snacks/windows-cert-api-tester">GitHub</a>
+      <button class="toggle" type="button" id="theme" aria-label="Switch theme"><span class="night">Nightshift</span><span class="day">Dayshift</span></button>
     </nav>
   </div>
 </header>
 
 <div class="hero">
+  <div class="grid-bg" aria-hidden="true"></div>
+  <div class="glow" aria-hidden="true"></div>
   <div class="wrap">
-    <img class="banner" src="assets/banner.svg" alt="Certificate API Tester — client-certificate (mTLS) auth from the Windows store">
-    <p class="lead">A Windows desktop API tester that authenticates to endpoints with a client certificate from your Windows certificate store — and renders whatever they return, even when you don't know the format.</p>
-    <div class="cta">
-      <a class="btn primary" href="https://github.com/Real-Fruit-Snacks/windows-cert-api-tester/releases/latest">Download for Windows</a>
-      <a class="btn" href="https://github.com/Real-Fruit-Snacks/windows-cert-api-tester">View source</a>
+    <div>
+      <p class="label">Windows 10/11 · .NET 9 · mutual TLS</p>
+      <h1>certapi</h1>
+      <p class="lead">mTLS API client for the Windows certificate store</p>
+      <p class="sub">Pick a client certificate from <code>CurrentUser\My</code>, send the request, and Windows signs the handshake. The private key never leaves the store, so smart-card and non-exportable certificates work. A desktop app and a headless command line share one engine.</p>
+
+      <div class="install" id="install">
+        <div class="tabs" role="tablist">
+          <button role="tab" aria-selected="true" data-pane="pwsh">PowerShell</button>
+          <button role="tab" aria-selected="false" data-pane="exe">Download</button>
+          <button role="tab" aria-selected="false" data-pane="src">Source</button>
+        </div>
+        <div class="pane" data-active data-id="pwsh"><pre><code>irm rfs.sh/certapi | iex</code></pre><button class="copy" data-copy="irm rfs.sh/certapi | iex">Copy</button></div>
+        <div class="pane" data-id="exe"><pre><code><span class="c"># two portable exes, no installer, no admin</span>
+ApiTester.App.exe   <span class="c"># the desktop app</span>
+certapi.exe         <span class="c"># the command line</span></code></pre><a class="copy" href="https://github.com/Real-Fruit-Snacks/windows-cert-api-tester/releases/latest">Releases</a></div>
+        <div class="pane" data-id="src"><pre><code>git clone https://github.com/Real-Fruit-Snacks/windows-cert-api-tester
+dotnet publish src/ApiTester.Cli -c Release -r win-x64 --self-contained -o publish</code></pre><button class="copy" data-copy="git clone https://github.com/Real-Fruit-Snacks/windows-cert-api-tester && cd windows-cert-api-tester && dotnet publish src/ApiTester.Cli -c Release -r win-x64 --self-contained -o publish">Copy</button></div>
+        <div class="foot">Self-contained single-file executables. Nothing to install first; the .NET runtime is inside. <a href="https://github.com/Real-Fruit-Snacks/windows-cert-api-tester/releases/latest">Latest release</a></div>
+      </div>
     </div>
-    <p class="manifest" style="margin-top:6px"><span class="chev">&#10095;</span> SELF-CONTAINED EXE &#183; NO INSTALL &#183; NO ADMIN</p>
+    <div class="term" aria-label="Example: certapi send with a Windows-store client certificate">
+      <div class="bar"><i></i><i></i><i></i><span>certapi</span></div>
+<pre><code><span class="p">$</span> certapi send <span class="a">https://api.internal/orders</span>
+    --cert <span class="c">"CN=matt"</span>
+
+<span class="s">200 OK</span><span class="c">  ·  48 ms  ·  1.2 kB  ·  application/json</span>
+TLS 1.3<span class="c">  ·  TLS_AES_256_GCM_SHA384</span>
+<span class="c">client certificate</span> <span class="s">presented</span>
+<span class="c">key never left the store</span>
+
+<span class="c">{</span>
+  <span class="a">"order"</span>: <span class="s">"A-10422"</span><span class="c">,</span>
+  <span class="a">"status"</span>: <span class="s">"shipped"</span>
+<span class="c">}</span></code></pre>
+    </div>
   </div>
 </div>
 
-<div class="shot">
-  <img src="assets/screenshot.png" alt="Certificate API Tester with a JSON response and connection diagnostics">
-</div>
-
-<section id="what">
-  <div class="wrap">
-    <p class="manifest"><span class="chev">&#10095;</span> THE PROBLEM</p>
-    <h2>Client-certificate endpoints, without the file wrangling</h2>
-    <p>Some internal sites don't take a password — they ask your browser to choose a certificate and complete a mutual-TLS handshake. Most API clients want that certificate and its private key as files on disk, which enterprise and smart-card certificates deliberately don't allow. Certificate API Tester pulls the certificate straight from your Windows store and lets Windows sign the handshake, so the private key never has to leave — and never has to be exportable. The certificate is optional, so it also works as a general-purpose API client.</p>
-  </div>
-</section>
-
-<section id="features">
-  <div class="wrap">
-    <p class="manifest"><span class="chev">&#10095;</span> WHAT IT DOES</p>
-    <h2>Features</h2>
-    <div class="grid">
-      <div class="card"><h3>Windows store certs</h3><p>Pick a client certificate from <code>CurrentUser\My</code> with subject, issuer, thumbprint, expiry, and a filter box. Non-exportable and smart-card keys work — Windows signs the handshake.</p></div>
-      <div class="card"><h3>Certificate optional</h3><p>Leave it on &ldquo;no certificate&rdquo; to send an ordinary request. It doubles as a general API tester for endpoints that don't require mutual TLS.</p></div>
-      <div class="card"><h3>Full request builder</h3><p>Any method, a key-value query-parameter grid and headers grid, Bearer/Basic auth helpers, a body with a content-type selector, a timeout, and a Cancel button.</p></div>
-      <div class="card"><h3>Request tabs</h3><p>Keep several requests open at once, each with its own website, parameters, headers, body, auth, certificate, and response. New with <code>+</code> or Ctrl+T; your open tabs return next launch.</p></div>
-      <div class="card"><h3>Query parameters</h3><p>A dedicated Params tab with an enable/key/value grid. Paste a URL with a <code>?query</code> and it splits into the grid; it recombines, correctly encoded, when you send.</p></div>
-      <div class="card"><h3>Collections</h3><p>Save named requests into folders and reopen them in a tab. A History / Collections switch in the sidebar, with save, folder, rename, and delete. Persists between sessions.</p></div>
-      <div class="card"><h3>Known-good endpoints</h3><p>Every saved request remembers its last result &mdash; a mint dot for a 2xx, red for a failure, with a tooltip showing when it was last checked and what it returned. See at a glance which endpoints are verified working.</p></div>
-      <div class="card"><h3>Request chains</h3><p>A CHAINS sidebar beside History and Collections: pick saved requests into an ordered chain, set per-step stop-on-failure, and name the environment its captures write into &mdash; so a token captured by step one is a <code>{{variable}}</code> for step two. Built <strong>and run</strong> in the app &mdash; a <strong>Run chain</strong> button opens a window with a PASS/FAIL/SKIP row per step and the selected step's actual response, cancellable mid-run &mdash; and the same chain still runs headless with <code>certapi run --chain "&lt;name&gt;"</code>; a halted chain reports the steps it skipped rather than dropping them.</p></div>
-      <div class="card"><h3>Environments &amp; variables</h3><p>Define <code>{{variable}}</code> values per environment and switch from the ENV selector. Substituted in URL, query, headers, body, and auth when you send; unresolved tokens are flagged.</p></div>
-      <div class="card"><h3>Capture &amp; reuse auth tokens</h3><p>Grab a value from a response &mdash; a JSON field like <code>access_token</code> or a header &mdash; into a <code>{{variable}}</code>. Call your auth endpoint once, then send <code>Authorization: Bearer {{token}}</code> on every later request. In the app (a Capture tab) and headless (<code>certapi send --capture</code>) &mdash; or skip the setup entirely with automatic detection.</p></div>
-      <div class="card"><h3>Session cookies</h3><p>The app keeps a cookie jar for the session like a browser &mdash; a login's <code>Set-Cookie</code> rides along on later requests. Headless, <code>certapi run --cookies</code> shares a jar across a suite.</p></div>
-      <div class="card"><h3>Automatic tokens</h3><p>Log in once &mdash; the token in the response is detected, scoped to that host, and attached to follow-on requests automatically. GUI, CLI, and MCP server alike. Captured tokens are encrypted at rest for your Windows user, not stored in plain text.</p></div>
-      <div class="card"><h3>Endpoint discovery</h3><p>Probe a wordlist against a website to map an undocumented API &mdash; in the app's Discover window or headless with <code>certapi fuzz</code>. Hits open as tabs or save as a collection.</p></div>
-      <div class="card"><h3>Data-driven runs</h3><p>Table-test an endpoint: <code>certapi run &lt;path&gt; --data users.csv</code> (or JSON) repeats the request once per row, each row's columns becoming <code>{{variables}}</code> &mdash; pair with assertions to check many inputs in one command.</p></div>
-      <div class="card"><h3>Response assertions</h3><p>Add tests to a request &mdash; assert on status, response time, a header, a JSON body path, or the body text (<code>==</code>, contains, matches, exists, <code>&lt;</code>, &hellip;). <code>certapi run</code> turns a collection into a real pass/fail suite; a request with no tests still passes on any 2xx.</p></div>
-      <div class="card"><h3>See what the stack did</h3><p><code>--trace</code> reports .NET's own networking events as they happen &mdash; DNS, TCP connect, TLS handshake, connection established &mdash; with a filter and a file option. <code>--wire</code> goes lower and prints <strong>the plaintext bytes of the exchange</strong>, hex and ASCII for anything that isn't text: the one thing a packet capture can't give you on an encrypted connection without its keys, and it needs <strong>no driver and no administrator rights</strong>. On HTTP/2, <code>--frames</code> reads the same capture as frames &mdash; SETTINGS, window updates, <code>RST_STREAM</code>, and the <code>GOAWAY</code> code and debug text that explain a gateway hanging up.</p></div>
-      <div class="card"><h3>Connection reuse, answered</h3><p><code>certapi connections &lt;url&gt; -n 10</code> makes the requests and reports which connection each went out on &mdash; how many opened, how many requests each served, and a plain verdict. Reuse skips a TCP <em>and</em> a TLS handshake, which is most of the time a small remote request takes, and it's otherwise invisible because the responses look identical either way. <code>bench --pool</code> does the same for a load run.</p></div>
-      <div class="card"><h3>Markdown notes (Obsidian&nbsp;&amp;&nbsp;co.)</h3><p><code>certapi export markdown</code> turns the workspace into a folder of linked notes &mdash; one per request, plus environments and chains, with frontmatter and <code>[[wikilinks]]</code>. <strong>An Obsidian vault is just a folder of markdown</strong>, so there's no plugin to install and Logseq or a docs repo works the same. <code>doctor --md</code> keeps a diagnosis verbatim; <code>run --md</code> keeps a suite result with each failed assertion and what arrived instead. Credentials &mdash; including ones hiding in a query string &mdash; are redacted by default, because vaults sync.</p></div>
-      <div class="card"><h3>Response diffing</h3><p>Not just &ldquo;did it respond&rdquo; but &ldquo;did it respond the same&rdquo;. <code>certapi send --diff &lt;baseline&gt;</code> compares against a recorded <code>.har</code>, a <code>--json</code> response file, or the request's own <code>known-good</code> response &mdash; structurally when both sides are JSON (naming each changed path), a one-line summary for text, size and equality only for binary. Volatile headers are ignored by default; <code>--diff-fail</code> fails a build, and <code>certapi run --diff-har</code> turns a captured session into a regression test. A <strong>Diff</strong> response tab does the same in the app.</p></div>
-      <div class="card"><h3>Certificate from a file</h3><p>Use a client certificate that isn't in the Windows store &mdash; load a <code>.pfx</code>/<code>.p12</code> or <code>.pem</code>/<code>.crt</code> with <strong>From file&hellip;</strong> in the app, or <code>--cert-file</code> (with <code>--cert-password</code> / <code>--key-file</code>) on the command line.</p></div>
-      <div class="card"><h3>File uploads</h3><p>Test upload endpoints: switch the app's <strong>Body</strong> tab to <strong>Form data (multipart)</strong> and tick <strong>File</strong> to upload &mdash; or headless with <code>certapi send -F "field=value" -F "file=@path"</code>. Saves into collections and runs in suites.</p></div>
-      <div class="card"><h3>GraphQL</h3><p><code>certapi send &lt;url&gt; --graphql "&lt;query&gt;" --gql-variables '{"id":1}'</code> posts a correctly-formed GraphQL request (JSON <code>{ query, variables }</code>) &mdash; hit GraphQL endpoints from the command line.</p></div>
-      <div class="card"><h3>Copy as code</h3><p>Turn the current request into a snippet with <strong>Copy as &#x25BE;</strong> &mdash; cURL, PowerShell, Python (<code>requests</code>), or C# (<code>HttpClient</code>), with variables resolved &mdash; to drop into a script or share.</p></div>
-      <div class="card"><h3>Import from cURL</h3><p>Paste a <code>curl</code> command and it opens a ready-to-send tab — method, URL, query, headers, body, and auth all filled in. Understands the common flags, quoting, and line continuations.</p></div>
-      <div class="card"><h3>Import a Postman collection</h3><p><code>certapi import postman</code> reads the v2.x export most teams already have: folders, URLs, query rows, headers, raw/urlencoded/formdata bodies, and bearer/basic/apikey auth, with <code>{{variables}}</code> importing unchanged and collection variables becoming an environment (secrets stay secret). Anything unsupported is a named warning, never a silent drop.</p></div>
-      <div class="card"><h3>Import OpenAPI</h3><p>Point it at a JSON OpenAPI 3.x or Swagger 2.0 file to generate a collection of requests, foldered by tag, with the server as each request's website.</p></div>
-      <div class="card"><h3>Export as OpenAPI</h3><p>Write a folder &mdash; or all collections &mdash; as an OpenAPI 3.0 JSON file: folders become tags, requests become operations with parameters and body examples, and known-good notes become descriptions. Auth is exported as a scheme only &mdash; never the secrets.</p></div>
-      <div class="card"><h3>Pop-out response views</h3><p>Open a single response view or the whole response panel &mdash; tabs and all &mdash; in its own window. Everything stays live, including the Network trace and Rendered pages, and closing the window puts the content back.</p></div>
-      <div class="card"><h3>Save / load workspaces</h3><p>Export everything &mdash; tabs, collections with known-good results, environments, saved websites, history &mdash; to one JSON file and load it back later, merging or replacing. Keep project snapshots or share a ready-to-use setup: secrets in it are encrypted for your Windows user, so moving the file to another user or machine brings everything across except those secrets. Headless, <code>certapi export workspace</code> strips secrets by default instead (<code>--include-secrets</code> keeps them, still encrypted for you).</p></div>
-      <div class="card"><h3>Headless mode</h3><p>A separate <code>certapi.exe</code> drives everything from scripts: one-off mTLS requests, saved requests and collections as pass/fail suites, certificate listing, self-test, and import/export &mdash; body to stdout, diagnostics to stderr, meaningful exit codes.</p></div>
-      <div class="card"><h3>Latency &amp; load bench</h3><p><code>certapi bench &lt;url&gt; -n 500 -c 20</code> sends one request over and over down the same certificate-authenticated path and reports how many succeeded, the rate, and the min/p50/p90/p99/max latencies (<code>--json</code>, <code>--duration</code>, <code>--warmup</code> too). Connections are pooled and reused, so only the first request to an origin pays the TCP connect and TLS handshake &mdash; later requests measure the request and response alone; <code>--warmup</code> discards that first-connection cost. A request through a proxy still opens its own connection every time. Retries are forced off so they can't hide the failure rate; a bench never writes state and exits 0 whatever the numbers say, as long as something answered &mdash; exit 1 only when nothing did.</p></div>
-      <div class="card"><h3>Local mTLS gateway</h3><p><code>certapi serve</code> runs a loopback reverse proxy to a certificate-protected site: point any local app's base URL at <code>http://localhost:&lt;port&gt;</code> and it reaches the upstream with your client certificate attached &mdash; no mTLS code of its own. Mount several upstreams behind one port with <code>--upstream /api=https://&hellip;</code>, longest prefix wins. Loopback-only, optional token; add <code>--tls</code> to serve the gateway itself over HTTPS.</p></div>
-      <div class="card"><h3>Gateway for web pages</h3><p>Add <code>--browser</code> and a real web page can use the gateway: Cross-Origin Resource Sharing (CORS) preflights are answered at the gateway (including Chrome's Private Network Access check, only for an origin the allowlist already accepts), <code>Set-Cookie</code> attributes are rewritten so the browser actually stores the session, a redirect aimed at the upstream is pointed back at the gateway, and page WebSockets pass straight through &mdash; each also available as its own flag, plus <code>--cors-max-age</code> to control how long a preflight answer is cached. Independently, <code>--request-header</code>/<code>--response-header</code> set and <code>--remove-request-header</code>/<code>--remove-response-header</code> strip a header on forwarded traffic, with or without <code>--browser</code> &mdash; removal wins over setting, and the headers that frame the HTTP message (plus <code>Host</code>) are refused rather than silently ignored. The default relay stays byte-faithful.</p></div>
-      <div class="card"><h3>MCP server for AI agents</h3><p><code>certapi mcp</code> exposes certapi over the Model Context Protocol: an AI agent can send mTLS requests, run saved requests and whole chains exactly as <code>certapi run</code> would (saved transport, assertions, captures), call gRPC services, and read the workspace as resources with secrets redacted &mdash; using a certificate you pin at launch and a host allowlist checked on every call, including each chain step. Redirects are never followed, pinned hosts need no <code>--insecure</code>, and the workspace is never written back. JSON-RPC over stdio, nothing on the network.</p></div>
-      <div class="card"><h3>Rendered website view</h3><p>A Rendered tab opens the URL as a web page and fetches <em>every</em> resource &mdash; document, CSS, JS, images, XHR &mdash; with your client certificate, so a cert-protected site renders fully. Loads on demand via the Windows WebView2 runtime.</p></div>
-      <div class="card"><h3>Built-in help</h3><p>A <strong>?</strong> in the title bar (or F1) opens a Help &amp; Reference window covering every feature, the keyboard shortcuts, and an About panel &mdash; all embedded, so it works with no web access.</p></div>
-      <div class="card"><h3>Local test server</h3><p>A <strong>Mock server</strong> button (and <code>certapi mock</code>) runs a standing server you can fire requests at: it echoes each request as JSON and serves <code>/status/&lt;code&gt;</code>, <code>/sse</code>, <code>/token</code>, <code>/windows-auth</code>, <code>/cookie-auth</code>, and a WebSocket echo &mdash; over plain HTTP, HTTPS, or mutual TLS (it generates and writes out the certificates). Point the app at itself to exercise every feature without a real API.</p></div>
-      <div class="card"><h3>Windows Integrated Auth</h3><p>For internal sites that authenticate with your Windows identity: a <strong>Windows (integrated)</strong> auth type signs in with your logged-in account (SSO) or explicit <code>DOMAIN\user</code> credentials. <code>certapi send --windows-auth</code> does it headless. Kerberos or NTLM is negotiated automatically.</p></div>
-      <div class="card"><h3>OAuth 2.0 tokens</h3><p>A <strong>Get OAuth 2.0 token</strong> button runs the client-credentials, password, and refresh grants, plus authorization-code with PKCE (opens your browser, catches the loopback redirect). The token is stored for the API's host and filled into the Bearer field. <code>certapi token</code> does the same headless; the token endpoint can be mTLS.</p></div>
-      <div class="card"><h3>Session capture</h3><p>For sites you log into through a web page: a <strong>Capture session</strong> button opens a browser (presenting your client certificate), you log in on the site itself, and it captures the resulting session cookies and any bearer token &mdash; scoped per website and attached automatically to later requests, in the app and headless via <code>certapi</code>. Your password is never seen or stored.</p></div>
-      <div class="card"><h3>Live streaming</h3><p>A <strong>Stream</strong> button opens a console for <code>ws://</code>/<code>wss://</code> WebSockets (send messages, watch replies) or <code>text/event-stream</code> Server-Sent Events (watch events arrive), using your selected client certificate. <code>certapi ws</code> and <code>certapi sse</code> do the same headless.</p></div>
-      <div class="card"><h3>Light or dark theme</h3><p>The Terminal Workbench palette ships in both. A sun/moon button in the title bar toggles between them live &mdash; no restart &mdash; and the choice is remembered and applied to every window, including the native title bar.</p></div>
-      <div class="card"><h3>Reads any response</h3><p>Pretty-prints JSON and XML with syntax highlighting, shows HTML/text, hex-dumps binary, and sniffs the body when the content type is missing or lying.</p></div>
-      <div class="card"><h3>Why can't I reach this?</h3><p><code>certapi doctor &lt;url&gt;</code> connects one stage at a time — URL, proxy decision, DNS, TCP, proxy tunnel, TLS handshake, HTTP — and names the stage that broke, with timings. It shows what a normal request can't: the certificate authorities the server accepts client certificates from <em>matched against yours</em>, evidence of TLS interception (why a client cert can't get through), the proxy a PAC script actually picked, and whether a captive portal or a missing VPN is the real problem.</p></div>
-      <div class="card"><h3>Which proxy do I actually get?</h3><p><code>certapi proxy &lt;url&gt;</code> shows the machine's proxy configuration and, for one URL, the answer computed by Windows' own PAC engine beside the one .NET gives. When they disagree, that's why it works in your browser but not here.</p></div>
-      <div class="card"><h3>Connection diagnostics</h3><p>See the negotiated TLS version and cipher, whether your client cert was actually presented, and the server's certificate and chain.</p></div>
-      <div class="card"><h3>Network trace</h3><p>A Network tab like a browser's network panel &mdash; every HTTP call logged, including every resource the Rendered view fetches, with method, status, type, size, timing, and a client-certificate marker. Filter by text, status class, or cert-only; click a row for a resizable details pane with headers; right-click to copy the URL or a curl command.</p></div>
-      <div class="card"><h3>Saved websites</h3><p>Save a base URL like <code>https://internal.corp</code> and the URL box becomes just the path after it — fire off <code>/api/thing</code> without retyping the host.</p></div>
-      <div class="card"><h3>Request history</h3><p>A sidebar of recent requests, labelled by path. Click one to reload the entire request — website, cert, headers, auth — and the response it returned.</p></div>
-      <div class="card"><h3>Copy &amp; export</h3><p>Copy the response body, copy the request as a cURL command, and save any response with a sensible file extension.</p></div>
-      <div class="card"><h3>Clear failures</h3><p>Tells &ldquo;certificate refused&rdquo; apart from &ldquo;certificate revoked&rdquo; and &ldquo;server not trusted&rdquo; &mdash; two distinct findings, not one &mdash; plus &ldquo;connection refused&rdquo;, a name-resolution failure, a proxy failure, and a timeout &mdash; and shows the full cause chain underneath (socket error codes, TLS alerts), not just the top-line message. Off-by-default insecure bypass for private CAs.</p></div>
-      <div class="card"><h3>Proxy under your control</h3><p>Follows the machine's proxy by default &mdash; WPAD auto-detect, a PAC script, Windows credentials &mdash; but a Transport tab (and <code>--proxy</code> / <code>--no-proxy</code> / <code>--proxy-user</code>) lets a request name its own proxy or bypass one entirely, and <code>--noproxy &lt;list&gt;</code> bypasses it for just the hosts you name (<code>NO_PROXY</code> conventions, honored from the environment too). Going direct also restores the TLS diagnostics a proxy hides, and Diagnostics names the rule that bypassed it.</p></div>
-      <div class="card"><h3>Visible redirects</h3><p>Every 3xx hop is recorded and shown &mdash; in the Network trace, Diagnostics, and <code>--show-redirects</code> &mdash; including the two facts a browser hides: a cross-origin hop drops your <code>Authorization</code> header, and a hop to another host presents your client certificate somewhere you didn't name. Stop at the 3xx with <code>--no-redirect</code>, cap the chain with <code>--max-redirs</code>.</p></div>
-      <div class="card"><h3>Pin a host to an address</h3><p><code>--resolve host:port:ip</code> dials a chosen address while the TLS server name and <code>Host</code> header keep the original hostname &mdash; test one node behind a load-balanced DNS name. <code>--all-ips</code> sends to every resolved address and prints a per-address comparison. <code>--http1.1</code> / <code>--http2</code> / <code>--http3</code> pin the HTTP version when a gateway treats them differently <code>--http1.1</code> / <code>--http2</code> pin the HTTP version when a gateway treats them differently.mdash; HTTP/3 rides QUIC, so a downgrade-prone middlebox can be caught in the act.</p></div>
-      <div class="card"><h3>Retries with backoff</h3><p><code>--retry 3</code> on <code>send</code>, <code>run</code>, and <code>fuzz</code> survives a flaky internal endpoint without a shell loop: <code>429,502,503,504</code> by default, from 500 ms doubling with jitter to a 30-second cap, honoring a server's <code>Retry-After</code>. Only GET/HEAD/OPTIONS/PUT/DELETE retry unless you add <code>--retry-unsafe</code> &mdash; re-sending an unconfirmed POST can charge a card twice &mdash; and a refused certificate is never retried, since it would only fail slower. A <strong>Retries</strong> group on the Transport tab saves it with the request.</p></div>
-      <div class="card"><h3>Built-in self-test</h3><p>One click stands up a local mutual-TLS server and proves the whole certificate path end to end — no real endpoint required.</p></div>
-      <div class="card"><h3>HAR capture &amp; replay</h3><p>Record every request into a well-formed HTTP Archive (HAR) file with <code>--har trace.har</code> &mdash; redirect hops included, secret values redacted by default. Replay one later with <code>certapi run session.har</code>, this time with your client certificate attached, which is the one thing a browser's own HAR export can never do.</p></div>
-      <div class="card"><h3>Per-site certificate trust</h3><p>Pin the exact server-certificate thumbprint one host must present &mdash; narrower than the blanket &ldquo;ignore server cert errors&rdquo; toggle. <code>certapi trust add &lt;host&gt; --from-url &lt;url&gt;</code> captures and pins it in one step; the app offers &ldquo;Trust &amp; retry&rdquo; on an untrusted certificate and a manager to review the pins.</p></div>
-      <div class="card"><h3>HAR &rarr; OpenAPI</h3><p><code>certapi export openapi --from-har session.har -o api.json</code> turns a captured HTTP Archive (HAR) session into an OpenAPI 3.0 document. Repeated calls to the same endpoint collapse into one operation, identifier-looking path segments become <code>{id}</code> conservatively &mdash; digits, a Universally Unique Identifier (UUID), or a long hexadecimal string, only when the value actually varies &mdash; responses of 400 and above are skipped, and redacted header values are never written. In the app, Import &#9656; &rarr; <strong>Export OpenAPI from HAR file&hellip;</strong> does the same.</p></div>
-      <div class="card"><h3>Mock from HAR</h3><p><code>certapi mock --har session.har</code> serves a captured session back as a fake backend instead of the built-in routes, so an application or test suite can develop offline against a recorded API. Matching goes from exact method &amp; path &amp; query, to method &amp; path, to <code>--no-match-status</code> (default 404); repeats replay in recorded order. The Mock server window's <strong>From HAR&hellip;</strong> button does the same in the app.</p></div>
-      <div class="card"><h3>Gateway over HTTPS</h3><p><code>certapi serve --tls</code> serves the gateway itself over HTTPS on <code>127.0.0.1</code> with a generated, cached certificate, so <code>Secure</code>, <code>SameSite=None</code>, and <code>__Host-</code>/<code>__Secure-</code> cookies all work through it &mdash; closing a limitation of the plaintext gateway. The first bind needs an elevated prompt; <code>--tls-trust</code> installs the certificate so the browser stops warning, reversibly with <code>--tls-untrust</code>.</p></div>
-      <div class="card"><h3>gRPC calls</h3><p>Reach a gRPC service over HTTP/2 with your Windows-store client certificate &mdash; the reason to use <code>certapi grpc</code> instead of <code>grpcurl</code> behind mutual TLS. <code>grpc list</code> discovers services and methods via server reflection, or from a compiled descriptor set with <code>--protoset &lt;file&gt;</code> (produced by <code>protoc --descriptor_set_out=&hellip; --include_imports</code>) when a server has reflection turned off &mdash; <code>grpc list --protoset</code> needs no server at all. <code>grpc call &lt;Service/Method&gt; -d '&lt;json&gt;'</code> invokes one &mdash; unary, server-streaming, client-streaming, or bidirectional, with the kind coming from the service's own definition rather than a flag &mdash; JSON in and JSON out, with a server-streaming or bidirectional response printed one message per line as it arrives (<code>--max-messages</code> stops it early). For a client-streaming or bidirectional method, each repeated <code>-d</code> and each line read from standard input is sent as one message. Well-known Protobuf types render in their canonical forms &mdash; a <code>Timestamp</code> as an RFC 3339 string, not <code>{"seconds":&hellip;,"nanos":&hellip;}</code>. A pinned host needs no <code>--insecure</code>, and <code>certapi serve</code> does not proxy gRPC.</p></div>
+<section id="why">
+  <div class="wrap two">
+    <div>
+      <p class="label">Why</p>
+      <h2>Some endpoints don't take a password</h2>
+    </div>
+    <div>
+      <p>They ask the browser to choose a certificate and complete a mutual-TLS handshake. Most API clients want that certificate and its private key as files on disk, which enterprise and smart-card certificates deliberately don't allow. certapi uses the certificate where it already is, and the operating system does the signing.</p>
+      <p class="mute">The certificate is optional. With none selected it is an ordinary HTTP client, so the same collections, environments and assertions work against anything else too.</p>
     </div>
   </div>
 </section>
 
-<section id="screenshots">
+<section id="whats-in-it">
   <div class="wrap">
-    <p class="manifest"><span class="chev">&#10095;</span> A LOOK INSIDE</p>
-    <h2>Screenshots</h2>
+    <p class="label">What's in it</p>
+    <h2>One engine, two front ends</h2>
+    <div class="cards">
+      <div class="card"><h3>Certificates and networks</h3><p>Windows store (<code>CurrentUser\My</code>, <code>LocalMachine\My</code>), picked by subject, issuer or serial, or a <code>.pfx</code>/<code>.pem</code> file; a smart-card PIN supplied ahead for headless jobs. Server pins by leaf, issuer or key; a private root from a file with <code>--ca-file</code>; revocation checking. System proxy, PAC, SOCKS, bypass lists, <code>--offline</code>.</p></div>
+      <div class="card"><h3>Requests</h3><p>Tabs, collections, environments with <code>{{variables}}</code>, response captures, request chains, assertions, data-driven runs from CSV/JSON, response diffing against a baseline. Import cURL, Postman, OpenAPI, HAR; export OpenAPI, HAR, markdown notes.</p></div>
+      <div class="card"><h3>Diagnostics</h3><p><code>doctor</code> connects one stage at a time and names the one that broke, including the CAs the server accepts client certificates from, matched against yours. <code>--trace</code>, <code>--wire</code> and <code>--frames</code> show what the stack did, down to the plaintext bytes. No driver, no admin.</p></div>
+      <div class="card"><h3>Gateway and mock</h3><p><code>serve</code> is a local gateway that adds your certificate for apps that can't, in front of one site or many: named sites, a certificate and settings per site, one origin each with <code>--vhost</code>, logins across hosts with <code>--browser</code>, a whole gateway kept in a profile. <code>mock</code> is a standing test server, or a replay of a captured HAR.</p></div>
+      <div class="card"><h3>Auth</h3><p>Bearer, Basic, OAuth 2.0 (client credentials, password, refresh, auth-code with PKCE, device code), Windows Integrated (Kerberos/NTLM), browser session capture, and automatic token reuse per host. Secrets are DPAPI-encrypted at rest.</p></div>
+      <div class="card"><h3>Automation</h3><p><code>run</code> turns a collection into a pass/fail suite with exit codes for CI. <code>bench</code> reports p50/p90/p99 latency over a pooled connection. <code>grpc</code> calls services via reflection or a descriptor set. <code>mcp</code> exposes all of it to an AI agent behind a host allowlist.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="headless">
+  <div class="wrap">
+    <p class="label">Headless</p>
+    <h2><code>certapi</code> on the command line</h2>
+    <div class="cli-grid">
+      <pre><code><span class="c"># one request, certificate from the store</span>
+certapi send https://internal.corp/api/orders --cert <span class="a">"CN=matt"</span>
+
+<span class="c"># log in, capture the token, reuse it</span>
+certapi send https://internal.corp/auth --capture token=access_token --workspace team.json
+certapi send https://internal.corp/api/orders --workspace team.json -H <span class="a">"Authorization: Bearer {{token}}"</span>
+
+<span class="c"># a collection as a pass/fail suite (exit 1 on any failure)</span>
+certapi run <span class="a">"internal api"</span> --env Prod --json
+
+<span class="c"># why can't I reach this?</span>
+certapi doctor https://internal.corp/api/orders --cert <span class="a">"CN=matt"</span></code></pre>
+      <pre><code><span class="c"># a local gateway for an app with no mTLS of its own</span>
+certapi serve https://internal.corp --port 8819 --cert <span class="a">"CN=matt"</span> --browser
+
+<span class="c"># many sites on one gateway: check the table, then start it from a profile</span>
+certapi serve --port 8819 --upstream api=https://api.corp --upstream hr=https://hr.corp --check
+certapi serve --profile corp
+
+<span class="c"># the bytes, as framed and as received; no driver, no admin</span>
+certapi send https://internal.corp/api/orders --wire
+
+<span class="c"># gRPC behind mutual TLS</span>
+certapi grpc call api.internal:5001 my.pkg.Greeter/SayHello -d <span class="a">'{"name":"Ada"}'</span>
+
+<span class="c"># stream, bench, mock, MCP</span>
+certapi sse https://internal.corp/events --max-events 5
+certapi bench https://api.internal/health -n 500 -c 20
+certapi mock --har session.har --port 8770
+certapi mcp --cert <span class="a">"CN=matt"</span> --allow internal.corp</code></pre>
+    </div>
+    <p class="mute" style="margin-top:14px">Body to stdout, diagnostics to stderr. Exit codes: 0 success · 1 failure · 2 usage · 3 data. <code>certapi help &lt;command&gt;</code> lists every option; the <a href="https://github.com/Real-Fruit-Snacks/windows-cert-api-tester/blob/main/wiki/21-CLI-Reference.md">CLI reference</a> has them all on one page.</p>
+  </div>
+</section>
+
+<section id="screens">
+  <div class="wrap">
+    <p class="label">Screens</p>
+    <h2>The desktop app</h2>
     <div class="gallery">
       <figure>
-        <img src="assets/shot-capture.png" alt="Session capture window — logging in on the site and capturing the session">
-        <figcaption><strong>Session capture</strong> &mdash; log in on the site itself; the session cookies and any bearer token are captured and reused automatically, in the app and headless. Your password is never seen.</figcaption>
+        <img src="assets/screenshot.png" alt="certapi desktop app with a JSON response and connection diagnostics" loading="lazy">
+        <figcaption>Request editor, response views (Pretty, Raw, Headers, Diagnostics, Network, Rendered, Diff) and the History / Collections / Chains sidebar.</figcaption>
       </figure>
-      <figure>
-        <img src="assets/shot-rendered.png" alt="Rendered website view — a page rendered through the client certificate">
-        <figcaption>Rendered view &mdash; every resource on the page (HTML, CSS, JS, images, XHR) is fetched with your client certificate.</figcaption>
-      </figure>
-      <div class="two">
-        <figure>
-          <img src="assets/shot-collections.png" alt="Collections sidebar with folders of saved requests and known-good markers">
-          <figcaption>Collections &mdash; saved requests with known-good markers, plus OpenAPI export.</figcaption>
-        </figure>
-        <figure>
-          <img src="assets/shot-environments.png" alt="Environments and variables editor">
-          <figcaption>Environments &amp; <code>{{variables}}</code>.</figcaption>
-        </figure>
-      </div>
-      <figure>
-        <img src="assets/shot-network.png" alt="Network trace tab listing every HTTP request">
-        <figcaption>Network trace &mdash; every request the page made, like a browser's network panel, each fetched through your certificate.</figcaption>
-      </figure>
-      <figure>
-        <img src="assets/shot-mock.png" alt="Mock server window listing its routes">
-        <figcaption>Built-in mock server &mdash; echoes requests and serves <code>/status</code>, <code>/sse</code>, <code>/token</code>, <code>/windows-auth</code>, <code>/cookie-auth</code>, and a WebSocket echo, over HTTP / TLS / mTLS.</figcaption>
-      </figure>
-      <figure>
-        <img src="assets/shot-cli.png" alt="certapi command-line help listing every command">
-        <figcaption><code>certapi</code> &mdash; the same engine without the window: <code>send</code>, <code>run</code>, <code>fuzz</code>, <code>token</code>, <code>ws</code>/<code>sse</code>, <code>mock</code>, <code>serve</code>, <code>mcp</code>, and more, for scripts, CI, and scheduled checks.</figcaption>
-      </figure>
-      <figure>
-        <img src="assets/shot-help.png" alt="In-app Help &amp; Reference window">
-        <figcaption>Built-in Help &mdash; every feature explained, embedded so it works with no web access.</figcaption>
-      </figure>
-      <figure>
-        <img src="assets/shot-discover.svg" alt="The Discover endpoints window colour-coding each probe by outcome">
-        <figcaption><strong>Discover endpoints</strong> &mdash; probe a wordlist against a website and see what exists, colour-coded by outcome; double-click a hit to open it, or save them all as a collection.</figcaption>
-      </figure>
-      <figure>
-        <img src="assets/shot-fuzz.svg" alt="certapi fuzz discovering endpoints from the command line">
-        <figcaption>The same discovery headless with <code>certapi fuzz</code> &mdash; a captured login token is reused automatically on later probes to the same host.</figcaption>
-      </figure>
-      <figure>
-        <img src="assets/shot-gateway.svg" alt="certapi serve — a local mTLS gateway forwarding requests to a certificate-protected site">
-        <figcaption>Headless <code>certapi serve</code> &mdash; a local gateway; an app points its base URL at the port and reaches a certificate-protected site with no mTLS code of its own. <code>--browser</code> makes it usable straight from a web page.</figcaption>
-      </figure>
-    </div>
-  </div>
-</section>
-
-<section id="get">
-  <div class="wrap">
-    <p class="manifest"><span class="chev">&#10095;</span> GET IT</p>
-    <h2>Download or build</h2>
-    <div class="cols">
-      <div>
-        <h3>Download</h3>
-        <p>Grab <code>ApiTester.App.exe</code> from the <a href="https://github.com/Real-Fruit-Snacks/windows-cert-api-tester/releases/latest">latest release</a> and double-click it. No install, no admin — copy it anywhere and run it. The command-line client <code>certapi.exe</code> is a separate asset on the same releases page.</p>
+      <div class="pair">
+        <figure><img src="assets/shot-discover.svg" alt="Discover endpoints window, each probe coloured by outcome" loading="lazy"><figcaption>Discover: probe a wordlist and see what exists. Mint means found; nothing else does.</figcaption></figure>
+        <figure><img src="assets/shot-gateway.svg" alt="certapi serve forwarding requests through a client certificate" loading="lazy"><figcaption><code>certapi serve</code>: an app points at the port and reaches a certificate-protected upstream.</figcaption></figure>
       </div>
       <div>
-        <h3>Build from source</h3>
-        <pre><code>dotnet build
-dotnet test --filter "Category!=StoreRoundTrip"
-dotnet run --project src/ApiTester.App
-
-# portable exes (app + command line):
-dotnet publish src/ApiTester.App -c Release \
-  -r win-x64 --self-contained -o publish
-dotnet publish src/ApiTester.Cli -c Release \
-  -r win-x64 --self-contained -o publish
-
-# see exactly what a command did, on screen or in a file:
-certapi send https://api.example.com/x --debug
-certapi run --all --log-file certapi.log
-
-# no docs? probe endpoints to map an undocumented API (built-in list; -w for your own):
-certapi fuzz https://api.example.com</code></pre>
+        <figure><img src="assets/shot-fuzz.svg" alt="certapi fuzz in a terminal" loading="lazy"><figcaption>The same discovery headless with <code>certapi fuzz</code>.</figcaption></figure>
       </div>
     </div>
   </div>
 </section>
 
-<section id="shortcuts">
-  <div class="wrap">
-    <p class="manifest"><span class="chev">&#10095;</span> KEYBOARD</p>
-    <h2>Shortcuts</h2>
-    <table class="keys">
-      <tr><td class="k">Ctrl+Enter / Enter in URL</td><td>Send the request</td></tr>
-      <tr><td class="k">Esc</td><td>Cancel an in-flight request</td></tr>
-      <tr><td class="k">Ctrl+L</td><td>Focus the URL box</td></tr>
-      <tr><td class="k">Ctrl+S</td><td>Save the response</td></tr>
-      <tr><td class="k">Ctrl+H</td><td>Toggle the history sidebar</td></tr>
-      <tr><td class="k">Ctrl+T</td><td>New request tab</td></tr>
-      <tr><td class="k">Ctrl+W</td><td>Close the current tab</td></tr>
-      <tr><td class="k">F5</td><td>Refresh the certificate list</td></tr>
-      <tr><td class="k">F1</td><td>Open the in-app help</td></tr>
+<section id="tested">
+  <div class="wrap two">
+    <div>
+      <p class="label">Tested on</p>
+      <ul class="plain">
+        <li>Windows 11 23H2 · .NET 9 SDK 9.0.x</li>
+        <li>Windows Server 2022 (headless <code>certapi</code> only)</li>
+        <li>GitHub Actions <code>windows-latest</code>, every push: build with warnings as errors, then the test suite</li>
+        <li><em>Not</em> tested: Windows 10 below 22H2; ARM64 Windows. Probably works, no promises.</li>
+      </ul>
+    </div>
+    <div>
+      <p class="label">Known issues</p>
+      <ul class="plain">
+        <li>The Rendered view needs the Edge WebView2 runtime. Windows 11 ships it; without it that tab says so and the rest works.</li>
+        <li><code>certapi serve</code> does not proxy gRPC.</li>
+        <li><code>--protoset</code> needs a descriptor set you already have; certapi does not compile <code>.proto</code> files.</li>
+        <li><code>--http3</code> is Windows 11 / Server 2022 and direct connections only.</li>
+        <li>Through a proxy, TLS version, cipher and certificate-presented details are not visible; <code>--no-proxy</code> brings them back.</li>
+        <li>Over the plaintext gateway, <code>__Host-</code>/<code>__Secure-</code> cookies cannot work; <code>serve --tls</code> is the fix.</li>
+        <li><code>serve</code> does not rewrite absolute URLs inside HTML or JS. A site that uses absolute paths works under <code>--vhost</code>.</li>
+        <li>A proxy that itself requires a client certificate is not supported.</li>
+        <li><code>--pac</code> and <code>--cert-pin</code> are Windows-only; <code>--sni</code> works on direct connections only, and not through <code>serve</code>.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section id="keys">
+  <div class="wrap two">
+    <div>
+      <p class="label">Keyboard</p>
+      <h2>Shortcuts</h2>
+    </div>
+    <table>
+      <tr><td><span class="k">Ctrl+Enter</span></td><td>Send the request</td></tr>
+      <tr><td><span class="k">Esc</span></td><td>Cancel an in-flight request</td></tr>
+      <tr><td><span class="k">Ctrl+L</span></td><td>Focus the URL box</td></tr>
+      <tr><td><span class="k">Ctrl+S</span></td><td>Save the response</td></tr>
+      <tr><td><span class="k">Ctrl+T</span> / <span class="k">Ctrl+W</span></td><td>New tab / close tab</td></tr>
+      <tr><td><span class="k">Ctrl+H</span></td><td>Toggle the sidebar</td></tr>
+      <tr><td><span class="k">F5</span></td><td>Refresh the certificate list</td></tr>
+      <tr><td><span class="k">F1</span></td><td>Help and reference, embedded</td></tr>
     </table>
-  </div>
-</section>
-
-<section id="nodeps">
-  <div class="wrap">
-    <p class="manifest"><span class="chev">&#10095;</span> NO DEPENDENCIES</p>
-    <h2>A single self-contained executable</h2>
-    <p>The released executable bundles the .NET runtime, so running it is just copying one file to any Windows 10/11 machine — no installer, no admin rights, and nothing to install first. The one optional exception is the <strong>Rendered</strong> website view, which uses the Microsoft Edge WebView2 runtime that ships with Windows 11 (and is a standard component on up-to-date Windows 10); it loads only when you open that tab, and everything else works without it. To build it on your own infrastructure, the repository ships a <code>.gitlab-ci.yml</code> for a self-hosted GitLab that builds, tests, and packages the executable on a Windows runner and can publish this documentation site to GitLab Pages.</p>
-  </div>
-</section>
-
-<section id="how">
-  <div class="wrap">
-    <p class="manifest"><span class="chev">&#10095;</span> UNDER THE HOOD</p>
-    <h2>How it works</h2>
-    <div class="cols">
-      <div>
-        <h3>Mutual TLS</h3>
-        <p>The app builds an <code>HttpClient</code> over a <code>SocketsHttpHandler</code> and attaches your chosen certificate. During the handshake the server requests a client certificate and the app presents yours; for non-exportable keys the signing is done by Windows, so the app never sees the raw key.</p>
-      </div>
-      <div>
-        <h3>Browsing with your cert</h3>
-        <p>The Rendered tab hosts a WebView2 and intercepts <em>every</em> resource the page requests &mdash; document, styles, scripts, images, XHR &mdash; fetching each through the same client-certificate <code>HttpClient</code>. So a certificate-protected page renders fully authenticated, not just its first response.</p>
-      </div>
-      <div>
-        <h3>Live diagnostics</h3>
-        <p>For direct connections the app performs the TLS handshake itself, so it can report the negotiated protocol and cipher and whether your certificate was actually presented. The server certificate and chain are always captured.</p>
-      </div>
-      <div>
-        <h3>A real self-test</h3>
-        <p>The self-test generates an in-memory CA plus a server and client certificate, runs a local server that <em>requires</em> a client certificate, and drives a real request through the same code path used for live endpoints.</p>
-      </div>
-      <div>
-        <h3>Your proxy, your rules</h3>
-        <p>Requests follow the machine's configured proxy — WPAD auto-detect and a PAC script from Internet Options — and authenticate to it with your Windows credentials when the proxy requires it. A <code>--noproxy &lt;list&gt;</code> bypass list narrows that proxy per host, so an intranet host goes direct while everything else still tunnels through.</p>
-      </div>
-      <div>
-        <h3>Revocation, checked or not</h3>
-        <p><code>--revocation none|offline|online</code> (default <code>none</code>, unchanged for existing setups) checks whether the server's certificate has been revoked by its issuer &mdash; <code>offline</code> against cached certificate revocation lists (CRLs) only, <code>online</code> also against a fresh CRL or an Online Certificate Status Protocol (OCSP) responder. A revoked certificate is refused even past a pinned thumbprint, and an indeterminate status &mdash; common on a locked-down network &mdash; is reported but not fatal unless <code>--revocation-strict</code> asks for that. <code>send</code>, <code>serve</code>, and <code>grpc</code> all enforce it the same way.</p>
-      </div>
-    </div>
   </div>
 </section>
 
 <footer>
   <div class="wrap">
-    <span>MIT-licensed &#183; Windows 10/11 &#183; .NET 9</span>
-    <span>Styled with the <a href="https://github.com/Real-Fruit-Snacks/terminal-workbench-design-system">Terminal Workbench</a> design system</span>
+    <span>MIT · <a href="https://github.com/Real-Fruit-Snacks/windows-cert-api-tester">Source</a> · <a href="https://github.com/Real-Fruit-Snacks/windows-cert-api-tester/blob/main/wiki/README.md">Handbook</a> · <a href="https://github.com/Real-Fruit-Snacks/windows-cert-api-tester/blob/main/CHANGELOG.md">Changelog</a> · <a href="https://github.com/Real-Fruit-Snacks/windows-cert-api-tester/blob/main/SECURITY.md">Security</a></span>
+    <span><a href="https://github.com/Real-Fruit-Snacks">RFS</a> · Real tools. No filler. · <a href="https://github.com/Real-Fruit-Snacks/.github/blob/main/BRAND.md">Brand</a></span>
   </div>
 </footer>
 
+<script>
+  (function () {
+    var root = document.documentElement;
+    var mq = window.matchMedia('(prefers-color-scheme: light)');
+    function current() {
+      var t = root.getAttribute('data-theme');
+      if (t) return t;
+      return mq.matches ? 'dayshift' : 'nightshift';
+    }
+    function swapArt() {
+      var dark = current() === 'nightshift';
+      // <picture> follows the OS, not data-theme; drive the lockup explicitly.
+      var lock = document.querySelector('[data-lockup]');
+      var lockSrc = lock && lock.parentElement.querySelector('source');
+      var url = 'https://raw.githubusercontent.com/Real-Fruit-Snacks/.github/main/assets/rfs-lockup-' + (dark ? 'dark' : 'light') + '.svg';
+      if (lock) lock.src = url;
+      if (lockSrc) lockSrc.srcset = url;
+      var meta = document.querySelector('meta[name="theme-color"]');
+      if (meta) meta.content = dark ? '#0C0D10' : '#F6F5F2';
+    }
+    document.getElementById('theme').addEventListener('click', function () {
+      var next = current() === 'nightshift' ? 'dayshift' : 'nightshift';
+      root.setAttribute('data-theme', next);
+      try { localStorage.setItem('rfs-theme', next); } catch (e) {}
+      swapArt();
+    });
+    mq.addEventListener && mq.addEventListener('change', swapArt);
+    swapArt();
+
+    // install tabs + copy
+    var tabs = document.querySelectorAll('.install [role="tab"]');
+    tabs.forEach(function (b) {
+      b.addEventListener('click', function () {
+        tabs.forEach(function (x) { x.setAttribute('aria-selected', 'false'); });
+        b.setAttribute('aria-selected', 'true');
+        document.querySelectorAll('.install .pane').forEach(function (p) {
+          if (p.getAttribute('data-id') === b.getAttribute('data-pane')) p.setAttribute('data-active', ''); else p.removeAttribute('data-active');
+        });
+      });
+    });
+    document.querySelectorAll('[data-copy]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        var text = b.getAttribute('data-copy'), old = b.textContent;
+        var done = function () { b.textContent = 'Copied'; setTimeout(function () { b.textContent = old; }, 1200); };
+        if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(done, done); else done();
+      });
+    });
+  })();
+</script>
 </body>
 </html>

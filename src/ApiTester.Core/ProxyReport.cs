@@ -22,12 +22,42 @@ public sealed record ProxyDecision(
     string Url, string? WinHttpProxy, string? WinHttpError, string? DotNetProxy)
 {
     /// <summary>True when both engines were consulted and named different destinations.</summary>
-    public bool Disagrees =>
-        WinHttpError is null &&
-        !string.Equals(Normalize(WinHttpProxy), Normalize(DotNetProxy), StringComparison.OrdinalIgnoreCase);
+    public bool Disagrees
+    {
+        get
+        {
+            if (WinHttpError is not null) return false;
+            // WinHTTP may answer with a list ("a:8080;b:8080" — PAC failover order) and without a
+            // scheme; .NET answers with one absolute URL. They agree when .NET's choice is any of
+            // WinHTTP's candidates, each read as host:port.
+            var winhttp = Candidates(WinHttpProxy);
+            string dotnet = Normalize(DotNetProxy);
+            return !winhttp.Contains(dotnet, StringComparer.OrdinalIgnoreCase);
+        }
+    }
 
-    private static string Normalize(string? proxy) =>
-        string.IsNullOrWhiteSpace(proxy) ? "DIRECT" : proxy!.Trim();
+    private static IReadOnlyList<string> Candidates(string? proxy)
+    {
+        if (string.IsNullOrWhiteSpace(proxy)) return new[] { "DIRECT" };
+        return proxy.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                    .Select(Normalize).ToList();
+    }
+
+    /// <summary>host:port, lower-case, however it was spelled: "http://proxy.corp:8080/",
+    /// "proxy.corp:8080", "PROXY proxy.corp:8080" and "https=proxy.corp:8080" all read the same.</summary>
+    internal static string Normalize(string? proxy)
+    {
+        if (string.IsNullOrWhiteSpace(proxy)) return "DIRECT";
+        string p = proxy.Trim();
+        if (p.Equals("DIRECT", StringComparison.OrdinalIgnoreCase)) return "DIRECT";
+        if (p.StartsWith("PROXY ", StringComparison.OrdinalIgnoreCase)) p = p[6..].Trim();
+        int eq = p.IndexOf('=');
+        if (eq > 0 && !p.Contains("://", StringComparison.Ordinal)) p = p[(eq + 1)..];
+        if (!p.Contains("://", StringComparison.Ordinal)) p = "http://" + p;
+        return Uri.TryCreate(p, UriKind.Absolute, out var uri)
+            ? $"{uri.Host.ToLowerInvariant()}:{uri.Port}"
+            : proxy.Trim().ToLowerInvariant();
+    }
 }
 
 /// <summary>Reads the machine's proxy configuration and asks Windows itself which proxy applies to
@@ -146,6 +176,21 @@ public static class ProxyIntrospection
 
     [DllImport("kernel32.dll")]
     private static extern IntPtr GlobalFree(IntPtr hMem);
+
+    /// <summary>Evaluate one URL against a PAC script the caller names — a URL, or a local file —
+    /// through WinHTTP's own engine, exactly as the system would run it. The `--pac` flag: test a
+    /// script before IT rolls it out, or use one on a machine whose Internet Options name none.</summary>
+    public static (string? Proxy, string? Error) EvaluatePac(string pacUrlOrPath, string targetUrl)
+    {
+        string pacUrl = pacUrlOrPath;
+        if (!pacUrlOrPath.Contains("://", StringComparison.Ordinal))
+        {
+            string full = Path.GetFullPath(pacUrlOrPath);
+            if (!File.Exists(full)) return (null, $"--pac: file not found: {pacUrlOrPath}");
+            pacUrl = new Uri(full).AbsoluteUri;
+        }
+        return WinHttpProxyForUrl(targetUrl, new ProxySettings(false, pacUrl, false, null, null));
+    }
 
     /// <summary>Ask WinHTTP to evaluate this URL against the configured PAC/WPAD. Never throws:
     /// any failure comes back as the error string, because a diagnostic must not be what breaks.</summary>

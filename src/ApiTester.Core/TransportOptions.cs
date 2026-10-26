@@ -1,3 +1,4 @@
+using System.Net;
 namespace ApiTester.Core;
 
 /// <summary>How the connection reaches the server. The distinction matters for mTLS: a proxy
@@ -54,6 +55,9 @@ public sealed record TransportOptions
 {
     public ProxyMode Proxy { get; init; } = ProxyMode.System;
     public string? ProxyUrl { get; init; }
+    /// <summary>A PAC script (URL or file) to decide the proxy with, through WinHTTP's own engine
+    /// — <c>--pac</c>. Replaces the system decision; null is the system's own configuration.</summary>
+    public string? PacUrl { get; init; }
     public string? ProxyUser { get; init; }
     public string? ProxyPassword { get; init; }
 
@@ -115,4 +119,65 @@ public sealed record TransportOptions
     /// exists to test. Meaningless with <see cref="RevocationMode.None"/>, where nothing was checked
     /// and so nothing can come back unknown.</summary>
     public bool RevocationStrict { get; init; }
+
+    /// <summary>Roots trusted for this run in addition to the machine store — <c>--ca-file</c>.
+    /// Null is the behavior this client always had. Judged by <see cref="ExtraRoots.Reconsider"/>
+    /// inside every validation callback, so a chain that ends in one of these is accepted the
+    /// way a store-trusted chain is, while name, expiry and revocation problems stay refused.</summary>
+    public ExtraRootSet? ExtraRoots { get; init; }
+
+    /// <summary>The TLS version floor — <c>--tls-min</c>. <see cref="TlsFloor.Default"/> leaves the
+    /// choice to the OS, as before.</summary>
+    public TlsFloor MinTls { get; init; } = TlsFloor.Default;
+
+    /// <summary>A server name to send in the TLS handshake instead of the URL's host — <c>--sni</c>.
+    /// Direct connections only; a proxy tunnel's TLS is negotiated by the handler from the URL.
+    /// Null, the default, sends the hostname being connected to.</summary>
+    public string? Sni { get; init; }
+
+    /// <summary>How long to wait for the TCP connection (and proxy tunnel) alone — <c>--connect-timeout</c>.
+    /// Null is the handler's default (no separate limit, the overall timeout governs). On a network
+    /// that blackholes unknown hosts, a short value tells "unreachable" from "slow" in seconds.</summary>
+    public TimeSpan? ConnectTimeout { get; init; }
+
+    /// <summary>Touch nothing on the network but the request itself — <c>--offline</c>: no
+    /// certificate downloads while building the chain (AIA fetching), no online revocation, and
+    /// doctor skips its internet-connectivity probe. For an air-gapped machine, or one where every
+    /// unexpected outbound connection is a ticket. The proxy decision is not changed by it; name
+    /// the proxy with <c>--proxy</c> or none with <c>--no-proxy</c> when WPAD must not run either.</summary>
+    public bool Offline { get; init; }
+
+    /// <summary>Which address family to dial — <c>-4</c> / <c>-6</c>. Direct connections only: a
+    /// proxy resolves the target itself. Null, the default, takes the resolver's order.</summary>
+    public AddressFamilyPreference AddressFamily { get; init; } = AddressFamilyPreference.Any;
+}
+
+public enum AddressFamilyPreference
+{
+    Any,
+    IPv4,
+    IPv6
+}
+
+/// <summary>Resolves a host to the addresses the preference allows — shared by every connect
+/// callback so <c>-4</c>/<c>-6</c> mean the same thing on the direct path and in the gateway.
+/// A dual-stack host whose IPv6 route is advertised but blackholed is the case: the resolver's
+/// order tries it first and the connect hangs until the timeout.</summary>
+public static class AddressSelection
+{
+    public static async Task<IPAddress[]> ResolveAsync(string host, AddressFamilyPreference preference, CancellationToken ct)
+    {
+        if (IPAddress.TryParse(host, out var literal)) return new[] { literal };
+        var all = await System.Net.Dns.GetHostAddressesAsync(host, ct);
+        var wanted = preference switch
+        {
+            AddressFamilyPreference.IPv4 => all.Where(a => a.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork).ToArray(),
+            AddressFamilyPreference.IPv6 => all.Where(a => a.AddressFamily == System.Net.Sockets.AddressFamily.InterNetworkV6).ToArray(),
+            _ => all
+        };
+        if (wanted.Length == 0 && all.Length > 0)
+            throw new System.Net.Sockets.SocketException((int)System.Net.Sockets.SocketError.HostNotFound,
+                $"{host} has no {(preference == AddressFamilyPreference.IPv4 ? "IPv4" : "IPv6")} address ({all.Length} of the other family).");
+        return wanted;
+    }
 }

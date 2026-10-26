@@ -36,12 +36,12 @@ public partial class FuzzWindow : Window
         Brush ServerError, Brush Error, Brush Muted);
 
     private static readonly OutcomePalette DarkOutcomes = new(
-        Found: Frozen("#63F2AB"), Unauthorized: Frozen("#F2C94C"), MethodNotAllowed: Frozen("#56CCF2"),
-        Redirect: Frozen("#9B8CF2"), ServerError: Frozen("#F2637A"), Error: Frozen("#E06C75"), Muted: Frozen("#8A97A0"));
+        Found: Frozen("#3DDC97"), Unauthorized: Frozen("#FFC247"), MethodNotAllowed: Frozen("#5CB8FF"),
+        Redirect: Frozen("#B78CFF"), ServerError: Frozen("#FF6E7A"), Error: Frozen("#E06C75"), Muted: Frozen("#8A8F99"));
 
     private static readonly OutcomePalette LightOutcomes = new(
-        Found: Frozen("#0f8a52"), Unauthorized: Frozen("#9a7010"), MethodNotAllowed: Frozen("#0b6b8a"),
-        Redirect: Frozen("#6d3bd1"), ServerError: Frozen("#cf3341"), Error: Frozen("#c0392b"), Muted: Frozen("#5c6b64"));
+        Found: Frozen("#167A4E"), Unauthorized: Frozen("#9A6700"), MethodNotAllowed: Frozen("#0B5FA5"),
+        Redirect: Frozen("#6D3BD1"), ServerError: Frozen("#C8324C"), Error: Frozen("#C0392B"), Muted: Frozen("#6B6F78"));
 
     private static OutcomePalette Outcomes =>
         string.Equals((Application.Current as App)?.CurrentTheme, "Light", System.StringComparison.OrdinalIgnoreCase)

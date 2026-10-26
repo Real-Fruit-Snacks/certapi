@@ -30,7 +30,8 @@ public static class SseClient
     {
         var options = transport ?? new TransportOptions();
         if (ignoreServerCertificateErrors) options = options with { IgnoreServerCertificateErrors = true };
-        var handler = StreamTransport.CreateHandler(clientCertificate, options, trustServerCertificate);
+        var handler = StreamTransport.CreateHandler(clientCertificate, options, trustServerCertificate,
+            Uri.TryCreate(url, UriKind.Absolute, out var destination) ? destination : null);
         handler.PooledConnectionIdleTimeout = Timeout.InfiniteTimeSpan;
 
         using var http = new HttpClient(handler, disposeHandler: true) { Timeout = Timeout.InfiniteTimeSpan };
@@ -117,7 +118,8 @@ public sealed class WebSocketSession : IAsyncDisposable
         // is supplied, ClientWebSocket refuses those options anyway — they must live here.)
         var options = transport ?? new TransportOptions();
         if (ignoreServerCertificateErrors) options = options with { IgnoreServerCertificateErrors = true };
-        var handler = StreamTransport.CreateHandler(clientCertificate, options, trustServerCertificate);
+        var handler = StreamTransport.CreateHandler(clientCertificate, options, trustServerCertificate,
+            Uri.TryCreate(url, UriKind.Absolute, out var destination) ? destination : null);
         // Kept for the session's lifetime, not a using: the upgraded connection still belongs to
         // the invoker's handler, so disposing it here would tear down the socket under the session.
         _invoker = new HttpMessageInvoker(handler, disposeHandler: true);

@@ -195,10 +195,12 @@ public class ConfigProfileTests
     public void A_missing_env_reference_names_the_profile_the_field_and_the_variable()
     {
         // Substituting nothing would send an empty credential and fail later, further away.
+        // Raised when the profile is resolved, not when the file is parsed, so an unset variable
+        // in one profile never stops a different profile from loading.
         var ex = Assert.Throws<ConfigException>(() => ConfigLoader.Parse(
             """{"profiles":{"corp":{"cert":"${env:NOT_SET}"}}}""",
             new ConfigSource("C:/x/certapi.config.json", "test"),
-            Env()));
+            Env()).Resolve("corp"));
 
         Assert.Contains("corp", ex.Message);
         Assert.Contains("cert", ex.Message);

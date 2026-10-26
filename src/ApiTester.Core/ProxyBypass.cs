@@ -216,17 +216,25 @@ public static class ProxyBypass
     }
 
     /// <summary>The same parse, dropping entries it cannot understand instead of failing.</summary>
-    public static IReadOnlyList<ProxyBypassRule> ParseLenient(string? spec)
+    public static IReadOnlyList<ProxyBypassRule> ParseLenient(string? spec) => ParseLenient(spec, out _);
+
+    /// <summary>As above, naming what was dropped so a caller can say so: an ambient variable that
+    /// nobody typed for this run must not stop the run, but must not be silently half-applied either.</summary>
+    public static IReadOnlyList<ProxyBypassRule> ParseLenient(string? spec, out IReadOnlyList<string> dropped)
     {
         var compiled = new List<ProxyBypassRule>();
+        var skipped = new List<string>();
         foreach (var token in (spec ?? "").Split(','))
         {
             string trimmed = token.Trim();
             if (trimmed.Length == 0) continue;
 
-            if (ProxyBypassRule.TryParse(trimmed, out var rule, out _))
+            if (ProxyBypassRule.TryParse(trimmed, out var rule, out var problem))
                 compiled.Add(rule!);
+            else
+                skipped.Add($"'{trimmed}' ({problem})");
         }
+        dropped = skipped;
         return compiled;
     }
 

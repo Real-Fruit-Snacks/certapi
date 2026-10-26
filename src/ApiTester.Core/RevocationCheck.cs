@@ -98,6 +98,20 @@ public static class RevocationCheck
     public static void Apply(SslClientAuthenticationOptions options, RevocationMode mode) =>
         options.CertificateRevocationCheckMode = ToX509Mode(mode);
 
+    /// <summary>As above, and under <see cref="TransportOptions.Offline"/> the chain is built with
+    /// certificate downloads disabled: a missing intermediate is a chain error, not a fetch of the
+    /// issuer's AIA URL. A chain policy replaces the plain revocation-mode property, so the mode is
+    /// carried on the policy.</summary>
+    public static void Apply(SslClientAuthenticationOptions options, TransportOptions transport)
+    {
+        if (!transport.Offline) { Apply(options, transport.Revocation); return; }
+        options.CertificateChainPolicy = new X509ChainPolicy
+        {
+            RevocationMode = ToX509Mode(transport.Revocation),
+            DisableCertificateDownloads = true
+        };
+    }
+
     /// <summary>Collects every revocation-relevant (and everything else) status flag a built chain
     /// carries. Reads both the chain's own aggregate <see cref="X509Chain.ChainStatus"/> and every
     /// element's <see cref="X509ChainElement.ChainElementStatus"/> and ORs them together: the

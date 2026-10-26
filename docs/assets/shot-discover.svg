@@ -1,67 +1,67 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="880" height="560" viewBox="0 0 880 560" role="img" aria-label="The Discover endpoints window in the Certificate API Tester app, showing colour-coded discovery results">
   <defs>
     <style>
-      .mono { font-family: 'JetBrains Mono','Cascadia Code',Consolas,'DejaVu Sans Mono',monospace; }
-      .ui { font-family: 'Segoe UI','Inter',system-ui,sans-serif; }
+      .mono { font-family: 'IBM Plex Mono','Cascadia Code',Consolas,'DejaVu Sans Mono',monospace; }
+      .ui { font-family: 'IBM Plex Sans','Segoe UI',system-ui,sans-serif; }
     </style>
   </defs>
 
   <!-- window -->
-  <rect x="1" y="1" width="878" height="558" rx="10" fill="#0e1214" stroke="#2a363d" stroke-width="1.5"/>
+  <rect x="1" y="1" width="878" height="558" rx="10" fill="#13151A" stroke="#262A33" stroke-width="1.5"/>
 
   <!-- title bar -->
-  <path d="M1,11 a10,10 0 0 1 10,-10 H869 a10,10 0 0 1 10,10 V38 H1 Z" fill="#13191c"/>
-  <line x1="1" y1="38" x2="879" y2="38" stroke="#2a363d" stroke-width="1.5"/>
-  <text class="ui" x="20" y="24" font-size="12.5" font-weight="600" fill="#879994">Discover endpoints</text>
-  <text class="ui" x="852" y="24" font-size="14" fill="#63736f" text-anchor="end">&#215;</text>
+  <path d="M1,11 a10,10 0 0 1 10,-10 H869 a10,10 0 0 1 10,10 V38 H1 Z" fill="#13151A"/>
+  <line x1="1" y1="38" x2="879" y2="38" stroke="#262A33" stroke-width="1.5"/>
+  <text class="ui" x="20" y="24" font-size="12.5" font-weight="600" fill="#8A8F99">Discover endpoints</text>
+  <text class="ui" x="852" y="24" font-size="14" fill="#5E636D" text-anchor="end">&#215;</text>
 
   <!-- heading -->
-  <text class="mono" x="24" y="70" font-size="12" font-weight="700" letter-spacing="1.5" fill="#63f2ab">DISCOVER ENDPOINTS</text>
+  <text class="mono" x="24" y="70" font-size="12" font-weight="700" letter-spacing="1.5" fill="#FF6A3D">DISCOVER ENDPOINTS</text>
 
   <!-- inputs -->
   <g class="ui" font-size="12.5">
-    <text x="24" y="98" fill="#63736f" letter-spacing="0.5">WEBSITE</text>
-    <rect x="110" y="86" width="746" height="24" rx="5" fill="#141a1d" stroke="#2a363d"/>
-    <text class="mono" x="120" y="102" font-size="12.5" fill="#6bdcff">https://api.corp.internal</text>
+    <text x="24" y="98" fill="#5E636D" letter-spacing="0.5">WEBSITE</text>
+    <rect x="110" y="86" width="746" height="24" rx="5" fill="#1A1D24" stroke="#262A33"/>
+    <text class="mono" x="120" y="102" font-size="12.5" fill="#FFC247">https://api.corp.internal</text>
 
-    <text x="24" y="130" fill="#63736f" letter-spacing="0.5">CERT</text>
-    <rect x="110" y="118" width="746" height="24" rx="5" fill="#141a1d" stroke="#2a363d"/>
-    <text class="mono" x="120" y="134" font-size="12.5" fill="#b4c3bd">CN=matt  &#8212;  A1B2C3&#8230;  (client-auth)</text>
-    <text x="842" y="134" fill="#63736f" text-anchor="end">&#9662;</text>
+    <text x="24" y="130" fill="#5E636D" letter-spacing="0.5">CERT</text>
+    <rect x="110" y="118" width="746" height="24" rx="5" fill="#1A1D24" stroke="#262A33"/>
+    <text class="mono" x="120" y="134" font-size="12.5" fill="#C4C3BE">CN=matt  &#8212;  A1B2C3&#8230;  (client-auth)</text>
+    <text x="842" y="134" fill="#5E636D" text-anchor="end">&#9662;</text>
 
-    <text x="24" y="162" fill="#63736f" letter-spacing="0.5">WORDLIST</text>
-    <rect x="110" y="150" width="626" height="24" rx="5" fill="#141a1d" stroke="#2a363d"/>
-    <text class="mono" x="120" y="166" font-size="12.5" fill="#b4c3bd">wordlists\common-api-endpoints.txt</text>
-    <rect x="746" y="150" width="110" height="24" rx="5" fill="#1a2226" stroke="#2a363d"/>
-    <text x="801" y="166" fill="#b4c3bd" text-anchor="middle">Choose file&#8230;</text>
+    <text x="24" y="162" fill="#5E636D" letter-spacing="0.5">WORDLIST</text>
+    <rect x="110" y="150" width="626" height="24" rx="5" fill="#1A1D24" stroke="#262A33"/>
+    <text class="mono" x="120" y="166" font-size="12.5" fill="#C4C3BE">wordlists\common-api-endpoints.txt</text>
+    <rect x="746" y="150" width="110" height="24" rx="5" fill="#1A1D24" stroke="#262A33"/>
+    <text x="801" y="166" fill="#C4C3BE" text-anchor="middle">Choose file&#8230;</text>
   </g>
 
   <!-- controls row -->
   <g class="ui" font-size="12.5">
-    <text x="110" y="200" fill="#63736f">Methods:</text>
-    <rect x="168" y="190" width="16" height="16" rx="3" fill="#63f2ab"/>
-    <text x="190" y="202" fill="#dce4df">GET</text>
-    <rect x="232" y="190" width="16" height="16" rx="3" fill="#141a1d" stroke="#39484f"/>
-    <text x="254" y="202" fill="#879994">HEAD</text>
-    <rect x="304" y="190" width="16" height="16" rx="3" fill="#63f2ab"/>
-    <text x="326" y="202" fill="#dce4df">POST</text>
-    <rect x="376" y="190" width="16" height="16" rx="3" fill="#141a1d" stroke="#39484f"/>
-    <text x="398" y="202" fill="#879994">PUT</text>
-    <rect x="440" y="190" width="16" height="16" rx="3" fill="#141a1d" stroke="#39484f"/>
-    <text x="462" y="202" fill="#879994">DELETE</text>
-    <text x="560" y="202" fill="#63736f">Concurrency:</text>
-    <rect x="646" y="190" width="40" height="18" rx="4" fill="#141a1d" stroke="#2a363d"/>
-    <text class="mono" x="666" y="203" fill="#dce4df" text-anchor="middle">8</text>
-    <rect x="706" y="190" width="16" height="16" rx="3" fill="#63f2ab"/>
-    <text x="728" y="202" fill="#dce4df">Hide 404s / errors</text>
+    <text x="110" y="200" fill="#5E636D">Methods:</text>
+    <rect x="168" y="190" width="16" height="16" rx="3" fill="#FF6A3D"/>
+    <text x="190" y="202" fill="#E8E6E1">GET</text>
+    <rect x="232" y="190" width="16" height="16" rx="3" fill="#1A1D24" stroke="#333945"/>
+    <text x="254" y="202" fill="#8A8F99">HEAD</text>
+    <rect x="304" y="190" width="16" height="16" rx="3" fill="#FF6A3D"/>
+    <text x="326" y="202" fill="#E8E6E1">POST</text>
+    <rect x="376" y="190" width="16" height="16" rx="3" fill="#1A1D24" stroke="#333945"/>
+    <text x="398" y="202" fill="#8A8F99">PUT</text>
+    <rect x="440" y="190" width="16" height="16" rx="3" fill="#1A1D24" stroke="#333945"/>
+    <text x="462" y="202" fill="#8A8F99">DELETE</text>
+    <text x="560" y="202" fill="#5E636D">Concurrency:</text>
+    <rect x="646" y="190" width="40" height="18" rx="4" fill="#1A1D24" stroke="#262A33"/>
+    <text class="mono" x="666" y="203" fill="#E8E6E1" text-anchor="middle">8</text>
+    <rect x="706" y="190" width="16" height="16" rx="3" fill="#FF6A3D"/>
+    <text x="728" y="202" fill="#E8E6E1">Hide 404s / errors</text>
   </g>
 
   <!-- results grid -->
-  <rect x="24" y="222" width="832" height="248" rx="6" fill="#0b0f11" stroke="#1c2529"/>
+  <rect x="24" y="222" width="832" height="248" rx="6" fill="#0C0D10" stroke="#22262F"/>
   <!-- header row -->
-  <rect x="24" y="222" width="832" height="28" rx="6" fill="#13191c"/>
-  <line x1="24" y1="250" x2="856" y2="250" stroke="#1c2529"/>
-  <g class="mono" font-size="11" letter-spacing="0.5" fill="#63736f" font-weight="600">
+  <rect x="24" y="222" width="832" height="28" rx="6" fill="#13151A"/>
+  <line x1="24" y1="250" x2="856" y2="250" stroke="#22262F"/>
+  <g class="mono" font-size="11" letter-spacing="0.5" fill="#5E636D" font-weight="600">
     <text x="40"  y="240">OUTCOME</text>
     <text x="188" y="240">STATUS</text>
     <text x="262" y="240">METHOD</text>
@@ -73,83 +73,83 @@
   <!-- rows -->
   <g class="mono" font-size="12.5">
     <!-- row 1 -->
-    <text x="40"  y="272" fill="#63f2ab" font-weight="600">Found</text>
-    <text x="188" y="272" fill="#dce4df">200</text>
-    <text x="262" y="272" fill="#b4c3bd">GET</text>
-    <text x="352" y="272" fill="#879994">1.2 KB</text>
-    <text x="430" y="272" fill="#879994">142</text>
-    <text x="496" y="272" fill="#dce4df">/api/v1</text>
-    <line x1="24" y1="282" x2="856" y2="282" stroke="#141a1d"/>
+    <text x="40"  y="272" fill="#3DDC97" font-weight="600">Found</text>
+    <text x="188" y="272" fill="#E8E6E1">200</text>
+    <text x="262" y="272" fill="#C4C3BE">GET</text>
+    <text x="352" y="272" fill="#8A8F99">1.2 KB</text>
+    <text x="430" y="272" fill="#8A8F99">142</text>
+    <text x="496" y="272" fill="#E8E6E1">/api/v1</text>
+    <line x1="24" y1="282" x2="856" y2="282" stroke="#1A1D24"/>
 
     <!-- row 2 (alt) -->
-    <rect x="24" y="282" width="832" height="26" fill="#0e1315"/>
-    <text x="40"  y="300" fill="#63f2ab" font-weight="600">Found</text>
-    <text x="188" y="300" fill="#dce4df">200</text>
-    <text x="262" y="300" fill="#b4c3bd">GET</text>
-    <text x="352" y="300" fill="#879994">418 B</text>
-    <text x="430" y="300" fill="#879994">88</text>
-    <text x="496" y="300" fill="#dce4df">/health</text>
+    <rect x="24" y="282" width="832" height="26" fill="#0C0D10"/>
+    <text x="40"  y="300" fill="#3DDC97" font-weight="600">Found</text>
+    <text x="188" y="300" fill="#E8E6E1">200</text>
+    <text x="262" y="300" fill="#C4C3BE">GET</text>
+    <text x="352" y="300" fill="#8A8F99">418 B</text>
+    <text x="430" y="300" fill="#8A8F99">88</text>
+    <text x="496" y="300" fill="#E8E6E1">/health</text>
 
     <!-- row 3 -->
-    <text x="40"  y="326" fill="#f2c94c" font-weight="600">Unauthorized</text>
-    <text x="188" y="326" fill="#dce4df">401</text>
-    <text x="262" y="326" fill="#b4c3bd">GET</text>
-    <text x="352" y="326" fill="#879994">73 B</text>
-    <text x="430" y="326" fill="#879994">64</text>
-    <text x="496" y="326" fill="#dce4df">/admin</text>
-    <line x1="24" y1="336" x2="856" y2="336" stroke="#141a1d"/>
+    <text x="40"  y="326" fill="#FFC247" font-weight="600">Unauthorized</text>
+    <text x="188" y="326" fill="#E8E6E1">401</text>
+    <text x="262" y="326" fill="#C4C3BE">GET</text>
+    <text x="352" y="326" fill="#8A8F99">73 B</text>
+    <text x="430" y="326" fill="#8A8F99">64</text>
+    <text x="496" y="326" fill="#E8E6E1">/admin</text>
+    <line x1="24" y1="336" x2="856" y2="336" stroke="#1A1D24"/>
 
     <!-- row 4 (alt) -->
-    <rect x="24" y="336" width="832" height="26" fill="#0e1315"/>
-    <text x="40"  y="354" fill="#56ccf2" font-weight="600">MethodNotAllowed</text>
-    <text x="188" y="354" fill="#dce4df">405</text>
-    <text x="262" y="354" fill="#b4c3bd">POST</text>
-    <text x="352" y="354" fill="#879994">0 B</text>
-    <text x="430" y="354" fill="#879994">51</text>
-    <text x="496" y="354" fill="#dce4df">/users</text>
+    <rect x="24" y="336" width="832" height="26" fill="#0C0D10"/>
+    <text x="40"  y="354" fill="#5CB8FF" font-weight="600">MethodNotAllowed</text>
+    <text x="188" y="354" fill="#E8E6E1">405</text>
+    <text x="262" y="354" fill="#C4C3BE">POST</text>
+    <text x="352" y="354" fill="#8A8F99">0 B</text>
+    <text x="430" y="354" fill="#8A8F99">51</text>
+    <text x="496" y="354" fill="#E8E6E1">/users</text>
 
     <!-- row 5 (selected) -->
-    <rect x="24" y="362" width="832" height="26" fill="#12251f"/>
-    <rect x="24" y="362" width="3" height="26" fill="#63f2ab"/>
-    <text x="40"  y="380" fill="#f2637a" font-weight="600">ServerError</text>
-    <text x="188" y="380" fill="#dce4df">500</text>
-    <text x="262" y="380" fill="#b4c3bd">GET</text>
-    <text x="352" y="380" fill="#879994">614 B</text>
-    <text x="430" y="380" fill="#879994">203</text>
-    <text x="496" y="380" fill="#dce4df">/metrics</text>
+    <rect x="24" y="362" width="832" height="26" fill="#102A1F"/>
+    <rect x="24" y="362" width="3" height="26" fill="#FF6A3D"/>
+    <text x="40"  y="380" fill="#FF6E7A" font-weight="600">ServerError</text>
+    <text x="188" y="380" fill="#E8E6E1">500</text>
+    <text x="262" y="380" fill="#C4C3BE">GET</text>
+    <text x="352" y="380" fill="#8A8F99">614 B</text>
+    <text x="430" y="380" fill="#8A8F99">203</text>
+    <text x="496" y="380" fill="#E8E6E1">/metrics</text>
 
     <!-- row 6 -->
-    <text x="40"  y="406" fill="#9b8cf2" font-weight="600">Redirect</text>
-    <text x="188" y="406" fill="#dce4df">302</text>
-    <text x="262" y="406" fill="#b4c3bd">GET</text>
-    <text x="352" y="406" fill="#879994">0 B</text>
-    <text x="430" y="406" fill="#879994">39</text>
-    <text x="496" y="406" fill="#dce4df">/login</text>
-    <line x1="24" y1="416" x2="856" y2="416" stroke="#141a1d"/>
+    <text x="40"  y="406" fill="#B78CFF" font-weight="600">Redirect</text>
+    <text x="188" y="406" fill="#E8E6E1">302</text>
+    <text x="262" y="406" fill="#C4C3BE">GET</text>
+    <text x="352" y="406" fill="#8A8F99">0 B</text>
+    <text x="430" y="406" fill="#8A8F99">39</text>
+    <text x="496" y="406" fill="#E8E6E1">/login</text>
+    <line x1="24" y1="416" x2="856" y2="416" stroke="#1A1D24"/>
 
     <!-- row 7 (alt) -->
-    <rect x="24" y="416" width="832" height="26" fill="#0e1315"/>
-    <text x="40"  y="434" fill="#63f2ab" font-weight="600">Found</text>
-    <text x="188" y="434" fill="#dce4df">200</text>
-    <text x="262" y="434" fill="#b4c3bd">GET</text>
-    <text x="352" y="434" fill="#879994">2.1 KB</text>
-    <text x="430" y="434" fill="#879994">120</text>
-    <text x="496" y="434" fill="#dce4df">/api/v1/orders</text>
+    <rect x="24" y="416" width="832" height="26" fill="#0C0D10"/>
+    <text x="40"  y="434" fill="#3DDC97" font-weight="600">Found</text>
+    <text x="188" y="434" fill="#E8E6E1">200</text>
+    <text x="262" y="434" fill="#C4C3BE">GET</text>
+    <text x="352" y="434" fill="#8A8F99">2.1 KB</text>
+    <text x="430" y="434" fill="#8A8F99">120</text>
+    <text x="496" y="434" fill="#E8E6E1">/api/v1/orders</text>
 
-    <text x="40" y="460" fill="#4d5b57" font-size="11.5" font-style="italic">double-click a row to open it in a request tab</text>
+    <text x="40" y="460" fill="#5E636D" font-size="11.5" font-style="italic">double-click a row to open it in a request tab</text>
   </g>
 
   <!-- footer -->
   <g class="ui" font-size="12.5">
-    <text x="24" y="500" fill="#879994">42 probed &#183; <tspan fill="#63f2ab" font-weight="600">12 discovered</tspan>.</text>
-    <rect x="520" y="486" width="210" height="26" rx="5" fill="#1a2226" stroke="#2a363d"/>
-    <text x="625" y="503" fill="#b4c3bd" text-anchor="middle">Save discovered to collection&#8230;</text>
-    <rect x="742" y="486" width="54" height="26" rx="5" fill="#1a2226" stroke="#2a363d"/>
-    <text x="769" y="503" fill="#b4c3bd" text-anchor="middle">Stop</text>
-    <rect x="806" y="486" width="50" height="26" rx="5" fill="#63f2ab"/>
-    <text x="831" y="503" fill="#08130d" font-weight="600" text-anchor="middle">Discover</text>
+    <text x="24" y="500" fill="#8A8F99">42 probed &#183; <tspan fill="#3DDC97" font-weight="600">12 discovered</tspan>.</text>
+    <rect x="520" y="486" width="210" height="26" rx="5" fill="#1A1D24" stroke="#262A33"/>
+    <text x="625" y="503" fill="#C4C3BE" text-anchor="middle">Save discovered to collection&#8230;</text>
+    <rect x="742" y="486" width="54" height="26" rx="5" fill="#1A1D24" stroke="#262A33"/>
+    <text x="769" y="503" fill="#C4C3BE" text-anchor="middle">Stop</text>
+    <rect x="806" y="486" width="50" height="26" rx="5" fill="#FF6A3D"/>
+    <text x="831" y="503" fill="#0C0D10" font-weight="600" text-anchor="middle">Discover</text>
   </g>
 
   <!-- token chip hint -->
-  <text class="ui" x="24" y="534" font-size="11.5" fill="#4d5b57">A token captured from /login is attached automatically to same-host probes.</text>
+  <text class="ui" x="24" y="534" font-size="11.5" fill="#5E636D">A token captured from /login is attached automatically to same-host probes.</text>
 </svg>

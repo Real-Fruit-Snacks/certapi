@@ -115,8 +115,11 @@ public class GatewayRoutesTests
     }
 
     [Fact]
-    public void An_empty_route_table_is_rejected()
+    public void An_empty_route_table_is_allowed_and_matches_nothing()
     {
-        Assert.Throws<ArgumentException>(() => new GatewayRoutes(Array.Empty<GatewayRoute>()));
+        // A gateway running only dynamic targets (`serve --allow`) has no static mounts.
+        var routes = new GatewayRoutes(Array.Empty<GatewayRoute>());
+        Assert.Empty(routes.All);
+        Assert.Null(routes.Resolve("/anything", out _));
     }
 }

@@ -54,6 +54,11 @@ namespace ApiTester.Core;
 /// to prove two differently-ordered lists mean the same thing.</param>
 /// <param name="WindowsAuth">Negotiate/NTLM authenticates the *connection*, not the request, so two
 /// requests with different credentials must never share one even if everything else matches.</param>
+/// <param name="ExtraRoots">Which extra roots (--ca-file) the handshake was judged against; part of
+/// the trust decision, so part of the key.</param>
+/// <param name="MinTls">The protocol floor is negotiated at handshake time.</param>
+/// <param name="Sni">The server name sent is negotiated at handshake time.</param>
+/// <param name="ConnectTimeout">Handler-wide setting.</param>
 internal sealed record HandlerKey(
     string? ClientCertificateHash,
     bool ClientCertificateHasPrivateKey,
@@ -69,7 +74,14 @@ internal sealed record HandlerKey(
     bool Decompress,
     HttpVersionMode Version,
     string ResolveOverrides,
-    string WindowsAuth)
+    string WindowsAuth,
+    string? ExtraRoots,
+    TlsFloor MinTls,
+    string? Sni,
+    TimeSpan? ConnectTimeout,
+    string? PacUrl,
+    bool Offline,
+    AddressFamilyPreference AddressFamily)
 {
     /// <summary>The one place this key is ever built, so every caller agrees on exactly what goes
     /// into it.</summary>
@@ -92,7 +104,16 @@ internal sealed record HandlerKey(
         transport.Decompress,
         transport.Version,
         string.Join(";", transport.Resolve.Select(r => $"{r.Host.ToLowerInvariant()}:{r.Port}={r.Address}")),
-        FormatWindowsAuth(windowsAuth));
+        FormatWindowsAuth(windowsAuth),
+        // The set's content hash, not its file names: two runs naming the same roots share, two
+        // naming different roots never do — a trust decision made once per connection.
+        transport.ExtraRoots?.Fingerprint,
+        transport.MinTls,
+        transport.Sni,
+        transport.ConnectTimeout,
+        transport.PacUrl,
+        transport.Offline,
+        transport.AddressFamily);
 
     /// <summary>"none" when there is no Windows auth at all, "default" for the signed-in account
     /// (indistinguishable from any other caller asking for the same thing), otherwise the explicit
@@ -122,7 +143,11 @@ internal sealed record HandshakeInfo(
     string? ServerCertificateThumbprint,
     DateTime? ServerCertificateNotAfter,
     IReadOnlyList<string> ServerCertificateChain,
-    RevocationStatus RevocationStatus);
+    RevocationStatus RevocationStatus)
+{
+    public string? ServerCertificateSpkiSha256 { get; init; }
+    public string? ServerCertificateIssuerThumbprint { get; init; }
+}
 
 /// <summary>Carried by every server-certificate refusal so the classification in ApiClient's catch
 /// block can report what the revocation check found even though the handshake never completed and

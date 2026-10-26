@@ -1,7 +1,80 @@
 namespace ApiTester.Core;
 
-/// <summary>One upstream mounted at a path prefix on the gateway.</summary>
-public sealed record GatewayRoute(string PathPrefix, Uri Upstream);
+/// <summary>One upstream mounted at a path prefix on the gateway — a "site".</summary>
+public sealed record GatewayRoute(string PathPrefix, Uri Upstream)
+{
+    /// <summary>The client certificate this route presents, when it has one of its own — a
+    /// `serve --routes` file or profile site can name one. Null means the gateway's default (--cert).</summary>
+    public System.Security.Cryptography.X509Certificates.X509Certificate2? Certificate { get; init; }
+
+    /// <summary>What the site is called: <c>--upstream api=…</c>, or <c>"name"</c> in a routes file
+    /// or profile. Also its virtual-host label under <c>--vhost</c>. Null for a mount written as a
+    /// path, which is then named by its prefix.</summary>
+    public string? Name { get; init; }
+
+    /// <summary>Settings this site has that differ from the gateway's. Null: all inherited.</summary>
+    public SiteSettings? Settings { get; init; }
+
+    /// <summary>The name a person reads: the site name, else the prefix without its slashes, else
+    /// "(root)" for the mount at <c>/</c>.</summary>
+    public string DisplayName => Name ?? (PathPrefix.Trim('/') is { Length: > 0 } p ? p : "(root)");
+
+    /// <summary>A site name is also a DNS label (its virtual host) and a path segment (its mount):
+    /// letters, digits and inner hyphens.</summary>
+    public static bool IsValidName(string name) =>
+        name.Length is > 0 and <= 63 &&
+        char.IsAsciiLetterOrDigit(name[0]) && char.IsAsciiLetterOrDigit(name[^1]) &&
+        name.All(c => char.IsAsciiLetterOrDigit(c) || c == '-');
+}
+
+/// <summary>A site's own connection settings — `serve` sites in a routes file or profile. Every
+/// field is an override: unset means "whatever the gateway's flags say".</summary>
+public sealed record SiteSettings
+{
+    /// <summary>Accept this site's server certificate whatever is wrong with it (true), or insist
+    /// on a valid one even when the gateway runs with --insecure (false).</summary>
+    public bool? Insecure { get; init; }
+
+    /// <summary>The roots this site trusts beyond the Windows store: the gateway's --ca-file roots
+    /// plus the site's own <c>caFile</c>, already merged.</summary>
+    public ExtraRootSet? ExtraRoots { get; init; }
+
+    /// <summary>The files the site added, for display (the merged set includes the gateway's).</summary>
+    public IReadOnlyList<string> CaFiles { get; init; } = Array.Empty<string>();
+
+    public RevocationMode? Revocation { get; init; }
+
+    /// <summary>Answer this site's Negotiate/NTLM challenge with these credentials.</summary>
+    public WindowsAuthOptions? WindowsAuth { get; init; }
+
+    /// <summary>True: never answer this site's Windows-auth challenge, even with --windows-auth.</summary>
+    public bool WindowsAuthOff { get; init; }
+
+    /// <summary>Headers set (replace-or-add) on every request forwarded to this site.</summary>
+    public IReadOnlyList<KeyValuePair<string, string>> RequestHeaders { get; init; } =
+        Array.Empty<KeyValuePair<string, string>>();
+
+    /// <summary>Identity for connection pooling: two sites on one host with different settings
+    /// must not share a pool, and two with the same settings may.</summary>
+    public string PoolKey =>
+        $"{Insecure}|{ExtraRoots?.Fingerprint}|{Revocation}|{(WindowsAuthOff ? "off" : WindowsAuth is null ? "" : WindowsAuth.UseDefaultCredentials ? "sso" : AccountName(WindowsAuth))}";
+
+    /// <summary>The settings as short phrases for the startup table — never a secret's value.</summary>
+    public IEnumerable<string> Describe()
+    {
+        if (Insecure == true) yield return "insecure";
+        if (Insecure == false) yield return "verify";
+        foreach (var f in CaFiles) yield return "ca " + Path.GetFileName(f);
+        if (Revocation is { } r) yield return "revocation " + r.ToString().ToLowerInvariant();
+        if (WindowsAuthOff) yield return "no windows-auth";
+        else if (WindowsAuth is { } wa)
+            yield return wa.UseDefaultCredentials ? "windows-auth" : "windows-auth " + AccountName(wa);
+        if (RequestHeaders.Count > 0) yield return "headers " + string.Join(",", RequestHeaders.Select(h => h.Key));
+    }
+
+    private static string AccountName(WindowsAuthOptions wa) =>
+        string.IsNullOrEmpty(wa.Domain) ? wa.Username ?? "" : wa.Domain + "\\" + wa.Username;
+}
 
 /// <summary>The gateway's routing table: which upstream a request path belongs to, and what path
 /// to forward once the mount point has been stripped off.</summary>
@@ -9,21 +82,31 @@ public sealed class GatewayRoutes
 {
     private const string Root = "/";
 
+    /// <summary>Mount points the gateway keeps for itself: dynamic targets and its own endpoints.</summary>
+    public static readonly string[] Reserved = { "/_", "/_certapi" };
+
+    /// <summary>An empty table is legal — a gateway running only dynamic targets (`serve --allow`)
+    /// has no static mounts — and then nothing static ever matches.</summary>
     public GatewayRoutes(IReadOnlyList<GatewayRoute> routes)
     {
-        if (routes.Count == 0)
-            throw new ArgumentException("A gateway needs at least one upstream route.", nameof(routes));
-
         var normalized = new List<GatewayRoute>(routes.Count);
         var taken = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var route in routes)
         {
             string prefix = Normalize(route.PathPrefix);
+            foreach (var reserved in Reserved)
+                if (prefix.Equals(reserved, StringComparison.OrdinalIgnoreCase) ||
+                    prefix.StartsWith(reserved + "/", StringComparison.OrdinalIgnoreCase))
+                    throw new ArgumentException(
+                        $"The path prefix '{prefix}' is reserved for the gateway itself and cannot be mounted.", nameof(routes));
             // Two upstreams on one mount point is a configuration mistake with no right answer;
             // silently keeping the last one would send traffic to a host the user did not mean.
             if (!taken.Add(prefix))
                 throw new ArgumentException(
                     $"Two upstreams are mounted at the same path prefix '{prefix}'.", nameof(routes));
+            if (route.Name is { } name && !names.Add(name))
+                throw new ArgumentException($"Two sites are named '{name}'.", nameof(routes));
             normalized.Add(route with { PathPrefix = prefix });
         }
         All = normalized;

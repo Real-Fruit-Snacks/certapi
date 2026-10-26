@@ -82,7 +82,7 @@ the full main window. Everything stays live; closing a popped-out window returns
 
 ## Themes
 
-The app ships **light and dark** Terminal Workbench palettes. Toggle with the **☀ / ☾** button in the
+The app ships two palettes, **Nightshift** (dark) and **Dayshift** (light). Toggle with the **☀ / ☾** button in the
 title bar; your choice is saved and applied to every window (and the native title bar) — the syntax
 highlighting and status colors adapt too. On the CLI there's no theme; output is plain text.
 

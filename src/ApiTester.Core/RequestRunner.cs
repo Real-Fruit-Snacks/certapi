@@ -35,6 +35,11 @@ public sealed class RequestRunContext
     /// <summary>Applied over each saved request's own transport settings — the command line's flags
     /// override only what they name. Null leaves the saved request's settings alone.</summary>
     public Func<TransportOptions, TransportOptions>? TransportOverride { get; init; }
+
+    /// <summary>Headers the configuration profile adds to every request — applied after the saved
+    /// request's own headers, and only for names the request does not set itself.</summary>
+    public IReadOnlyList<KeyValuePair<string, string>> StandingHeaders { get; init; } =
+        Array.Empty<KeyValuePair<string, string>>();
     public List<HarEntry>? HarEntries { get; init; }
     /// <summary>Per-request notes, already formatted, delivered synchronously at the moment they
     /// happen so a caller writing them to a stream keeps them in the order they occurred.</summary>
@@ -182,6 +187,13 @@ public static class RequestRunner
         var transport = ctx.TransportOverride is { } apply ? apply(baseline) : baseline;
         if (ApiClient.ValidateTransport(transport, url) is { } transportProblem)
             return (new ApiResponse { Error = new ApiError(ApiErrorKind.Unknown, transportProblem) }, url);
+
+        if (ctx.StandingHeaders.Count > 0)
+        {
+            var named = new HashSet<string>(headers.Select(h => h.Key), StringComparer.OrdinalIgnoreCase);
+            foreach (var h in ctx.StandingHeaders)
+                if (named.Add(h.Key)) headers.Add(h);
+        }
 
         var request = new ApiRequest
         {

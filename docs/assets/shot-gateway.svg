@@ -1,62 +1,62 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="860" height="384" viewBox="0 0 860 384" role="img" aria-label="certapi serve — a local mTLS gateway forwarding requests to a certificate-protected site">
   <defs>
     <style>
-      .mono { font-family: 'JetBrains Mono','Cascadia Code',Consolas,'DejaVu Sans Mono',monospace; }
+      .mono { font-family: 'IBM Plex Mono','Cascadia Code',Consolas,'DejaVu Sans Mono',monospace; }
     </style>
   </defs>
 
   <!-- window -->
-  <rect x="1" y="1" width="858" height="382" rx="10" fill="#0e1214" stroke="#2a363d" stroke-width="1.5"/>
+  <rect x="1" y="1" width="858" height="382" rx="10" fill="#13151A" stroke="#262A33" stroke-width="1.5"/>
 
   <!-- title bar -->
-  <path d="M1,11 a10,10 0 0 1 10,-10 H849 a10,10 0 0 1 10,10 V40 H1 Z" fill="#13191c"/>
-  <line x1="1" y1="40" x2="859" y2="40" stroke="#2a363d" stroke-width="1.5"/>
-  <circle cx="24" cy="20.5" r="5" fill="#39484f"/>
-  <circle cx="44" cy="20.5" r="5" fill="#39484f"/>
-  <circle cx="64" cy="20.5" r="5" fill="#39484f"/>
-  <text class="mono" x="430" y="25" font-size="12" font-weight="600" letter-spacing="1.5" fill="#879994" text-anchor="middle">certapi serve &#8212; local mTLS gateway</text>
+  <path d="M1,11 a10,10 0 0 1 10,-10 H849 a10,10 0 0 1 10,10 V40 H1 Z" fill="#13151A"/>
+  <line x1="1" y1="40" x2="859" y2="40" stroke="#262A33" stroke-width="1.5"/>
+  <circle cx="24" cy="20.5" r="5" fill="#333945"/>
+  <circle cx="44" cy="20.5" r="5" fill="#333945"/>
+  <circle cx="64" cy="20.5" r="5" fill="#333945"/>
+  <text class="mono" x="430" y="25" font-size="12" font-weight="600" letter-spacing="1.5" fill="#8A8F99" text-anchor="middle">certapi serve &#8212; local mTLS gateway</text>
 
   <!-- body -->
   <g class="mono" font-size="14.5">
     <!-- command -->
-    <text x="24" y="78" fill="#63f2ab">$</text>
-    <text x="42" y="78" fill="#dce4df">certapi serve <tspan fill="#6bdcff">https://internal.corp</tspan> --port <tspan fill="#f7a35c">8819</tspan> --cert <tspan fill="#b4c3bd">"CN=matt"</tspan></text>
+    <text x="24" y="78" fill="#FF6A3D">$</text>
+    <text x="42" y="78" fill="#E8E6E1">certapi serve <tspan fill="#FFC247">https://internal.corp</tspan> --port <tspan fill="#C4C3BE">8819</tspan> --cert <tspan fill="#C4C3BE">"CN=matt"</tspan></text>
 
     <!-- banner -->
-    <text x="42" y="108" fill="#879994">listening on <tspan fill="#63f2ab">http://127.0.0.1:8819</tspan>  &#8594;  <tspan fill="#6bdcff">https://internal.corp</tspan></text>
-    <text x="42" y="130" fill="#63736f">cert: CN=matt &#183; CurrentUser\My &#183; loopback only</text>
+    <text x="42" y="108" fill="#8A8F99">listening on <tspan fill="#3DDC97">http://127.0.0.1:8819</tspan>  &#8594;  <tspan fill="#FFC247">https://internal.corp</tspan></text>
+    <text x="42" y="130" fill="#5E636D">cert: CN=matt &#183; CurrentUser\My &#183; loopback only</text>
 
     <!-- forwarded requests -->
-    <text x="42" y="170" fill="#63f2ab" font-weight="700">GET</text>
-    <text x="118" y="170" fill="#b4c3bd">/api/orders</text>
-    <text x="392" y="170" fill="#63736f">&#8594;</text>
-    <text x="420" y="170" fill="#63f2ab" font-weight="700">200</text>
-    <text x="470" y="170" fill="#63736f">142 ms</text>
+    <text x="42" y="170" fill="#3DDC97" font-weight="700">GET</text>
+    <text x="118" y="170" fill="#C4C3BE">/api/orders</text>
+    <text x="392" y="170" fill="#5E636D">&#8594;</text>
+    <text x="420" y="170" fill="#3DDC97" font-weight="700">200</text>
+    <text x="470" y="170" fill="#5E636D">142 ms</text>
 
-    <text x="42" y="196" fill="#63f2ab" font-weight="700">POST</text>
-    <text x="118" y="196" fill="#b4c3bd">/api/orders</text>
-    <text x="392" y="196" fill="#63736f">&#8594;</text>
-    <text x="420" y="196" fill="#63f2ab" font-weight="700">201</text>
-    <text x="470" y="196" fill="#63736f">318 ms</text>
+    <text x="42" y="196" fill="#3DDC97" font-weight="700">POST</text>
+    <text x="118" y="196" fill="#C4C3BE">/api/orders</text>
+    <text x="392" y="196" fill="#5E636D">&#8594;</text>
+    <text x="420" y="196" fill="#3DDC97" font-weight="700">201</text>
+    <text x="470" y="196" fill="#5E636D">318 ms</text>
 
-    <text x="42" y="222" fill="#63f2ab" font-weight="700">GET</text>
-    <text x="118" y="222" fill="#b4c3bd">/api/orders/1051</text>
-    <text x="392" y="222" fill="#63736f">&#8594;</text>
-    <text x="420" y="222" fill="#63f2ab" font-weight="700">200</text>
-    <text x="470" y="222" fill="#63736f">97 ms</text>
+    <text x="42" y="222" fill="#3DDC97" font-weight="700">GET</text>
+    <text x="118" y="222" fill="#C4C3BE">/api/orders/1051</text>
+    <text x="392" y="222" fill="#5E636D">&#8594;</text>
+    <text x="420" y="222" fill="#3DDC97" font-weight="700">200</text>
+    <text x="470" y="222" fill="#5E636D">97 ms</text>
 
     <!-- an off-host attempt is refused -->
-    <text x="42" y="248" fill="#63f2ab" font-weight="700">GET</text>
-    <text x="118" y="248" fill="#7a8a85">//evil.example/steal</text>
-    <text x="392" y="248" fill="#63736f">&#8594;</text>
-    <text x="420" y="248" fill="#ff6e7a" font-weight="700">400</text>
-    <text x="470" y="248" fill="#63736f">off-host target &#8212; refused</text>
+    <text x="42" y="248" fill="#3DDC97" font-weight="700">GET</text>
+    <text x="118" y="248" fill="#8A8F99">//evil.example/steal</text>
+    <text x="392" y="248" fill="#5E636D">&#8594;</text>
+    <text x="420" y="248" fill="#FF6E7A" font-weight="700">400</text>
+    <text x="470" y="248" fill="#5E636D">off-host target &#8212; refused</text>
 
     <!-- meanwhile, the app just changes its base URL -->
-    <line x1="24" y1="278" x2="836" y2="278" stroke="#1c2529" stroke-width="1"/>
-    <text x="24" y="312" fill="#63736f"># any local app just points at the port &#8212; no certificate code of its own</text>
-    <text x="24" y="340" fill="#63f2ab">$</text>
-    <text x="42" y="340" fill="#dce4df">curl <tspan fill="#63f2ab">http://localhost:8819</tspan>/api/orders</text>
-    <text x="42" y="362" fill="#879994">&#8594; forwarded to internal.corp with your client certificate &#183; <tspan fill="#63f2ab">200 OK</tspan></text>
+    <line x1="24" y1="278" x2="836" y2="278" stroke="#22262F" stroke-width="1"/>
+    <text x="24" y="312" fill="#5E636D"># any local app just points at the port &#8212; no certificate code of its own</text>
+    <text x="24" y="340" fill="#FF6A3D">$</text>
+    <text x="42" y="340" fill="#E8E6E1">curl <tspan fill="#3DDC97">http://localhost:8819</tspan>/api/orders</text>
+    <text x="42" y="362" fill="#8A8F99">&#8594; forwarded to internal.corp with your client certificate &#183; <tspan fill="#3DDC97">200 OK</tspan></text>
   </g>
 </svg>

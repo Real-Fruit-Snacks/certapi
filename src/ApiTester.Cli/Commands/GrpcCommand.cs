@@ -141,11 +141,11 @@ public static class GrpcCommand
         var headers = args.Values("-H", "--header");
         string? maxMessagesRaw = args.Value("--max-messages");
         string store = args.Value("--store") ?? services.Profile?.Store ?? "CurrentUser";
-        bool insecure = args.Flag("--insecure");
+        bool insecure = args.FlagOrNull("--insecure") ?? services.Profile?.Insecure ?? false;
         string? proxyUrl = args.Value("--proxy");
         bool noProxy = args.Flag("--no-proxy");
         string? proxyUser = args.Value("--proxy-user");
-        string? noProxySpec = args.Value("--noproxy");
+        string? noProxySpec = args.ListValue("--noproxy");
         string? revocationRaw = args.Value("--revocation");
         bool revocationStrict = args.Flag("--revocation-strict");
         string? timeoutRaw = args.Value("--timeout");
@@ -263,7 +263,7 @@ public static class GrpcCommand
         var state = LoadWorkspaceOrEmpty(workspace, services, stderr);
         string host = TokenService.HostOf(addressRaw);
         Func<X509Certificate2?, bool> trustCert = c =>
-            c is not null && TrustService.IsTrusted(state, host, c.Thumbprint!);
+            c is not null && TrustService.IsTrusted(state, host, c, TrustContext.CurrentChain);
 
         if (!noAutoToken)
         {

@@ -29,5 +29,25 @@ public sealed class TrustPredicates
     /// the same delegate instance is returned for every call with the same host (compared
     /// case-insensitively), so repeated requests to it can share a pooled connection.</summary>
     public Func<X509Certificate2?, bool> For(string host) =>
-        _byHost.GetOrAdd(host, h => c => c is not null && TrustService.IsTrusted(_state, h, c.Thumbprint!));
+        _byHost.GetOrAdd(host, h => c => c is not null && TrustService.IsTrusted(_state, h, c, TrustContext.CurrentChain));
+}
+
+/// <summary>How a validation callback lends the presented chain to the trust predicate without
+/// every predicate in the product changing shape. The callback runs the predicate synchronously on
+/// its own thread, so a thread-bound slot set just before the call and cleared just after is exact.
+/// A predicate invoked outside a callback sees no chain, which an issuer pin treats as "no issuer
+/// to match" rather than as trust.</summary>
+public static class TrustContext
+{
+    [ThreadStatic] private static X509Chain? _chain;
+
+    public static X509Chain? CurrentChain => _chain;
+
+    public static bool Run(X509Chain? chain, Func<bool> predicate)
+    {
+        var previous = _chain;
+        _chain = chain;
+        try { return predicate(); }
+        finally { _chain = previous; }
+    }
 }

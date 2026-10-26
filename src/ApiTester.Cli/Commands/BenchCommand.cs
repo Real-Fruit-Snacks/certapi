@@ -124,7 +124,7 @@ public static class BenchCommand
         bool json = args.Flag("--json");
         bool benchRetries = args.Flag("--bench-retries");
         string store = args.Value("--store") ?? services.Profile?.Store ?? "CurrentUser";
-        bool insecure = args.Flag("--insecure");
+        bool insecure = args.FlagOrNull("--insecure") ?? services.Profile?.Insecure ?? false;
         string? envName = args.Value("--env");
         var varOverrides = args.Values("--var");
         string? workspace = args.Value("--workspace");
@@ -288,7 +288,7 @@ public static class BenchCommand
         // handshake, and that dominates the very latency this command exists to report.
         using var inspector = pool ? new ConnectionInspector() : null;
 
-        services.Log.Debug($"bench {request.Method} {request.Url}"
+        services.Log.Debug($"bench {request.Method} {MarkdownSecrets.RedactUrl(request.Url)}"
             + (savedPath is null ? "" : $" ({savedPath})"));
         services.Log.Debug(duration is { } d
             ? $"plan: {d.TotalSeconds:0.##} s · concurrency {concurrency}"
@@ -299,7 +299,7 @@ public static class BenchCommand
 
         var result = Bench.RunAsync(request, cert, transport, options,
             Counter(json, stderr), services.Cancel,
-            trustServerCertificate: c => c is not null && TrustService.IsTrusted(state, host, c.Thumbprint!))
+            trustServerCertificate: c => c is not null && TrustService.IsTrusted(state, host, c, TrustContext.CurrentChain))
             .GetAwaiter().GetResult();
         if (!json) stderr.WriteLine();
 

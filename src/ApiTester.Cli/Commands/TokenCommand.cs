@@ -38,6 +38,7 @@ public static class TokenCommand
 
         TLS / certificates (the token endpoint itself may require mTLS):
           --cert <thumb|subject>  --cert-file <path>  --cert-password <pw>  --key-file <path>
+          --cert-issuer <substr>  --cert-serial <hex>  --cert-pin <pin> (or CERTAPI_CERT_PIN)
           --store <location>      --insecure
         A token endpoint pinned with `certapi trust add` needs no --insecure.
 
@@ -79,7 +80,7 @@ public static class TokenCommand
         var forUrls = args.Values("--for");
         string? workspace = args.Value("--workspace");
         string store = args.Value("--store") ?? services.Profile?.Store ?? "CurrentUser";
-        bool insecure = args.Flag("--insecure");
+        bool insecure = args.FlagOrNull("--insecure") ?? services.Profile?.Insecure ?? false;
         bool json = args.Flag("--json");
         bool quiet = args.Flag("-q", "--quiet");
         string? deviceUrl = args.Value("--device-url");
@@ -136,10 +137,10 @@ public static class TokenCommand
             : CliWorkspace.Load(workspace, services.LiveStatePath, stderr);
         Func<System.Security.Cryptography.X509Certificates.X509Certificate2?, bool> trust = c =>
             c is not null &&
-            (TrustService.IsTrusted(trustState, TokenService.HostOf(tokenUrl), c.Thumbprint!) ||
-             (deviceUrl is not null && TrustService.IsTrusted(trustState, TokenService.HostOf(deviceUrl), c.Thumbprint!)));
+            (TrustService.IsTrusted(trustState, TokenService.HostOf(tokenUrl), c, TrustContext.CurrentChain) ||
+             (deviceUrl is not null && TrustService.IsTrusted(trustState, TokenService.HostOf(deviceUrl), c, TrustContext.CurrentChain)));
 
-        services.Log.Debug($"OAuth {grant} → {tokenUrl} · client {clientId ?? "—"} · auth {clientAuth} · cert {(cert is null ? "none" : cert.Subject)}");
+        services.Log.Debug($"OAuth {grant} → {MarkdownSecrets.RedactUrl(tokenUrl)} · client {clientId ?? "—"} · auth {clientAuth} · cert {(cert is null ? "none" : cert.Subject)}");
         if (!quiet) stderr.WriteLine($"requesting a token ({GrantLabel(grant)}) from {tokenUrl} …");
 
         var result = grant == OAuthGrant.DeviceCode

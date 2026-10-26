@@ -67,9 +67,9 @@ jobs:
         shell: bash
         run: |
           gh release create "$TAG" \
-            "publish/ApiTester.App.exe#Certificate API Tester (Windows x64, self-contained)" \
-            "publish-cli/certapi.exe#certapi command-line client (Windows x64, self-contained)" \
-            "wordlists/common-api-endpoints.txt#Starter endpoint wordlist for 'certapi fuzz'" \
-            "certapi-source-${TAG}.zip#Full source — the entire repository at this tag" \
-            --title "Certificate API Tester $TAG" \
+            "publish/ApiTester.App.exe#certapi desktop app (Windows x64, self-contained)" \
+            "publish-cli/certapi.exe#certapi command line (Windows x64, self-contained)" \
+            "wordlists/common-api-endpoints.txt#Starter wordlist for certapi fuzz" \
+            "certapi-source-${TAG}.zip#Source at this tag" \
+            --title "$TAG" \
             --notes-file notes-body.md

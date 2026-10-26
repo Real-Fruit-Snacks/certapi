@@ -26,6 +26,11 @@ public static class McpCommand
           --cert-file <path>      Pin a certificate from a file (.pfx/.p12 or .pem/.crt) instead
           --cert-password <pw>    Password for a .pfx/.p12 certificate file
           --key-file <path>       Private-key file for a PEM certificate whose key is separate
+          --cert-issuer <substr>  Narrow --cert to certificates issued by a matching CA (or use alone)
+          --cert-serial <hex>     Pick the certificate with this serial number (or use alone)
+          --cert-pin <pin>        Smart-card / HSM PIN for the key, supplied ahead of time so a
+                                  headless job is not stopped by the prompt. Prefer CERTAPI_CERT_PIN,
+                                  which keeps it out of the shell history. Windows (CNG) only
           --allow <host>          Allowed upstream host (repeatable); a URL must match or be a
                                   subdomain of one. Omit to allow any host (prints a warning).
                                   Enforced per request — a chain step whose URL comes from an
@@ -51,6 +56,8 @@ public static class McpCommand
                                   none (default), offline, or online — same rules as `send`
           --revocation-strict     Make an undeterminable revocation status fatal
           --retry <n> / --retry-on <codes> / --retry-delay <ms>   Same retry rules as `send`
+          --ca-file <pem>, --tls-min, --connect-timeout, --sni, --resolve, --pac, --no-env-proxy,
+          --offline, -4 / -6      Trust and network options, same rules as `send`
         Redirects are never followed: a 3xx comes back as itself, so every hop an agent takes is
         an explicit call checked against the allowlist. A host pinned with `certapi trust add`
         is reachable without --insecure, exactly as it is for send/run.
@@ -75,7 +82,7 @@ public static class McpCommand
     {
         string store = args.Value("--store") ?? services.Profile?.Store ?? "CurrentUser";
         var allowHosts = args.Values("--allow");
-        bool insecure = args.Flag("--insecure");
+        bool insecure = args.FlagOrNull("--insecure") ?? services.Profile?.Insecure ?? false;
         string? timeoutRaw = args.Value("--timeout");
         string? workspace = args.Value("--workspace");
         bool noAutoToken = args.Flag("--no-auto-token");

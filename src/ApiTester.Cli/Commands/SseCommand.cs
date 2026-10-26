@@ -22,6 +22,11 @@ public static class SseCommand
           --cert-file <path>      Client certificate from a file (.pfx/.p12 or .pem/.crt)
           --cert-password <pw>    Password for a .pfx/.p12 certificate file
           --key-file <path>       Private-key file for a PEM cert whose key is in a separate file
+          --cert-issuer <substr>  Narrow --cert to certificates issued by a matching CA (or use alone)
+          --cert-serial <hex>     Pick the certificate with this serial number (or use alone)
+          --cert-pin <pin>        Smart-card / HSM PIN for the key, supplied ahead of time so a
+                                  headless job is not stopped by the prompt. Prefer CERTAPI_CERT_PIN,
+                                  which keeps it out of the shell history. Windows (CNG) only
           --insecure              Ignore server certificate errors; a host pinned with
                                   `certapi trust add` needs no --insecure
 
@@ -45,7 +50,7 @@ public static class SseCommand
     {
         var headers = args.Values("-H", "--header");
         string store = args.Value("--store") ?? services.Profile?.Store ?? "CurrentUser";
-        bool insecure = args.Flag("--insecure");
+        bool insecure = args.FlagOrNull("--insecure") ?? services.Profile?.Insecure ?? false;
         bool json = args.Flag("--json");
         bool quiet = args.Flag("-q", "--quiet");
         string? workspace = args.Value("--workspace");
@@ -81,7 +86,7 @@ public static class SseCommand
             stderr.WriteLine($"using captured token for {TokenService.HostOf(url)}");
 
         if (!quiet) stderr.WriteLine($"connecting to {url} …");
-        services.Log.Debug($"SSE GET {url} · cert {(cert is null ? "none" : cert.Subject)} · insecure {insecure}");
+        services.Log.Debug($"SSE GET {MarkdownSecrets.RedactUrl(url)} · cert {(cert is null ? "none" : cert.Subject)} · insecure {insecure}");
 
         return StreamAsync().GetAwaiter().GetResult();
 

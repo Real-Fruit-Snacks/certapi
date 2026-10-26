@@ -147,7 +147,7 @@
                                                     <Setter Property="Foreground" Value="{DynamicResource Red}"/>
                                                     <Style.Triggers>
                                                         <DataTrigger Binding="{Binding IsKnownGood}" Value="True">
-                                                            <Setter Property="Foreground" Value="{DynamicResource Accent}"/>
+                                                            <Setter Property="Foreground" Value="{DynamicResource Signal}"/>
                                                         </DataTrigger>
                                                     </Style.Triggers>
                                                 </Style>

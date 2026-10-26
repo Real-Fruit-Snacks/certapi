@@ -673,7 +673,8 @@ public class BrowserRewriterTests
 
         Assert.Equal(new[] { "https://app.example" }, Values(result, "Access-Control-Allow-Origin"));
         Assert.Equal("Set-Cookie, Location", Value(result, "Access-Control-Expose-Headers"));
-        Assert.Equal("__Host-session=abc; Path=/; SameSite=Lax", Value(result, "Set-Cookie"));
+        // Path re-rooted under the /api mount, so the cookie comes back for that upstream only.
+        Assert.Equal("__Host-session=abc; Path=/api; SameSite=Lax", Value(result, "Set-Cookie"));
         Assert.Equal("http://127.0.0.1:8080/api/orders/7", Value(result, "Location"));
         Assert.Contains(warnings, w => w.Contains("__Host-session"));
         Assert.Equal(before, upstream);   // the caller's list is never rewritten in place

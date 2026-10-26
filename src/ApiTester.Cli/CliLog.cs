@@ -135,26 +135,51 @@ public static class GlobalOptions
         var traceFilters = new List<string>();
         bool debug = false, noConfig = false, trace = false, traceVerbose = false, traceIncludeSecrets = false;
         string? logFile = null, config = null, profile = null, traceFile = null;
+
+        // The global options follow the same rules as every command's: --name=value is the same as
+        // --name value, a single-value option given twice is refused rather than guessed at, and
+        // nothing after "--" is an option at all.
+        string[] valued = { "--log-file", "--config", "--profile", "--trace-file", "--trace-filter" };
+        var expanded = new List<string>(args.Length + 2);
+        bool ended = false;
+        foreach (var arg in args)
+        {
+            if (ended) { expanded.Add(arg); continue; }
+            if (arg == "--") { ended = true; expanded.Add(arg); continue; }
+            int eq = arg.IndexOf('=');
+            if (eq > 2 && arg.StartsWith("--", StringComparison.Ordinal) &&
+                valued.Contains(arg[..eq], StringComparer.OrdinalIgnoreCase))
+            {
+                expanded.Add(arg[..eq]);
+                expanded.Add(arg[(eq + 1)..]);
+            }
+            else expanded.Add(arg);
+        }
+        args = expanded.ToArray();
+        string Once(string name, string? current, string value) =>
+            current is null ? value : throw new CliUsageException($"Option '{name}' was given more than once, and it takes one value.");
+
         for (int i = 0; i < args.Length; i++)
         {
+            if (args[i] == "--") { rest.AddRange(args[i..]); break; }
             if (args[i].Equals("--debug", StringComparison.OrdinalIgnoreCase)) { debug = true; continue; }
             if (args[i].Equals("--no-config", StringComparison.OrdinalIgnoreCase)) { noConfig = true; continue; }
             if (args[i].Equals("--log-file", StringComparison.OrdinalIgnoreCase))
             {
                 if (i + 1 >= args.Length) throw new CliUsageException("Option --log-file needs a value.");
-                logFile = args[++i];
+                logFile = Once("--log-file", logFile, args[++i]);
                 continue;
             }
             if (args[i].Equals("--config", StringComparison.OrdinalIgnoreCase))
             {
                 if (i + 1 >= args.Length) throw new CliUsageException("Option --config needs a value.");
-                config = args[++i];
+                config = Once("--config", config, args[++i]);
                 continue;
             }
             if (args[i].Equals("--profile", StringComparison.OrdinalIgnoreCase))
             {
                 if (i + 1 >= args.Length) throw new CliUsageException("Option --profile needs a value.");
-                profile = args[++i];
+                profile = Once("--profile", profile, args[++i]);
                 continue;
             }
             if (args[i].Equals("--trace", StringComparison.OrdinalIgnoreCase)) { trace = true; continue; }
@@ -165,7 +190,7 @@ public static class GlobalOptions
             if (args[i].Equals("--trace-file", StringComparison.OrdinalIgnoreCase))
             {
                 if (i + 1 >= args.Length) throw new CliUsageException("Option --trace-file needs a value.");
-                traceFile = args[++i];
+                traceFile = Once("--trace-file", traceFile, args[++i]);
                 trace = true;
                 continue;
             }

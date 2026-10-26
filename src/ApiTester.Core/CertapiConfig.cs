@@ -7,6 +7,13 @@ namespace ApiTester.Core;
 /// proxy in it never breaks `certapi certs`.</summary>
 public sealed record ConfigProfile
 {
+    /// <summary>The profile's name in the file, for messages that point at it.</summary>
+    public string? Name { get; init; }
+
+    /// <summary>The gateway this profile runs — `certapi serve --profile <name>`. Null when the
+    /// profile has no <c>serve</c> section.</summary>
+    public ServeProfile? Serve { get; init; }
+
     public string? Cert { get; init; }
     public string? Store { get; init; }
     public string? CertFile { get; init; }
@@ -24,12 +31,72 @@ public sealed record ConfigProfile
     public int? Retry { get; init; }
     public int? Timeout { get; init; }
     public bool? Insecure { get; init; }
+
+    /// <summary>Extra root certificates (PEM/DER paths, relative to the config file) trusted on top
+    /// of the machine store — the profile form of <c>--ca-file</c>.</summary>
+    public IReadOnlyList<string> CaFiles { get; init; } = Array.Empty<string>();
+    /// <summary>"1.2" or "1.3" — the profile form of <c>--tls-min</c>.</summary>
+    public string? TlsMin { get; init; }
+    /// <summary>Seconds — the profile form of <c>--connect-timeout</c>.</summary>
+    public int? ConnectTimeout { get; init; }
     public string? Workspace { get; init; }
 
     /// <summary>Headers added to every request a command sends, unless the command line sets the
     /// same name — the one place a profile contributes something a flag cannot simply replace.</summary>
     public IReadOnlyList<KeyValuePair<string, string>> Headers { get; init; } =
         Array.Empty<KeyValuePair<string, string>>();
+
+    /// <summary>The request's headers with this profile's standing headers added — every profile
+    /// header whose name the command line (or the collection entry) did not already set. A name set
+    /// by the caller wins outright, so a profile's <c>X-Env: staging</c> never doubles a typed one
+    /// and a typed <c>Authorization</c> replaces the profile's rather than joining it.</summary>
+    public IReadOnlyList<KeyValuePair<string, string>> WithStandingHeaders(IReadOnlyList<KeyValuePair<string, string>> requestHeaders)
+    {
+        if (Headers.Count == 0) return requestHeaders;
+        var set = new HashSet<string>(requestHeaders.Select(h => h.Key), StringComparer.OrdinalIgnoreCase);
+        var merged = new List<KeyValuePair<string, string>>(requestHeaders);
+        foreach (var h in Headers)
+            if (set.Add(h.Key)) merged.Add(h);
+        return merged;
+    }
+
+    /// <summary>The header names whose values were written as <c>${env:…}</c> references, so
+    /// `config show` can report them as set without printing what they resolved to.</summary>
+    public IReadOnlySet<string> SecretHeaderNames { get; init; } = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+}
+
+/// <summary>A profile's <c>serve</c> section: the gateway's own settings and its sites. Every
+/// field is what the matching `serve` flag would say; a flag typed on the command line wins.
+/// Certificate, proxy, CA files, revocation and the rest come from the profile itself, exactly as
+/// they do for every other command.</summary>
+public sealed record ServeProfile
+{
+    public int? Port { get; init; }
+    public bool? Vhost { get; init; }
+    public string? VhostSuffix { get; init; }
+    public bool? Browser { get; init; }
+    public bool? Cors { get; init; }
+    public IReadOnlyList<string> CorsOrigins { get; init; } = Array.Empty<string>();
+    public string? Token { get; init; }
+    public IReadOnlyList<string> Allow { get; init; } = Array.Empty<string>();
+    public string? Listen { get; init; }
+    public bool? CookieJar { get; init; }
+    public string? CookieJarFile { get; init; }
+    public bool? AutoToken { get; init; }
+    public bool? WindowsAuth { get; init; }
+    public string? WindowsUser { get; init; }
+    public string? WindowsPassword { get; init; }
+    public bool? Forwarded { get; init; }
+    public string? MaxBody { get; init; }
+    public int? Timeout { get; init; }
+    public bool? Tls { get; init; }
+    public IReadOnlyList<GatewayRouteSpec> Sites { get; init; } = Array.Empty<GatewayRouteSpec>();
+
+    public static readonly string[] Fields =
+    {
+        "port", "vhost", "browser", "cors", "token", "allow", "listen", "cookieJar", "autoToken",
+        "windowsAuth", "windowsUser", "windowsPassword", "forwarded", "maxBody", "timeout", "tls", "sites",
+    };
 }
 
 /// <summary>Where a configuration file was found, and by which rule — reported by
@@ -160,14 +227,21 @@ public static class ConfigLoader
             string? defaultProfile = root.TryGetProperty("defaultProfile", out var dp) && dp.ValueKind == JsonValueKind.String
                 ? dp.GetString() : null;
 
-            var profiles = new Dictionary<string, ConfigProfile>(StringComparer.OrdinalIgnoreCase);
+            // Each profile is read on first use, not up front: an unset ${env:…} in profile "prod"
+            // must not stop `--profile dev` from running. The dictionary is populated with lazy
+            // readers and the resolution step unwraps the one that was asked for.
+            var deferred = new Dictionary<string, Func<ConfigProfile>>(StringComparer.OrdinalIgnoreCase);
             if (root.TryGetProperty("profiles", out var profilesElement) &&
                 profilesElement.ValueKind == JsonValueKind.Object)
                 foreach (var property in profilesElement.EnumerateObject())
                     if (property.Value.ValueKind == JsonValueKind.Object)
-                        profiles[property.Name] = ReadProfile(property.Value, property.Name, source, environment);
+                    {
+                        var elementCopy = property.Value.Clone();
+                        string name = property.Name;
+                        deferred[name] = () => ReadProfile(elementCopy, name, source, environment);
+                    }
 
-            return new CertapiConfig(defaultProfile, profiles, source);
+            return new CertapiConfig(defaultProfile, new LazyProfiles(deferred), source);
         }
     }
 
@@ -186,16 +260,46 @@ public static class ConfigLoader
             element.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var n)
                 ? n : null;
 
+        // Accepts one path or a list; relative paths are resolved against the configuration file,
+        // which is where a committed PEM bundle naturally lives.
+        var caFiles = new List<string>();
+        if (element.TryGetProperty("caFile", out var caElement))
+        {
+            IEnumerable<JsonElement> items = caElement.ValueKind == JsonValueKind.Array
+                ? caElement.EnumerateArray() : new[] { caElement };
+            foreach (var item in items)
+                if (item.ValueKind == JsonValueKind.String &&
+                    Expand(item.GetString(), "caFile", profileName, source, environment) is { Length: > 0 } raw)
+                    caFiles.Add(source is null || Path.IsPathRooted(raw)
+                        ? raw
+                        : Path.GetFullPath(Path.Combine(Path.GetDirectoryName(source.Path) ?? ".", raw)));
+        }
+
         var headers = new List<KeyValuePair<string, string>>();
+        var secretHeaders = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         if (element.TryGetProperty("headers", out var headersElement) &&
             headersElement.ValueKind == JsonValueKind.Object)
             foreach (var header in headersElement.EnumerateObject())
                 if (header.Value.ValueKind == JsonValueKind.String)
+                {
+                    string? raw = header.Value.GetString();
+                    if (HasEnvironmentReference(raw)) secretHeaders.Add(header.Name);
                     headers.Add(new(header.Name,
-                        Expand(header.Value.GetString(), "headers." + header.Name, profileName, source, environment) ?? ""));
+                        Expand(raw, "headers." + header.Name, profileName, source, environment) ?? ""));
+                }
+
+        ServeProfile? serve = null;
+        if (element.TryGetProperty("serve", out var serveElement))
+        {
+            if (serveElement.ValueKind != JsonValueKind.Object)
+                throw new ConfigException($"profile '{profileName}' in {source?.Path ?? "the configuration"}: \"serve\" must be an object.");
+            serve = ReadServe(serveElement, profileName, source, environment);
+        }
 
         return new ConfigProfile
         {
+            Name = profileName,
+            Serve = serve,
             Cert = Str("cert"),
             Store = Str("store"),
             CertFile = Str("certFile"),
@@ -210,8 +314,93 @@ public static class ConfigLoader
             Retry = Int("retry"),
             Timeout = Int("timeout"),
             Insecure = Bool("insecure"),
+            CaFiles = caFiles,
+            TlsMin = Str("tlsMin"),
+            ConnectTimeout = Int("connectTimeout"),
             Workspace = Str("workspace"),
-            Headers = headers
+            Headers = headers,
+            SecretHeaderNames = secretHeaders
+        };
+    }
+
+    private static ServeProfile ReadServe(
+        JsonElement element, string profileName, ConfigSource? source, Func<string, string?>? environment)
+    {
+        string where = $"profile '{profileName}' in {source?.Path ?? "the configuration"}";
+        foreach (var property in element.EnumerateObject())
+            if (!ServeProfile.Fields.Contains(property.Name, StringComparer.OrdinalIgnoreCase))
+                throw new ConfigException($"{where}: \"serve\" has an unknown field \"{property.Name}\" (known: {string.Join(", ", ServeProfile.Fields)}).");
+
+        JsonElement? Get(string name) =>
+            element.EnumerateObject().FirstOrDefault(p => p.Name.Equals(name, StringComparison.OrdinalIgnoreCase)) is { Value.ValueKind: not JsonValueKind.Undefined } p
+                ? p.Value : null;
+        string? Str(string name) => Get(name) is { ValueKind: JsonValueKind.String } v
+            ? Expand(v.GetString(), "serve." + name, profileName, source, environment) : null;
+        bool? Bool(string name) => Get(name) is { ValueKind: JsonValueKind.True or JsonValueKind.False } v ? v.GetBoolean() : null;
+        int? Int(string name) => Get(name) is { ValueKind: JsonValueKind.Number } v && v.TryGetInt32(out var n) ? n : null;
+        // true, a string, or a list of strings — the shapes a flag with an optional list value takes.
+        (bool? on, List<string> values) Switch(string name)
+        {
+            var values = new List<string>();
+            switch (Get(name))
+            {
+                case null: return (null, values);
+                case { ValueKind: JsonValueKind.True or JsonValueKind.False } b: return (b.GetBoolean(), values);
+                case { ValueKind: JsonValueKind.String } s:
+                    values.Add(Expand(s.GetString(), "serve." + name, profileName, source, environment)!);
+                    return (true, values);
+                case { ValueKind: JsonValueKind.Array } a:
+                    foreach (var item in a.EnumerateArray())
+                        if (item.ValueKind == JsonValueKind.String) values.Add(Expand(item.GetString(), "serve." + name, profileName, source, environment)!);
+                        else throw new ConfigException($"{where}: \"serve.{name}\" must be true, a string, or a list of strings.");
+                    return (true, values);
+                default: throw new ConfigException($"{where}: \"serve.{name}\" must be true, a string, or a list of strings.");
+            }
+        }
+
+        var (vhostOn, vhostValues) = Switch("vhost");
+        var (corsOn, corsValues) = Switch("cors");
+        var (_, allow) = Switch("allow");
+        var (jarOn, jarValues) = Switch("cookieJar");
+        string? baseDirectory = source is null ? null : Path.GetDirectoryName(Path.GetFullPath(source.Path));
+
+        var sites = new List<GatewayRouteSpec>();
+        if (Get("sites") is { } sitesElement)
+        {
+            try
+            {
+                sites = GatewayRoutesFile.ParseSites(sitesElement, $"{where}: serve.sites", baseDirectory,
+                    (value, field) => Expand(value, "serve.sites." + field, profileName, source, environment)!);
+            }
+            catch (InvalidDataException ex) { throw new ConfigException(ex.Message); }
+        }
+
+        string? jarFile = jarValues.Count > 0 ? jarValues[0] : null;
+        if (jarFile is not null && baseDirectory is not null && !Path.IsPathRooted(jarFile))
+            jarFile = Path.GetFullPath(Path.Combine(baseDirectory, jarFile));
+
+        return new ServeProfile
+        {
+            Port = Int("port"),
+            Vhost = vhostOn,
+            VhostSuffix = vhostValues.Count > 0 ? vhostValues[0] : null,
+            Browser = Bool("browser"),
+            Cors = corsOn,
+            CorsOrigins = corsValues,
+            Token = Str("token"),
+            Allow = allow,
+            Listen = Str("listen"),
+            CookieJar = jarOn,
+            CookieJarFile = jarFile,
+            AutoToken = Bool("autoToken"),
+            WindowsAuth = Bool("windowsAuth"),
+            WindowsUser = Str("windowsUser"),
+            WindowsPassword = Str("windowsPassword"),
+            Forwarded = Bool("forwarded"),
+            MaxBody = Get("maxBody") is { ValueKind: JsonValueKind.Number } mb ? mb.GetRawText() : Str("maxBody"),
+            Timeout = Int("timeout"),
+            Tls = Bool("tls"),
+            Sites = sites,
         };
     }
 
@@ -252,4 +441,37 @@ public static class ConfigLoader
     /// the secret it resolves to.</summary>
     public static bool HasEnvironmentReference(string? value) =>
         value is not null && value.Contains("${env:", StringComparison.Ordinal);
+}
+
+/// <summary>A profile table whose entries are read — and their <c>${env:…}</c> references
+/// expanded — on first access rather than when the file is parsed. The names are known up front
+/// (so `config profiles` lists them all without touching the environment), and an unset variable
+/// in one profile is an error only when that profile is asked for. Each profile is read once.</summary>
+internal sealed class LazyProfiles : IReadOnlyDictionary<string, ConfigProfile>
+{
+    private readonly Dictionary<string, Func<ConfigProfile>> _readers;
+    private readonly Dictionary<string, ConfigProfile> _read = new(StringComparer.OrdinalIgnoreCase);
+
+    public LazyProfiles(Dictionary<string, Func<ConfigProfile>> readers) => _readers = readers;
+
+    public ConfigProfile this[string key] =>
+        TryGetValue(key, out var p) ? p : throw new KeyNotFoundException(key);
+
+    public IEnumerable<string> Keys => _readers.Keys;
+    public IEnumerable<ConfigProfile> Values => _readers.Keys.Select(k => this[k]);
+    public int Count => _readers.Count;
+    public bool ContainsKey(string key) => _readers.ContainsKey(key);
+
+    public bool TryGetValue(string key, out ConfigProfile value)
+    {
+        if (_read.TryGetValue(key, out value!)) return true;
+        if (!_readers.TryGetValue(key, out var read)) { value = null!; return false; }
+        value = read();
+        _read[key] = value;
+        return true;
+    }
+
+    public IEnumerator<KeyValuePair<string, ConfigProfile>> GetEnumerator() =>
+        _readers.Keys.Select(k => new KeyValuePair<string, ConfigProfile>(k, this[k])).GetEnumerator();
+    System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
 }

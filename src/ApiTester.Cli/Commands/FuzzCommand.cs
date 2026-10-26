@@ -27,6 +27,11 @@ public static class FuzzCommand
           --cert-file <path>       Client certificate from a file (.pfx/.p12 or .pem/.crt) instead
           --cert-password <pw>     Password for a .pfx/.p12 certificate file
           --key-file <path>        Private-key file for a PEM cert whose key is separate
+          --cert-issuer <substr>   Narrow --cert to certificates issued by a matching CA (or use alone)
+          --cert-serial <hex>      Pick the certificate with this serial number (or use alone)
+          --cert-pin <pin>         Smart-card / HSM PIN for the key, supplied ahead of time so a
+                                   headless job is not stopped by the prompt. Prefer CERTAPI_CERT_PIN,
+                                   which keeps it out of the shell history. Windows (CNG) only
           --insecure               Ignore server certificate errors
           --timeout <seconds>      Per-probe timeout (default 100)
 
@@ -99,7 +104,7 @@ public static class FuzzCommand
         var headers = args.Values("-H", "--header");
         string? bearer = args.Value("--bearer");
         string store = args.Value("--store") ?? services.Profile?.Store ?? "CurrentUser";
-        bool insecure = args.Flag("--insecure");
+        bool insecure = args.FlagOrNull("--insecure") ?? services.Profile?.Insecure ?? false;
         string? timeoutRaw = args.Value("--timeout");
         string? envName = args.Value("--env");
         var varOverrides = args.Values("--var");
@@ -228,7 +233,7 @@ public static class FuzzCommand
             }
         });
 
-        services.Log.Debug($"fuzz {baseUrl} · {entries.Count} entries × {methods.Length} method(s) · concurrency {concurrency}");
+        services.Log.Debug($"fuzz {MarkdownSecrets.RedactUrl(baseUrl)} · {entries.Count} entries × {methods.Length} method(s) · concurrency {concurrency}");
         FuzzReport report;
         try { report = EndpointFuzzer.RunAsync(plan, Send, progress, services.Cancel).GetAwaiter().GetResult(); }
         catch (OperationCanceledException)

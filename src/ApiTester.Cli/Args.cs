@@ -6,7 +6,38 @@ public sealed class Args
 {
     private readonly string?[] _tokens;   // consumed slots become null
 
-    public Args(IReadOnlyList<string> tokens) => _tokens = tokens.ToArray();
+    /// <summary>"--name=value" is split into two tokens up front, so every reader below sees the
+    /// one spelling. Only long options qualify, and only when the part before '=' looks like an
+    /// option name — a positional such as "a=b" or a header value is left alone. "--" on its own
+    /// ends option parsing: everything after it is positional, which is the only way to pass a
+    /// positional that starts with a dash.</summary>
+    public Args(IReadOnlyList<string> tokens)
+    {
+        var split = new List<string?>(tokens.Count);
+        int literalFrom = int.MaxValue;
+        foreach (var t in tokens)
+        {
+            if (literalFrom != int.MaxValue) { split.Add(t); continue; }
+            if (t == "--") { literalFrom = split.Count; continue; }
+            int eq = t.IndexOf('=');
+            if (eq > 2 && t.StartsWith("--", StringComparison.Ordinal) &&
+                t[2..eq].All(c => char.IsLetterOrDigit(c) || c == '-' || c == '.'))
+            {
+                split.Add(t[..eq]);
+                split.Add(t[(eq + 1)..]);
+                continue;
+            }
+            split.Add(t);
+        }
+        _tokens = split.ToArray();
+        _literalFrom = literalFrom;   // tokens from here on are never option-shaped
+    }
+
+    private readonly int _literalFrom;
+    private readonly HashSet<string> _seen = new(StringComparer.OrdinalIgnoreCase);
+
+    private bool IsOptionShaped(int index, string token) =>
+        index < _literalFrom && token.StartsWith('-') && token.Length > 1 && !char.IsDigit(token[1]);
 
     /// <summary>Consume one occurrence of a flag (name match is case-insensitive). A repeated,
     /// unconsumed occurrence is later rejected by <see cref="Positionals"/> as an unknown option.</summary>
@@ -16,6 +47,7 @@ public sealed class Args
             if (_tokens[i] is { } t && names.Contains(t, StringComparer.OrdinalIgnoreCase))
             {
                 _tokens[i] = null;
+                _seen.Add(t);
                 return true;
             }
         return false;
@@ -37,7 +69,13 @@ public sealed class Args
             if (i + 1 >= _tokens.Length || _tokens[i + 1] is null)
                 throw new CliUsageException($"Option {t} needs a value.");
             var value = _tokens[i + 1]!;
+            // "--cert --insecure" is a missing value, not a certificate called "--insecure". Only
+            // a long-option shape is refused: a single-dash value ("-d -1", "-d -body") has always
+            // been accepted adjacent to its option and still is.
+            if (i + 1 < _literalFrom && value.StartsWith("--", StringComparison.Ordinal) && value.Length > 2)
+                throw new CliUsageException($"Option {t} needs a value, but the next token is '{value}' (write {t}=... if the value really starts with a dash).");
             _tokens[i] = _tokens[i + 1] = null;
+            _seen.Add(t);
             return value;
         }
         return null;
@@ -55,8 +93,7 @@ public sealed class Args
             _tokens[i] = null;
             // The next token belongs to this option only when it could not be an option itself —
             // the same shape rule Positionals() uses — so "--cors --insecure" leaves --insecure be.
-            if (i + 1 < _tokens.Length && _tokens[i + 1] is { } next &&
-                !(next.StartsWith('-') && next.Length > 1 && !char.IsDigit(next[1])))
+            if (i + 1 < _tokens.Length && _tokens[i + 1] is { } next && !IsOptionShaped(i + 1, next))
             {
                 value = next;
                 _tokens[i + 1] = null;
@@ -64,6 +101,16 @@ public sealed class Args
             return true;
         }
         return false;
+    }
+
+    /// <summary>A comma-list option that may also be repeated: <c>--noproxy a,b --noproxy c</c> is
+    /// <c>a,b,c</c>. Null when absent. For the options whose value is already a list, where a second
+    /// occurrence can only mean "and these too" — unlike a single-value option, where it is a
+    /// mistake and refused.</summary>
+    public string? ListValue(params string[] names)
+    {
+        var all = Values(names);
+        return all.Count == 0 ? null : string.Join(",", all);
     }
 
     /// <summary>Consume every occurrence of a repeatable option, in order.</summary>
@@ -78,13 +125,16 @@ public sealed class Args
     public List<string> Positionals()
     {
         var positionals = new List<string>();
-        foreach (var t in _tokens)
+        for (int i = 0; i < _tokens.Length; i++)
         {
+            var t = _tokens[i];
             if (t is null) continue;
-            if (t.StartsWith('-') && t.Length > 1 && !char.IsDigit(t[1]))
+            if (IsOptionShaped(i, t))
                 throw new CliUsageException(UnsupportedOptions.Explain(t) is { } why
                     ? $"Option '{t}' does not exist. {why}"
-                    : $"Unknown option '{t}'.");
+                    : _seen.Contains(t)
+                        ? $"Option '{t}' was given more than once, and this command takes it once."
+                        : $"Unknown option '{t}'.");
             positionals.Add(t);
         }
         return positionals;

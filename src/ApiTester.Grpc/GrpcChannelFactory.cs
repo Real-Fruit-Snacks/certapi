@@ -60,17 +60,19 @@ internal static class GrpcChannelFactory
         // of drift the proxy unification (ProxyConfiguration) already fixed once for the proxy switch.
         bool Validate(object _, X509Certificate? cert, X509Chain? chain, SslPolicyErrors errors)
         {
+            var (judgedErrors, judgedFlags) = ExtraRoots.Reconsider(
+                errors, RevocationCheck.ChainFlagsOf(chain), cert, chain, transport.ExtraRoots);
             var decision = RevocationCheck.Decide(
                 transport.Revocation,
                 transport.RevocationStrict,
                 transport.IgnoreServerCertificateErrors,
-                errors,
-                RevocationCheck.ChainFlagsOf(chain),
-                trustServerCertificate is null ? null : () =>
+                judgedErrors,
+                judgedFlags,
+                trustServerCertificate is null ? null : () => TrustContext.Run(chain, () =>
                 {
                     using var c = cert is null ? null : new X509Certificate2(cert);
                     return trustServerCertificate(c);
-                });
+                }));
             return decision.Accepted;
         }
 
@@ -80,14 +82,16 @@ internal static class GrpcChannelFactory
             // signed-in user's Windows credentials when required. Mirrors ApiClient exactly.
             DefaultProxyCredentials = CredentialCache.DefaultCredentials
         };
-        ProxyConfiguration.Apply(handler, transport);
+        ProxyConfiguration.Apply(handler, transport, address);
 
         // Let the handler drive the TLS handshake (and, for https, ALPN h2 negotiation) itself. A
         // hand-driven SslStream — the way ApiClient reads TLS diagnostics for the direct-connection
         // path — would have to negotiate ALPN on its own, which is needless risk here: unlike ApiClient,
         // nothing in this phase reads back negotiated-protocol/cipher details.
         handler.SslOptions = new SslClientAuthenticationOptions { RemoteCertificateValidationCallback = Validate };
-        RevocationCheck.Apply(handler.SslOptions, transport.Revocation);
+        RevocationCheck.Apply(handler.SslOptions, transport);
+        TlsPolicy.Apply(handler.SslOptions, transport with { Sni = null });
+        if (transport.ConnectTimeout is { } connect) handler.ConnectTimeout = connect;
         if (clientCertificate is not null)
             handler.SslOptions.ClientCertificates = new X509CertificateCollection { clientCertificate };
 

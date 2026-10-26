@@ -89,7 +89,7 @@ public static class CliApp
           import            Import a cURL command or an OpenAPI file into collections
           export            Export collections as OpenAPI, or the whole workspace
           trust             Manage per-site trusted (pinned) server certificates
-          serve <upstream>  Run a local mTLS gateway that forwards to <upstream>
+          serve             Run a local mTLS gateway in front of one site or many
           grpc              Discover and call a gRPC service (all four method kinds)
           mcp               Run an MCP server so AI agents can make mTLS calls
           help [command]    Show help (for one command, or this overview)
@@ -109,6 +109,9 @@ public static class CliApp
                             stable; useful when --trace is not enough, never something to parse
           --trace-file <p>  Write the trace to a file instead of streaming it to stderr
           --trace-filter <s>  Keep only lines containing any of these comma-separated substrings
+                            (repeatable)
+          --trace-include-secrets  Keep credential values in the trace. By default every
+                            Authorization/Cookie-style header and URL secret is redacted
 
         Examples:
           certapi certs
@@ -119,6 +122,8 @@ public static class CliApp
           certapi run smoke-suite --env Staging
           certapi bench https://api.example.com/health --cert "CN=My Client" -n 500 -c 20
           certapi selftest
+          certapi serve --port 8819 --cert "CN=My Client" --upstream api=https://api.internal
+          certapi serve --profile corp --check
           certapi send https://api.example.com/x --debug --log-file certapi.log
 
         Run 'certapi help <command>' for options. 'certapi --version' prints the version.
@@ -141,6 +146,7 @@ public static class CliApp
             using var log = CliLog.Create(g.Debug, g.LogFile, stderr);
             services.Log = log;
             var err = log.WrapStderr(stderr);
+        TransportFlags.Warn = err.WriteLine;
             // The streaming commands trace too: a hanging WebSocket handshake is exactly the case
             // this exists for, and a flag that worked on `send` but not `ws` would be a trap.
             using var trace = StartTrace(g.Trace, g.TraceVerbose, g.TraceFilters, g.TraceFile, g.TraceIncludeSecrets, err);
@@ -308,12 +314,21 @@ public static class CliApp
         catch (IOException ex) { throw new CliDataException($"could not read {source.Path}: {ex.Message}"); }
     }
 
+    /// <summary>The SemVer this build carries, without build metadata.</summary>
+    public static string ProductVersion
+    {
+        get
+        {
+            var version = Assembly.GetExecutingAssembly()
+                .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "0.0.0";
+            int plus = version.IndexOf('+');                      // strip build metadata
+            return plus > 0 ? version[..plus] : version;
+        }
+    }
+
     private static int Version(TextWriter stdout)
     {
-        var version = Assembly.GetExecutingAssembly()
-            .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "0.0.0";
-        int plus = version.IndexOf('+');                      // strip build metadata
-        stdout.WriteLine($"certapi {(plus > 0 ? version[..plus] : version)}");
+        stdout.WriteLine($"certapi {ProductVersion}");
         return ExitCodes.Ok;
     }
 

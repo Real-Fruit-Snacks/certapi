@@ -1,3 +1,4 @@
+using System.Net.Http;
 using System.Net.WebSockets;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
@@ -6,7 +7,10 @@ namespace ApiTester.Core;
 
 /// <summary>Relays a WebSocket conversation between a browser already connected to the gateway and
 /// a certificate-protected upstream. HttpClient cannot carry an HTTP upgrade, so this path never
-/// touches MtlsGateway.ForwardAsync and the plain relay keeps its exact byte-faithful semantics.</summary>
+/// touches MtlsGateway.ForwardAsync and the plain relay keeps its exact byte-faithful semantics —
+/// but it connects through the very same handler configuration (<see cref="MtlsGateway.CreateHandlerFor"/>),
+/// so proxy, bypass list, --resolve pins, revocation, pinned thumbprints and --ca-file apply to an
+/// upgrade exactly as they apply to a request.</summary>
 public sealed class GatewayWebSocketRelay
 {
     /// <summary>Big enough that an ordinary message arrives in one read, small enough that a slow
@@ -18,31 +22,70 @@ public sealed class GatewayWebSocketRelay
     /// which will never answer cannot pin the relay open.</summary>
     private static readonly TimeSpan CloseGrace = TimeSpan.FromSeconds(5);
 
-    private readonly X509Certificate2? _clientCertificate;
-    private readonly bool _ignoreServerCertificateErrors;
+    /// <summary>How long the upstream gets to answer the upgrade before the browser is told it failed.</summary>
+    private static readonly TimeSpan ConnectBudget = TimeSpan.FromSeconds(30);
 
-    public GatewayWebSocketRelay(X509Certificate2? clientCertificate, bool ignoreServerCertificateErrors)
+    /// <summary>Request headers that belong to the gateway's own hop, or that ClientWebSocket
+    /// writes itself, and so are never copied from the browser's upgrade onto the upstream's.</summary>
+    private static readonly HashSet<string> NotForwarded = new(StringComparer.OrdinalIgnoreCase)
     {
-        _clientCertificate = clientCertificate;
-        _ignoreServerCertificateErrors = ignoreServerCertificateErrors;
+        "Host", "Connection", "Upgrade", "Sec-WebSocket-Key", "Sec-WebSocket-Version",
+        "Sec-WebSocket-Extensions", "Sec-WebSocket-Protocol", "Sec-WebSocket-Accept",
+        "Content-Length", "Transfer-Encoding", "Keep-Alive", "Proxy-Authorization", "Proxy-Authenticate",
+        "TE", "Trailer"
+    };
+
+    private readonly Func<Uri, HttpMessageInvoker> _invokerFor;
+
+    /// <summary>The pre-transport constructor, kept for callers that only have a certificate: the
+    /// upstream is reached with the handler's defaults (system proxy, OS trust).</summary>
+    public GatewayWebSocketRelay(X509Certificate2? clientCertificate, bool ignoreServerCertificateErrors)
+        : this(upstream => new HttpMessageInvoker(
+            MtlsGateway.CreateHandler(clientCertificate, ignoreServerCertificateErrors, transport: null, trustServerCertificate: null),
+            disposeHandler: true))
+    {
     }
+
+    /// <summary>Connect through the gateway's own handler for each upstream, so an upgrade is
+    /// reached exactly the way a request to the same host is.</summary>
+    public GatewayWebSocketRelay(MtlsGateway gateway)
+        : this(upstream => new HttpMessageInvoker(gateway.CreateHandlerFor(upstream), disposeHandler: true))
+    {
+    }
+
+    private GatewayWebSocketRelay(Func<Uri, HttpMessageInvoker> invokerFor) => _invokerFor = invokerFor;
 
     /// <summary>Connect to <paramref name="upstream"/> and pump both directions until either side
     /// closes, then relay that close status and description to the other.</summary>
-    public async Task RelayAsync(WebSocket client, Uri upstream, string? subProtocol, CancellationToken ct)
+    /// <param name="subProtocols">Every subprotocol the browser offered, in its order, so the
+    /// upstream picks and the browser hears the same answer.</param>
+    /// <param name="requestHeaders">The browser's upgrade headers. Cookie, Authorization, Origin
+    /// and anything custom travel with the upgrade — a cookie- or token-authenticated socket is
+    /// the ordinary case behind a login the browser already completed through the gateway.</param>
+    public async Task RelayAsync(WebSocket client, Uri upstream, IReadOnlyList<string> subProtocols,
+        IReadOnlyList<KeyValuePair<string, string>> requestHeaders, CancellationToken ct)
     {
         var socket = new ClientWebSocket();
+        using var invoker = _invokerFor(upstream);
         try
         {
-            if (_clientCertificate is not null)
-                socket.Options.ClientCertificates = new X509Certificate2Collection { _clientCertificate };
-            if (_ignoreServerCertificateErrors)
-                socket.Options.RemoteCertificateValidationCallback = (_, _, _, _) => true;
             // Asked for on the way out so the upstream can pick one and the browser's negotiated
             // subprotocol means the same thing at both ends of the relay.
-            if (!string.IsNullOrEmpty(subProtocol)) socket.Options.AddSubProtocol(subProtocol);
+            foreach (var p in subProtocols) socket.Options.AddSubProtocol(p);
+            foreach (var h in requestHeaders)
+            {
+                if (NotForwarded.Contains(h.Key)) continue;
+                // A header ClientWebSocket refuses (there are a few more restricted names) is not
+                // worth failing the upgrade over; everything a login depends on is accepted.
+                try { socket.Options.SetRequestHeader(h.Key, h.Value); } catch (ArgumentException) { }
+            }
 
-            await socket.ConnectAsync(ToWebSocketUri(upstream), ct);
+            using var connectBudget = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            connectBudget.CancelAfter(ConnectBudget);
+            // The invoker form is what makes the handler's proxy, pins, roots and certificate apply:
+            // the socket's own Options.Proxy / RemoteCertificateValidationCallback are ignored on
+            // this path, which is the point.
+            await socket.ConnectAsync(ToWebSocketUri(upstream), invoker, connectBudget.Token);
         }
         catch (Exception ex)
         {
@@ -66,6 +109,12 @@ public sealed class GatewayWebSocketRelay
             socket.Dispose();
         }
     }
+
+    /// <summary>The single-subprotocol, header-less form the first release had.</summary>
+    public Task RelayAsync(WebSocket client, Uri upstream, string? subProtocol, CancellationToken ct) =>
+        RelayAsync(client, upstream,
+            subProtocol is null ? Array.Empty<string>() : new[] { subProtocol },
+            Array.Empty<KeyValuePair<string, string>>(), ct);
 
     /// <summary>Tell the client why, as far as the wire allows. A browser that has already gone
     /// cannot be told anything, and failing to say so is not a second failure worth reporting.</summary>

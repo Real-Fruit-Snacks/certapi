@@ -55,11 +55,31 @@ These work on **every** command, before or after its own options.
 | Option | Default | What it does |
 |---|---|---|
 | `--debug` | off | Verbose diagnostics on stderr: what was resolved, which certificate was chosen, which proxy, what was negotiated. The first thing to reach for when a command does something you did not expect |
-| `--log-file <path>` | none | Write those diagnostics to a file instead of the screen |
+| `--log-file <path>` | none | Also append every diagnostic and all stderr output to this file; the screen still shows them |
 | `--config <file>` | discovered | Use this configuration file instead of the discovered one — see [Configuration](27-Configuration.md) |
 | `--profile <name>` | file's default | Use this named profile from the configuration file |
-| `--no-config` | off | Ignore configuration files entirely. Every command then behaves exactly as it did before profiles existed, which is what makes it the right first step when a command behaves oddly |
-| `--version` | — | Print the version and exit |
+| `--no-config` | off | Ignore configuration files entirely. Every command then behaves exactly as it did before profiles existed, which is what makes it the right first step when a command behaves oddly. Not with `--config` or `--profile` |
+| `--trace` | off | Report what the network stack itself did — DNS, TCP, TLS handshake, connection reuse, request lifecycle. Redacted by default; see [Watching the network stack](#watching-the-network-stack) |
+| `--trace-verbose` / `--trace-file <path>` / `--trace-filter <s>` | off | More detail, a file instead of stderr, or only lines containing these substrings (repeatable). Each one turns `--trace` on by itself |
+| `--trace-include-secrets` | off | Keep credential values in the trace instead of redacting them |
+
+Global options take the `--name=value` form too (`--profile=corp`), a single-value one given twice is
+a usage error, and nothing after `--` is read as one. `certapi --version` (or `-v`) prints the
+version.
+
+
+## Repeating an option
+
+An option whose value is a list may be given more than once, and the occurrences add up:
+`--noproxy a.corp --noproxy .lab` is `--noproxy a.corp,.lab`. That holds for `-H`, `-F`, `--var`,
+`--param`, `--assert`, `--capture`, `--ca-file`, `--resolve`, `--noproxy`, `--retry-on`,
+`--trace-filter`, `--diff-ignore`, `--diff-ignore-header`; `-d` on `grpc` (one message each);
+`--for` on `token`; `-m`/`--message` on `ws`; `--allow` on `mcp`; and on `serve` for `--upstream`,
+`--routes`, `--allow`, `--cors <origins>` and the four header-rule options.
+
+Every other option takes one value, and giving it twice is a usage error rather than a guess at
+which one you meant: `--cert a --cert b` is refused, not resolved to `b`. The global options follow
+the same rule.
 
 ## Exit codes
 
@@ -92,6 +112,9 @@ Accepted by [`send`](#send), [`run`](#run), [`fuzz`](#fuzz), [`bench`](#bench), 
 | `--cert-file <path>` | none | Load the certificate from a file instead of the store: `.pfx`/`.p12`, or `.pem`/`.crt`. Mutually exclusive with `--cert` |
 | `--cert-password <password>` | none | Password for a `.pfx`/`.p12`. Not used for PEM |
 | `--key-file <path>` | none | The private key for a PEM certificate whose key is in a separate file |
+| `--cert-issuer <name>` | none | Pick a store certificate by who issued it (a part of the issuer name, case-insensitive). Alone, or with `--cert` to narrow a subject two certificates share. Not with `--cert-file` |
+| `--cert-serial <hex>` | none | Pick a store certificate by its serial number (colons and spaces are fine). Alone or with `--cert`. Not with `--cert-file` |
+| `--cert-pin <pin>` | `CERTAPI_CERT_PIN` | Unlock a smart-card or HSM key ahead of the provider's prompt, so a headless job (CI, a scheduled task) is not stopped by a PIN dialog. CNG key-storage providers on Windows; the PIN is never stored or logged. A provider that refuses the property is noted and may prompt instead |
 | `--insecure` | off | Accept any server certificate: expired, self-signed, wrong hostname. **This turns off the check that makes TLS meaningful** — prefer [`trust add`](#trust), which pins one host and leaves every other host verified |
 
 **No certificate is a valid choice.** Every command here works without one; `certapi` is a general
@@ -109,9 +132,12 @@ ticket queue, which is the process the notice exists to start.
 ### Transport options
 
 How a request reaches the server. Accepted by [`send`](#send), [`run`](#run), [`fuzz`](#fuzz),
-[`bench`](#bench), [`grpc`](#grpc), [`mcp`](#mcp), [`serve`](#serve) and
-[`connections`](#connections). [`sse`](#sse), [`ws`](#ws), [`token`](#token) and [`doctor`](#doctor)
-take the [streaming subset](#transport-options-streaming-subset) instead.
+[`bench`](#bench), [`mcp`](#mcp), [`serve`](#serve) and [`connections`](#connections).
+[`sse`](#sse), [`ws`](#ws), [`token`](#token) and [`doctor`](#doctor) take the
+[streaming subset](#transport-options-streaming-subset) instead, and [`grpc`](#grpc) takes only
+`--proxy`, `--no-proxy`, `--proxy-user`, `--noproxy`, `--revocation` and `--revocation-strict`.
+On `serve`, the redirect, decompression, HTTP-version, retry and `--sni` options are accepted but do
+not apply.
 
 #### Proxy
 
@@ -119,7 +145,7 @@ take the [streaming subset](#transport-options-streaming-subset) instead.
 |---|---|---|
 | `--proxy <url>` | system/PAC | Route through this proxy: `http://`, `https://`, `socks4://`, `socks4a://` or `socks5://`. **An SSH jump host works here** — `ssh -D 1080 user@jump`, then `--proxy socks5://127.0.0.1:1080` reaches whatever the jump host can reach with mutual TLS intact, because SOCKS relays bytes and never terminates TLS |
 | `--no-proxy` | off | Ignore the system and PAC proxy and connect directly. **Also restores the full TLS diagnostics** — see the note below |
-| `--proxy-user <user:password>` | none | Credentials for a proxy that authenticates |
+| `--proxy-user <user:password>` | none | Credentials for a proxy that authenticates. Credentials written into the `--proxy` URL (`http://user:pass@proxy:8080`) are used the same way, and the URL is never logged with them |
 | `--noproxy <list>` | `NO_PROXY` | Hosts that bypass the proxy, comma-separated, `NO_PROXY`-style: `internal.corp`, `.corp`, `*.corp`, `10.0.0.0/8`, or `*` for everything; append `:port` to pin one port. This **narrows** `--proxy` or the system proxy, so it is not valid with `--no-proxy`, which already bypasses everything. Defaults to the `NO_PROXY` environment variable, which an explicit list overrides |
 
 **Why a proxy changes what you can see.** Through a proxy the HTTP handler owns the tunnel's TLS, so
@@ -159,6 +185,29 @@ downgrading, because a silent downgrade would make the flag useless for testing 
 very often blocked, so "status unknown" is the ordinary case rather than a signal. It is reported
 either way. `--insecure` overrides both, and says so when it does.
 
+#### Trust and TLS
+
+| Option | Default | What it does |
+|---|---|---|
+| `--ca-file <pem>` | none | Trust the root certificate(s) in this file for this run, on top of the Windows store. Repeatable; a PEM bundle with several certificates is fine; DER is accepted. For the network whose TLS-intercepting proxy re-signs every site with a private CA that is handed out as a file: narrower than `--insecure`, which trusts anything. A chain ending in one of these roots is accepted the way a store-trusted chain is; a name mismatch and an expired certificate are still refused, and a revoked one is when `--revocation` is on. Profile key `caFile` (a path or a list, relative to the config file) |
+| `--tls-min <1.2\|1.3>` | OS default | Refuse to negotiate below this TLS version. `1.3` proves a server — or a middlebox in front of it — really speaks it. Profile key `tlsMin` |
+| `--connect-timeout <s>` | none | A separate budget for the TCP connect and the proxy tunnel. On a network that blackholes unknown hosts this turns a 100-second hang into "unreachable" in seconds. Profile key `connectTimeout` |
+| `--sni <name>` | the URL's host | Send a different server name in the TLS handshake. Direct connections only — a proxy tunnel's TLS is negotiated by the HTTP stack from the URL, and the combination is refused. The certificate is still checked against the URL's host, so pair it with a pin or `--insecure` when the two differ |
+| `--pac <url\|file>` | the machine's | Decide the proxy for each URL with this PAC script, through WinHTTP's own engine, when the machine's configured PAC is not the one the job needs. Windows only |
+| `--no-env-proxy` | off | Ignore `HTTP_PROXY`, `HTTPS_PROXY` and `NO_PROXY` from the environment and use the machine's proxy settings — for the shell whose stale variables point at a proxy that is no longer there |
+| `--offline` | off | Touch nothing on the network but the request itself: no revocation fetch, no AIA chase, no captive-portal probe, no PAC download. For the air-gapped network, and for proving a request needs nothing it should not |
+| `-4` / `-6` | both | Dial only IPv4 or only IPv6 on direct connections, for the host whose AAAA record resolves but whose IPv6 route does not |
+
+**Not supported: a proxy that requires a client certificate.** `--proxy https://…` reaches the proxy
+in plaintext and a proxy that demands mutual TLS of its own cannot be answered; .NET's HTTP stack
+has no way to present a certificate to a proxy. Use a SOCKS tunnel (`ssh -D`) or a proxy that
+authenticates with credentials instead.
+
+**Which proxy applies, and in what order.** The `HTTPS_PROXY`/`HTTP_PROXY` and `NO_PROXY`
+environment variables are read first (that is .NET's rule), then the system proxy from Internet
+Options (static, WPAD or PAC). `--proxy` replaces both; `--no-proxy` ignores both; `--noproxy`
+narrows whichever is in play. `certapi proxy <url>` shows the answer of each engine.
+
 #### Retries
 
 | Option | Default | What it does |
@@ -171,9 +220,10 @@ either way. `--insecure` overrides both, and says so when it does.
 
 ### Transport options (streaming subset)
 
-[`sse`](#sse), [`ws`](#ws), [`token`](#token) and [`doctor`](#doctor) accept **only** the proxy and
-revocation options: `--proxy`, `--no-proxy`, `--proxy-user`, `--noproxy`, `--revocation`,
-`--revocation-strict`.
+[`sse`](#sse), [`ws`](#ws), [`token`](#token), [`doctor`](#doctor) and `trust add --from-url` accept
+**only** the proxy, revocation and trust options: `--proxy`, `--no-proxy`, `--proxy-user`,
+`--noproxy`, `--no-env-proxy`, `--offline`, `--revocation`, `--revocation-strict`, `--ca-file`,
+`--tls-min`, `--connect-timeout`.
 
 Redirects, version pins and retries are deliberately **not** accepted there, and passing one is a
 usage error rather than a silent no-op: a stream re-subscribe has side effects a retry must not
@@ -248,6 +298,7 @@ always wins. Captured tokens are encrypted at rest for your Windows user.
 | Option | Default | What it does |
 |---|---|---|
 | `--capture var=path` | none | Save a value out of the response into an environment variable. `path` is a JSON body path (`access_token`, `data.token`) or `header:Name` for a response header. Repeatable. See [Capturing Values](12-Capturing-Values.md) |
+| `--cookie-jar <file>` | none | Load cookies from this file before the send and save every cookie the response (and each redirect hop) set back into it — a scripted multi-step login carries across invocations, like curl's `-b`/`-c` in one flag. Plain JSON; created on first use; session cookies kept, expired ones dropped |
 
 ### Testing
 
@@ -327,6 +378,8 @@ and no administrator rights, because the tool is one end of the connection. See
 | `--trace-file <path>` | stderr | Write the trace to a file instead |
 | `--trace-verbose` | off | Add the runtime's *internal* diagnostics: far more detail, far less stable. Useful, never something to parse |
 | `--trace-include-secrets` | off | Keep credential values in event payloads, redacted by default |
+
+The trace is redacted by default: every `Authorization`, `Cookie`, `Set-Cookie` and API-key-shaped header line in an event loses its value and keeps its name, and a URL in an event loses its `user:password@` and any credential-named query value (`access_token`, `sig`, `code`, …). `WWW-Authenticate` and `Proxy-Authenticate` are kept, because a failing proxy or SSO handshake is what a trace is read for.
 
 **A reused connection emits no `ConnectStart` and no `HandshakeStart` at all** — that absence is the
 signal, and the quickest way to see whether pooling is working. Two honest limits: the trace is
@@ -424,6 +477,7 @@ Accepts the [certificate](#certificate-options), [transport](#transport-options)
 |---|---|---|
 | `--record` / `--no-record` | on for live state | Write each request's result back as its known-good state. On by default against the live workspace, off against a `--workspace` file — a file someone handed you is not yours to modify. Also forced off while the desktop app is running, which would overwrite the file when it closes |
 | `--cookies` | off | Keep one cookie jar for the whole run, so a login's `Set-Cookie` carries to later requests |
+| `--cookie-jar <file>` | none | Like `--cookies`, with the jar loaded from and saved to this file, so a run's login carries to the next run or to `certapi send --cookie-jar` |
 | `--no-auto-token` | off | Do not attach captured session tokens **or** captured session cookies |
 | `--diff-ignore <path>` | none | A JSON path to ignore when diffing. Repeatable |
 | `--diff-ignore-header <name>` | none | One more header to ignore when diffing. Repeatable |
@@ -779,7 +833,7 @@ catalogue should record.
 
 ```
 certapi trust list   [--workspace <file>] [--json]
-certapi trust add    <host> (--thumbprint <t> | --from-url <https-url>) [--workspace <file>]
+certapi trust add    <host> (--thumbprint <t> | --ca <t> | --spki [<sha256>] | --from-url <https-url>) [--workspace <file>]
 certapi trust remove <host> [--thumbprint <t>] [--workspace <file>]
 ```
 
@@ -789,14 +843,19 @@ verification off everywhere.
 
 | Option | Applies to | Default | What it does |
 |---|---|---|---|
-| `--thumbprint <t>` | `add` | — | Pin this exact thumbprint for the host |
-| `--from-url <https-url>` | `add` | — | Connect once, capture what the server actually presented, and pin its thumbprint — so you do not transcribe forty hex characters by hand. Exactly one of these two is required |
+| `--thumbprint <t>` | `add` | — | Pin this exact SHA-1 thumbprint for the host. Colons, spaces and lower case are fine; it is stored as the 40 upper-case hex digits a certificate reports. Anything that is not a SHA-1 thumbprint (a SHA-256 fingerprint, say) is refused rather than stored as a pin that can never match |
+| `--ca <thumbprint>` | `add` | — | Pin the **issuer** instead of the leaf: any certificate for the host that chains to this CA is accepted. Survives the routine renewal that keeps the issuer |
+| `--spki [<sha256>]` | `add` | — | Pin the **public key** (SPKI SHA-256, base64 or hex) instead of the leaf: survives a renewal that keeps the key. With `--from-url` and no value, the key the server presented is pinned |
+| `--from-url <https-url>` | `add` | — | Connect once, capture what the server actually presented, and pin its thumbprint — so you do not transcribe forty hex characters by hand. Exactly one of these two is required. The URL's host must be the host being pinned. Takes the [streaming transport subset](#transport-options-streaming-subset); through a proxy the TLS session is tunnelled and the certificate cannot be observed, which the command says plainly |
 | `--thumbprint <t>` | `remove` | all | Remove only this pin; omit it to remove every pin for the host |
 | `--workspace <file>` | all | live state | Read and write a workspace file instead of the live state |
 | `--json` | `list` | off | Machine-readable output |
 
 Also accepts the [certificate options](#certificate-options), because `--from-url` may need a client
 certificate to complete the handshake it is inspecting.
+
+`<host>` is a bare host name. A URL, a port or a path typed there is reduced to the host with a
+note, because that is what pins are looked up by.
 
 **A pin never overrides revocation.** A certificate the issuer has revoked is refused even past a
 pin — pinning says "I know this certificate", not "ignore its issuer".
@@ -807,15 +866,22 @@ pin — pinning says "I know this certificate", not "ignore its issuer".
 
 ```
 certapi serve <upstream> --port <n> [options]
+certapi serve --port <n> --upstream <name>=<url> [--upstream …] [options]
+certapi serve --profile <name>
 ```
 
-A local gateway that forwards to an upstream **and presents your client certificate on the way**.
-The answer for a browser, a tool, or a library that cannot do mutual TLS itself: point it at
+A local gateway that forwards to one site or many **and presents your client certificate on the
+way**. The answer for a browser, a tool, or a library that cannot do mutual TLS itself: point it at
 `http://127.0.0.1:<port>` and the gateway handles the certificate. See
-[Local Gateway](19-Local-Gateway.md).
+[Local Gateway](19-Local-Gateway.md), which also covers the `--routes` file format and the profile
+`serve` section.
 
-Listens on **127.0.0.1 only** — never a network interface, because a gateway that presents your
-certificate must not be reachable by anything but you.
+At start it prints a table — each site, the URL to open, its upstream, the certificate it presents
+and what it does differently — and one `every site:` line for the gateway-wide settings. `--check`
+prints the same table and exits without starting.
+
+Answers **loopback callers only** unless `--listen` is given, because a gateway that presents your
+certificate must not be reachable by anything but you without a token.
 
 Accepts the [certificate](#certificate-options) and [transport](#transport-options) blocks.
 
@@ -823,25 +889,49 @@ Accepts the [certificate](#certificate-options) and [transport](#transport-optio
 
 | Option | Default | What it does |
 |---|---|---|
-| *(positional)* | — | The upstream URL, or a saved website name from the workspace |
-| `--upstream <prefix>=<url>` | none | Mount an upstream at a path prefix. Repeatable, so one gateway can front several backends |
-| `--port <n>` | **required** | Local port to listen on |
-| `--timeout <seconds>` | `100` | Per-request upstream timeout |
+| *(positional)* | — | The site at `/`: an upstream URL, or a saved website name from the workspace |
+| `--upstream <name>=<url>` | none | A site called `name`, mounted at `/name` (and at `name.gw.localhost` with `--vhost`). `/path=<url>` mounts at a path instead; longest prefix wins. Repeatable |
+| `--port <n>` | **required** | Local port to listen on (or `port` in the profile's `serve` section) |
+| `--check` | off | Resolve and validate every site, certificate, file and flag, print the table of sites to stdout, and exit 0 — or 2/3 when the configuration is not usable. Nothing is bound, installed or contacted, so the port bind, the URL reservation for `--vhost`/`--listen` and the `--tls` binding are only tried at a real start |
+| `--allow <hosts>` | off | **One gateway, many sites.** A request to `/_/https://host[:port]/path` is forwarded to that host with the client certificate, for any host on this comma-separated list: exact names, `*.suffix` wildcards, or `*` for every host (an open relay on loopback, logged as such). Anything else is `403` before a socket is opened. Static `--upstream` mounts work beside it; Location and cookie rewriting follow the `/_/https://host` prefix the same way they follow a mount. `/_/` and `/_certapi/` are reserved |
+| `--timeout <seconds>` | `100` | How long to wait for the upstream's **response headers**. A body that streams for longer — events, long polls, downloads — is not cut off; a slow upstream is `504` |
+| `--max-body <bytes>` | none | Refuse a request body larger than this with `413`. `k`/`m`/`g` suffixes |
+| `--forwarded` | off | Add `X-Forwarded-For`, `X-Forwarded-Proto`, `X-Forwarded-Host` and `Via: 1.1 certapi` to forwarded requests, for an upstream that builds links from them |
+| `--routes <file>` | none | Sites from a JSON file, repeatable: `[{ "name": "hr", "upstream": "https://hr.corp:8443", "cert": "CN=svc-hr", "windowsAuth": true }, …]` or `{ "routes": […] }` (or `"sites"`). Each site can set `cert` (or `certFile`/`certPassword`/`keyFile`), `insecure`, `caFile`, `revocation`, `windowsAuth`/`windowsUser`/`windowsPassword` and `headers`, each overriding the gateway's flag for that site only; `prefix` mounts at a path instead of `/name`. Paths are relative to the file; values may be `${env:NAME}`. A missing certificate or file is a startup error naming the site. Full field list in [Local Gateway](19-Local-Gateway.md#sites-with-their-own-certificate-and-settings---routes) |
+| `--vhost [<suffix>]` | off | **One origin per site** instead of one path each. Site `api` answers at `http://api.gw.localhost:<port>/`, the site at `/` at `http://gw.localhost:<port>/`, and an allowed dynamic host at `http://<host>.gw.localhost:<port>/` (`hr.corp--8443` for a port, `http--pub.corp` for plain http). Paths, cookies and origins reach the browser as the upstream wrote them; a cross-site redirect lands on the other host. Browsers resolve `*.localhost` to loopback by themselves; another suffix needs a hosts-file entry. Binds every interface (Windows needs a one-time URL reservation; the `netsh` command is printed) but answers **only loopback callers** unless `--listen` is also given. `127.0.0.1` keeps working in path form beside it. With `--tls` the gateway certificate names `127.0.0.1` only, so the browser warns per host |
+| `--listen <address>` | loopback | Also answer on this address — a LAN address, `0.0.0.0` or `+` for every interface — so a VM, a container or a teammate can use the gateway. **Requires `--token`**, because anything that reaches the port then reaches your client certificate. Not with `--tls`. On Windows a non-loopback prefix needs a one-time URL reservation; the exact `netsh http add urlacl` command is printed when it is missing |
 | `--workspace <file>` | live state | Resolve a saved-website upstream from a workspace file |
-| `-q, --quiet` | off | No startup banner and no per-request log |
+| `-q, --quiet` | off | No startup table and no per-request log |
+
+The gateway answers two paths itself, never forwarding them: `/_certapi/health` (state as JSON)
+and `/_certapi/routes` (each site's name, prefix, upstream, certificate and settings; the allow
+list). Both honour `--token`.
+
+**From a profile.** A profile's `serve` section has `port`, `vhost`, `browser`, `cors`, `token`,
+`allow`, `listen`, `cookieJar`, `autoToken`, `windowsAuth`, `windowsUser`, `windowsPassword`,
+`forwarded`, `maxBody`, `timeout`, `tls`, and `sites` in the `--routes` format. The other options
+(`--check`, `--workspace`, `--quiet`, the individual browser flags, header rules, `--record`/`--replay`)
+are command-line only. The certificate, `insecure`, proxy, CA files, revocation, `tlsMin` and
+`connectTimeout` come from the profile's top-level fields; the top-level `timeout`, `workspace`,
+`retry` and `headers` do not apply to `serve`. A typed flag wins: a typed list (`--allow`,
+`--cors <origins>`, `--ca-file`) replaces the profile's, typed Windows credentials replace the
+profile's as a pair, and sites typed on the command line replace the profile's list. See
+[Configuration](27-Configuration.md).
 
 ### Access control
 
 | Option | Default | What it does |
 |---|---|---|
-| `--token <value>` | none | Require callers to send this token as `Authorization: Bearer <value>`. Anything on the machine can reach a loopback port, so this is how you stop *other* local processes using your certificate |
+| `--token <value>` | none | Require callers to send this token as `Authorization: Bearer <value>` or `X-Certapi-Token: <value>`. Anything on the machine can reach a loopback port, so this is how you stop *other* local processes using your certificate. The token header is stripped before the request is forwarded and never recorded; a CORS preflight is answered without it, because a browser cannot attach a header to one |
+| `--windows-auth` | off | Answer an upstream's Negotiate/NTLM challenge on the caller's behalf, as the signed-in account — so a browser on another machine, or a script with no Windows identity, reaches an IWA-protected site through the gateway. Aliases: `--ntlm`, `--negotiate` |
+| `--windows-user <DOMAIN\\user>` / `--windows-password <pw>` | none | The same with named credentials instead of the signed-in account |
 
 ### Serving over HTTPS
 
 | Option | Default | What it does |
 |---|---|---|
 | `--tls` | off | Serve HTTPS on 127.0.0.1 with a generated gateway certificate. Needed when the page calling it is itself HTTPS, since a secure page cannot call a plain-HTTP origin |
-| `--tls-trust` | off | Also install that certificate into `CurrentUser\Root`, so the browser accepts it without a warning |
+| `--tls-trust` | off | Also install that certificate into `CurrentUser\Root`, so the browser accepts it without a warning. Only with `--tls` |
 | `--tls-untrust` | — | Remove a previously trusted gateway certificate and exit |
 
 ### Record and replay
@@ -856,25 +946,35 @@ Two ends of one HAR format: capture a session live, replay it offline.
 
 ### Browser accommodations
 
+A cross-host redirect — a 3xx whose `Location` names another mount, or a host on the `--allow`
+list — comes back through that mount or `/_/https://host/…` when `--rewrite-location` is on, so a
+login → app → login hop chain stays on the gateway and the certificate. A `Location` the gateway
+cannot serve is left as written and logged.
+
 So a page on another origin can call the upstream through the gateway.
 
 | Option | Default | What it does |
 |---|---|---|
-| `--browser` | off | The bundle: turns on all four accommodations below at once |
+| `--browser` | off | The bundle: `--cors`, `--rewrite-cookies`, `--rewrite-location`, `--allow-upgrade`, `--rewrite-origin`, `--strip-csp` and `--referer-fallback` at once. `--cookie-jar` and `--auto-token` stay opt-in |
 | `--cors [<origins>]` | off | Answer CORS preflights at the gateway and add the response headers a browser needs. With no value, any origin |
-| `--cors-max-age <n>` | none | How long a browser may cache a preflight answer, in seconds |
+| `--cors-max-age <n>` | `600` | How long a browser may cache a preflight answer, in seconds. Only with `--cors` (or `--browser`) |
 | `--rewrite-cookies` | off | `Set-Cookie` loses `Domain=` and `Secure`, and `SameSite=None` becomes `Lax` — so a cookie issued for the real origin is actually kept by a browser talking to loopback |
 | `--rewrite-location` | off | A 3xx `Location` pointing at the upstream comes back pointing at the gateway, so a redirect does not walk the browser out of the tunnel |
-| `--allow-upgrade` | off | Relay WebSocket connections to the upstream as well |
+| `--rewrite-origin` | off | `Origin` and `Referer` on a forwarded request point at the upstream instead of at the gateway, so a login form's CSRF check sees the host it expects. In the `--browser` bundle |
+| `--strip-csp` | off | Drop `Content-Security-Policy` (and `-Report-Only`) from responses: a policy written for the upstream's own origin blocks every fetch a page makes through the gateway. In the `--browser` bundle |
+| `--referer-fallback` | off | A path nothing owns, from a page the gateway served (`/static/app.js` requested by a page under `/app`), is sent with a 307 to the same path under that page's mount, read from the `Referer`. For the application that writes absolute paths; `--vhost` makes it unnecessary. In the bundle |
+| `--cookie-jar [<file>]` | off | Keep upstream cookies **on the gateway**, stored against the real upstream URL with `Domain` intact, and send them on every forwarded request (HTTP and WebSocket) to a matching host, alongside what the browser sent (the browser's value wins for a name both have). A browser stores every cookie against the gateway's one origin, so a `Domain=.corp` session set by `login.corp` never reaches `app.corp` on its own; this is how a multi-step login across hosts completes. Memory only unless a file is named: then the jar is loaded at start and written at shutdown, **encrypted for your Windows user (DPAPI)** and never in the clear, so a session survives a restart without sitting readable on disk. Where the machine cannot encrypt, the file form is refused up front. Not in the bundle |
+| `--auto-token` | off | Attach `Authorization: Bearer …` from a token captured earlier for the upstream's origin (`send --capture`, the app's Capture tab, a session capture) when the request carries none of its own. Not in the bundle |
+| `--allow-upgrade` | off | Relay WebSocket connections to the upstream as well. An upgrade reaches the upstream the way a request does — same proxy, bypass list, pins, `--ca-file` and certificate — and carries the browser's upgrade headers (Cookie, Authorization, Origin, custom) and every offered subprotocol |
 
 ### Header rewriting
 
 | Option | Default | What it does |
 |---|---|---|
 | `--request-header "Name: value"` | none | Set a header on the request before it reaches the upstream. Repeatable |
-| `--remove-request-header <name>` | none | Strip a header from the request. Repeatable, and not combinable with a `--request-header` naming the same header |
+| `--remove-request-header <name>` | none | Strip a header from the request. Repeatable. Removal wins over a `--request-header` naming the same header |
 | `--response-header "Name: value"` | none | Set a header on the response before it reaches the caller. Repeatable |
-| `--remove-response-header <name>` | none | Strip a header from the response. Repeatable, with the same exclusion |
+| `--remove-response-header <name>` | none | Strip a header from the response. Repeatable. Removal wins over a `--response-header` naming the same header |
 
 An upstream pinned with [`trust add`](#trust) is reachable without `--insecure`.
 
@@ -1045,6 +1145,7 @@ Exit 0 when the requests were made, 3 when none could be sent.
 ```
 certapi config path
 certapi config profiles
+certapi config show [--profile <name>]
 ```
 
 What configuration is actually in effect. See [Configuration](27-Configuration.md).
@@ -1053,6 +1154,7 @@ What configuration is actually in effect. See [Configuration](27-Configuration.m
 |---|---|
 | `path` | The configuration file this invocation resolved, **and by which discovery rule** — so you can see whether it came from `--config`, the working directory, a parent directory, or your per-user path |
 | `profiles` | The profiles the file defines, and which one is the default |
+| `show` | The profile in effect, field by field, including its `serve` settings and one line per site. Passwords, tokens, proxy credentials and secret headers print as `(set)` |
 
 Both honour the [global options](#global-options) `--config`, `--profile` and `--no-config`. When a
 command behaves in a way you did not expect, `certapi config path` and then `--no-config` are the

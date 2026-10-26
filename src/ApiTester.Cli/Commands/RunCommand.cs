@@ -35,6 +35,8 @@ public static class RunCommand
                                   off for workspace files; skipped while the GUI is running)
           --strict-vars           Unresolved {{tokens}} fail the request
           --no-auto-token         Don't attach captured session tokens or cookies during this run
+          --cookie-jar <file>     Like --cookies, but the jar is loaded from and saved to this file,
+                                  so a run's login carries to the next run (or to certapi send)
           --cookies               Keep a cookie jar for the run, so a login's Set-Cookie is sent
                                   on later requests (cookie-based sessions)
           --json                  JSON results instead of the table
@@ -84,6 +86,11 @@ public static class RunCommand
           --cert-file <path>      Client certificate from a file (.pfx/.p12 or .pem/.crt) instead
           --cert-password <pw>    Password for a .pfx/.p12 certificate file
           --key-file <path>       Private-key file for a PEM cert whose key is separate
+          --cert-issuer <substr>  Narrow --cert to certificates issued by a matching CA (or use alone)
+          --cert-serial <hex>     Pick the certificate with this serial number (or use alone)
+          --cert-pin <pin>        Smart-card / HSM PIN for the key, supplied ahead of time so a
+                                  headless job is not stopped by the prompt. Prefer CERTAPI_CERT_PIN,
+                                  which keeps it out of the shell history. Windows (CNG) only
 
 
         """ + TransportFlags.Help + """
@@ -144,6 +151,8 @@ public static class RunCommand
         string? dataFile = args.Value("--data");
         string? chainName = args.Value("--chain");
         bool useCookies = args.Flag("--cookies");
+        string? cookieJarPath = args.Value("--cookie-jar");
+        if (cookieJarPath is not null) useCookies = true;
         var transportOverrides = TransportFlags.Parse(args, out bool showRedirects, environment: null, services.Profile);
         string store = args.Value("--store") ?? services.Profile?.Store ?? "CurrentUser";
         string? harPath = args.Value("--har");
@@ -285,6 +294,11 @@ public static class RunCommand
 
         // One cookie jar for the whole run, so a login's Set-Cookie carries to later requests.
         var jar = useCookies ? new System.Net.CookieContainer() : null;
+        if (cookieJarPath is not null && jar is not null)
+        {
+            try { CookieJarFile.Load(cookieJarPath, jar); }
+            catch (InvalidDataException ex) { throw new CliDataException(ex.Message); }
+        }
         bool capturedAny = false;
         bool tokensCaptured = false;
         // A CI job records exactly what it exercised: every request performed appends a HarEntry
@@ -311,6 +325,7 @@ public static class RunCommand
             HarIncludeSecrets = harIncludeSecrets,
             Cookies = jar,
             TransportOverride = options => transportOverrides.ApplyTo(options),
+            StandingHeaders = services.Profile?.Headers ?? Array.Empty<KeyValuePair<string, string>>(),
             HarEntries = harEntries,
             Note = line => stderr.WriteLine(line),
             Debug = line => services.Log.Debug(line)
@@ -363,6 +378,11 @@ public static class RunCommand
             stderr.WriteLine("note: the GUI is running — captured values were not saved (it would overwrite them on close).");
         }
 
+        if (cookieJarPath is not null && jar is not null)
+        {
+            try { CookieJarFile.Save(cookieJarPath, jar); }
+            catch (IOException ex) { stderr.WriteLine($"warning: could not write --cookie-jar {cookieJarPath}: {ex.Message}"); }
+        }
         if (harPath is not null && harEntries is not null)
         {
             File.WriteAllText(harPath, HarWriter.Write(harEntries, HarCreatorVersion()));
@@ -502,7 +522,7 @@ public static class RunCommand
             {
                 Method = new HttpMethod(pr.Method),
                 Url = pr.Url,
-                Headers = pr.Headers,
+                Headers = services.Profile?.WithStandingHeaders(pr.Headers) ?? pr.Headers,
                 Body = pr.Body,
                 ContentType = pr.ContentType
             };

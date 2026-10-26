@@ -7,7 +7,7 @@ namespace ApiTester.App;
 
 /// <summary>
 /// Colours the OS-drawn window caption (title bar) and border via the Desktop Window Manager
-/// so the native chrome matches the active Terminal Workbench palette. Reads the current theme
+/// so the native chrome matches the active RFS palette (Nightshift / Dayshift). Reads the current theme
 /// from <see cref="App.CurrentTheme"/>, so every window follows a light/dark toggle. No-ops on
 /// Windows versions that don't support these attributes (pre-Windows 11), leaving the default.
 /// </summary>
@@ -42,15 +42,15 @@ internal static class NativeTheme
             DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, ref useDark, sizeof(int));
 
             int caption = light ? Rgb(0xff, 0xff, 0xff)  // Bg.Panel
-                                : Rgb(0x0e, 0x12, 0x14);
+                                : Rgb(0x13, 0x15, 0x1a);
             DwmSetWindowAttribute(hwnd, DWMWA_CAPTION_COLOR, ref caption, sizeof(int));
 
-            int text = light ? Rgb(0x16, 0x20, 0x1c)      // Text.Normal
-                             : Rgb(0xdc, 0xe4, 0xdf);
+            int text = light ? Rgb(0x1a, 0x1b, 0x1e)      // Text.Normal
+                             : Rgb(0xe8, 0xe6, 0xe1);
             DwmSetWindowAttribute(hwnd, DWMWA_TEXT_COLOR, ref text, sizeof(int));
 
-            int border = light ? Rgb(0xd3, 0xdb, 0xd7)    // Border
-                               : Rgb(0x2a, 0x36, 0x3d);
+            int border = light ? Rgb(0xd6, 0xd3, 0xcb)    // Border
+                               : Rgb(0x26, 0x2a, 0x33);
             DwmSetWindowAttribute(hwnd, DWMWA_BORDER_COLOR, ref border, sizeof(int));
         }
         catch

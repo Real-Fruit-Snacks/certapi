@@ -1,0 +1,40 @@
+name: Bug
+description: Something does not do what the handbook says it does
+labels: [bug]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Output of `certapi --version`, or the app's About panel
+      placeholder: certapi 1.92.3
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: Windows version
+      placeholder: Windows 11 23H2
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: The command or the window and clicks, what you expected, what you got. A redacted `--debug` log helps.
+    validations:
+      required: true
+  - type: dropdown
+    id: path
+    attributes:
+      label: Network path
+      options: [Direct, Corporate proxy, PAC script, TLS interception, SOCKS / SSH jump host, Not sure]
+  - type: checkboxes
+    id: cert
+    attributes:
+      label: Certificate
+      options:
+        - label: Windows store, exportable key
+        - label: Windows store, non-exportable or smart card
+        - label: File (.pfx / .pem)
+        - label: No certificate

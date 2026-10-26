@@ -176,3 +176,50 @@ public class NetworkTraceTests
         Assert.False(verbose.Wanted("System.Runtime"));
     }
 }
+
+public class TraceRedactionAuditTests
+{
+    [Fact]
+    public void Every_credential_header_in_a_block_is_redacted_not_just_the_first()
+    {
+        string block = "GET / HTTP/1.1\r\nAuthorization: Bearer one\r\nCookie: sid=two\r\nX-Api-Key: three\r\nX-Auth-Token: four\r\nAccept: */*";
+        string redacted = NetworkTrace.Redact("headers", block);
+        foreach (var secret in new[] { "one", "two", "three", "four" }) Assert.DoesNotContain(secret, redacted);
+        Assert.Contains("Authorization: (redacted)", redacted);
+        Assert.Contains("Cookie: (redacted)", redacted);
+        Assert.Contains("X-Api-Key: (redacted)", redacted);
+        Assert.Contains("Accept: */*", redacted);
+    }
+
+    [Fact]
+    public void A_response_set_cookie_is_redacted_but_a_challenge_is_kept()
+    {
+        string block = "HTTP/1.1 401 Unauthorized\r\nWWW-Authenticate: Negotiate\r\nSet-Cookie: sid=secret; Path=/\r\n";
+        string redacted = NetworkTrace.Redact("headers", block);
+        Assert.DoesNotContain("secret", redacted);
+        Assert.Contains("WWW-Authenticate: Negotiate", redacted);
+    }
+
+    [Fact]
+    public void Urls_in_a_payload_lose_their_password_and_credential_query_values()
+    {
+        string redacted = NetworkTrace.Redact("uri", "https://svc:hunter2@api.corp/orders?access_token=abc&page=2");
+        Assert.DoesNotContain("hunter2", redacted);
+        Assert.DoesNotContain("abc", redacted);
+        Assert.Contains("svc:REDACTED@api.corp/orders", redacted);
+        Assert.Contains("page=2", redacted);
+
+        string proxy = NetworkTrace.Redact("proxy", "Connecting via http://user:pw@proxy.corp:8080/ to api.corp:443");
+        Assert.DoesNotContain(":pw@", proxy);
+        Assert.Contains("proxy.corp:8080", proxy);
+        Assert.Contains("api.corp:443", proxy);
+    }
+
+    [Fact]
+    public void Include_secrets_leaves_the_payload_untouched()
+    {
+        // Describe() is what honours the flag; Redact itself is unconditional, so a payload with
+        // nothing secret in it must also come back byte for byte.
+        Assert.Equal("https://api.corp/orders?page=2", NetworkTrace.Redact("uri", "https://api.corp/orders?page=2"));
+    }
+}

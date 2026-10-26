@@ -216,7 +216,7 @@ public sealed class ApiClient : IDisposable
             // only the server certificate is, because Validate runs either way — so the
             // HandshakeInfo built below hardcodes those three to null/null/false rather than
             // capturing variables nothing would ever assign.
-            string? srvSubject = null, srvIssuer = null, srvThumb = null;
+            string? srvSubject = null, srvIssuer = null, srvThumb = null, srvSpki = null, srvIssuerThumb = null;
             DateTime? srvNotAfter = null;
             IReadOnlyList<string> chain = Array.Empty<string>();
 
@@ -229,9 +229,13 @@ public sealed class ApiClient : IDisposable
                     srvIssuer = c.Issuer;
                     srvThumb = c.Thumbprint;
                     srvNotAfter = c.NotAfter;
+                    srvSpki = TrustService.SpkiSha256(c);
                 }
                 if (certChain is not null)
+                {
                     chain = certChain.ChainElements.Select(e => e.Certificate.Subject).ToList();
+                    srvIssuerThumb = IssuerThumbprintOf(certChain, srvThumb);
+                }
 
                 // The shared table (RevocationCheck.Decide) replaces the hand-rolled "clean chain /
                 // insecure / pinned thumbprint" ladder that used to live here: it already reproduces
@@ -240,17 +244,21 @@ public sealed class ApiClient : IDisposable
                 // equivalent below can never drift on how a certificate is judged. Called on every
                 // validation, including a clean chain, so Checked/NotEnforced are ever reported at
                 // all (ruling 6).
+                // The user's own roots (--ca-file) get to vouch for the chain before the table
+                // judges it; everything else the handshake reported stands.
+                var (judgedErrors, judgedFlags) = ExtraRoots.Reconsider(
+                    errors, RevocationCheck.ChainFlagsOf(certChain), cert, certChain, transport.ExtraRoots);
                 var decision = RevocationCheck.Decide(
                     transport.Revocation,
                     transport.RevocationStrict,
                     transport.IgnoreServerCertificateErrors,
-                    errors,
-                    RevocationCheck.ChainFlagsOf(certChain),
-                    trustServerCertificate is null ? null : () =>
+                    judgedErrors,
+                    judgedFlags,
+                    trustServerCertificate is null ? null : () => TrustContext.Run(certChain, () =>
                     {
                         using var c = cert is null ? null : new X509Certificate2(cert);
                         return trustServerCertificate(c);
-                    });
+                    }));
                 revocationStatus = decision.Status;
                 if (decision.Accepted) return true;
                 proxiedRefusal = decision.RefusedByRevocation;
@@ -258,13 +266,17 @@ public sealed class ApiClient : IDisposable
                 return false;
             }
 
-            var handler = BuildCommonHandler(transport, request.WindowsAuth);
+            // This handler serves exactly one send, so it is built for that send's destination:
+            // the system proxy's own failover list survives when the destination is not bypassed.
+            var handler = BuildCommonHandler(transport, request.WindowsAuth,
+                Uri.TryCreate(request.Url, UriKind.Absolute, out var destination) ? destination : null);
             // An H3-direct send must never consult a proxy the validation already ruled out:
             // QUIC cannot go through the TCP proxy protocols this product speaks.
             if (!viaProxy) handler.UseProxy = false;
             // Let the handler drive the tunnel/QUIC + TLS; capture the server cert in the callback.
             handler.SslOptions = new SslClientAuthenticationOptions { RemoteCertificateValidationCallback = Validate };
-            RevocationCheck.Apply(handler.SslOptions, transport.Revocation);
+            RevocationCheck.Apply(handler.SslOptions, transport);
+            TlsPolicy.Apply(handler.SslOptions, transport with { Sni = null });   // a tunnel's SNI is the handler's
             if (clientCertificate is not null)
                 handler.SslOptions.ClientCertificates = new X509CertificateCollection { clientCertificate };
 
@@ -274,7 +286,8 @@ public sealed class ApiClient : IDisposable
                 // The origin argument is meaningless here — there is exactly one handshake this call
                 // could ever have observed, the one Validate above just captured.
                 lookupHandshake: _ => new HandshakeInfo(
-                    null, null, false, srvSubject, srvIssuer, srvThumb, srvNotAfter, chain, revocationStatus),
+                    null, null, false, srvSubject, srvIssuer, srvThumb, srvNotAfter, chain, revocationStatus)
+                    { ServerCertificateSpkiSha256 = srvSpki, ServerCertificateIssuerThumbprint = srvIssuerThumb },
                 release: null);
         }
         else if (wireLog is not null)
@@ -287,8 +300,10 @@ public sealed class ApiClient : IDisposable
             // consequence — you see the handshake as well as the request.
             var entry = CreateDirectHandlerEntry(
                 clientCertificate, transport, trustServerCertificate, request.WindowsAuth, wireLog);
+            // The entry owns a copy of the client certificate as well as the handler, so it is the
+            // entry that is disposed when the send is over — not only the handler inside it.
             sendTransport = new SendTransport(
-                entry.Handler, disposeHandler: true, lookupHandshake: entry.Lookup, release: null);
+                entry.Handler, disposeHandler: false, lookupHandshake: entry.Lookup, release: entry.Dispose);
         }
         else
         {
@@ -341,6 +356,8 @@ public sealed class ApiClient : IDisposable
                 ServerCertificateSubject = info?.ServerCertificateSubject,
                 ServerCertificateIssuer = info?.ServerCertificateIssuer,
                 ServerCertificateThumbprint = info?.ServerCertificateThumbprint,
+                ServerCertificateIssuerThumbprint = info?.ServerCertificateIssuerThumbprint,
+                ServerCertificateSpkiSha256 = info?.ServerCertificateSpkiSha256,
                 ServerCertificateNotAfter = info?.ServerCertificateNotAfter,
                 ServerCertificateChain = info?.ServerCertificateChain ?? Array.Empty<string>(),
                 RevocationMode = transport.Revocation,
@@ -610,7 +627,7 @@ public sealed class ApiClient : IDisposable
 
     /// <summary>The handler settings both send paths need, before either the proxied path's
     /// SslOptions or the direct path's ConnectCallback is layered on top of it.</summary>
-    private static SocketsHttpHandler BuildCommonHandler(TransportOptions transport, WindowsAuthOptions? windowsAuth)
+    private static SocketsHttpHandler BuildCommonHandler(TransportOptions transport, WindowsAuthOptions? windowsAuth, Uri? destination = null)
     {
         var handler = new SocketsHttpHandler
         {
@@ -619,7 +636,7 @@ public sealed class ApiClient : IDisposable
             // authenticating with the signed-in user's Windows credentials when required.
             DefaultProxyCredentials = CredentialCache.DefaultCredentials
         };
-        ProxyConfiguration.Apply(handler, transport);
+        ProxyConfiguration.Apply(handler, transport, destination);
         // Never let the handler follow redirects: it does so internally, so the intermediate
         // responses — and with them every hop, its status, and where the client certificate was
         // presented — are unobservable. SendAsync runs the chain itself instead.
@@ -633,6 +650,9 @@ public sealed class ApiClient : IDisposable
         // handling in SendOnceAsync, which reproduces the old per-handler-default-container behavior
         // by hand instead of leaving it to the handler.
         handler.UseCookies = false;
+        // A separate connect budget when one was asked for: on a network that blackholes unknown
+        // hosts, this is what turns a 100-second hang into "unreachable" in a few seconds.
+        if (transport.ConnectTimeout is { } connect) handler.ConnectTimeout = connect;
 
         // Windows Integrated Auth (Negotiate/NTLM): set server credentials so the handler runs the
         // challenge/response handshake automatically. Connection-bound, so it needs the pooled
@@ -682,10 +702,18 @@ public sealed class ApiClient : IDisposable
             var pinned = transport.Resolve.FirstOrDefault(r =>
                 r.Port == context.DnsEndPoint.Port &&
                 string.Equals(r.Host, context.DnsEndPoint.Host, StringComparison.OrdinalIgnoreCase));
-            EndPoint destination = pinned is null
-                ? context.DnsEndPoint
-                : new IPEndPoint(IPAddress.Parse(pinned.Address), context.DnsEndPoint.Port);
-            try { await socket.ConnectAsync(destination, ct); }
+            try
+            {
+                if (pinned is not null)
+                    await socket.ConnectAsync(new IPEndPoint(IPAddress.Parse(pinned.Address), context.DnsEndPoint.Port), ct);
+                else if (transport.AddressFamily == AddressFamilyPreference.Any)
+                    await socket.ConnectAsync(context.DnsEndPoint, ct);
+                else
+                    // -4 / -6: resolve here and dial only the family asked for.
+                    await socket.ConnectAsync(
+                        await AddressSelection.ResolveAsync(context.DnsEndPoint.Host, transport.AddressFamily, ct),
+                        context.DnsEndPoint.Port, ct);
+            }
             catch { socket.Dispose(); throw; }
 
             var network = new NetworkStream(socket, ownsSocket: true);
@@ -697,7 +725,7 @@ public sealed class ApiClient : IDisposable
             // handler — and this delegate instance — is shared by every request that reuses it. That
             // is what keeps a shared handler safe to call concurrently: two connections opening at
             // once never trample the same variables the way fields on the handler would.
-            string? srvSubject = null, srvIssuer = null, srvThumb = null;
+            string? srvSubject = null, srvIssuer = null, srvThumb = null, srvSpki = null, srvIssuerThumb = null;
             DateTime? srvNotAfter = null;
             IReadOnlyList<string> chain = Array.Empty<string>();
             bool untrusted = false;
@@ -718,25 +746,31 @@ public sealed class ApiClient : IDisposable
                     srvIssuer = c.Issuer;
                     srvThumb = c.Thumbprint;
                     srvNotAfter = c.NotAfter;
+                    srvSpki = TrustService.SpkiSha256(c);
                 }
                 if (certChain is not null)
+                {
                     chain = certChain.ChainElements.Select(e => e.Certificate.Subject).ToList();
+                    srvIssuerThumb = IssuerThumbprintOf(certChain, srvThumb);
+                }
 
                 // As on the proxied path above: the shared table replaces the hand-rolled trust
                 // ladder that used to live here, so both callbacks can never drift on how a
                 // certificate is judged. Called on every validation, including a clean chain, so
                 // Checked/NotEnforced are ever reported at all (ruling 6).
+                var (judgedErrors, judgedFlags) = ExtraRoots.Reconsider(
+                    errors, RevocationCheck.ChainFlagsOf(certChain), cert, certChain, transport.ExtraRoots);
                 var decision = RevocationCheck.Decide(
                     transport.Revocation,
                     transport.RevocationStrict,
                     transport.IgnoreServerCertificateErrors,
-                    errors,
-                    RevocationCheck.ChainFlagsOf(certChain),
-                    trustServerCertificate is null ? null : () =>
+                    judgedErrors,
+                    judgedFlags,
+                    trustServerCertificate is null ? null : () => TrustContext.Run(certChain, () =>
                     {
                         using var c = cert is null ? null : new X509Certificate2(cert);
                         return trustServerCertificate(c);
-                    });
+                    }));
                 revocationStatus = decision.Status;
                 if (decision.Accepted) return true;
                 revocationRefusal = decision.RefusedByRevocation;
@@ -752,7 +786,8 @@ public sealed class ApiClient : IDisposable
                 : new TappedSslStream(network, leaveInnerStreamOpen: false, Validate, wireLog);
             // TargetHost stays the requested hostname so SNI is unaffected by a --resolve override.
             var sslOptions = new SslClientAuthenticationOptions { TargetHost = context.DnsEndPoint.Host };
-            RevocationCheck.Apply(sslOptions, transport.Revocation);
+            RevocationCheck.Apply(sslOptions, transport);
+            TlsPolicy.Apply(sslOptions, transport);   // the TLS floor, and --sni when one was named
             // Without ALPN a hand-driven TLS stream can never negotiate the pinned version.
             if (transport.Version is HttpVersionMode.Http2)
                 sslOptions.ApplicationProtocols = [SslApplicationProtocol.Http2];
@@ -790,15 +825,58 @@ public sealed class ApiClient : IDisposable
                 FormatProtocol(ssl.SslProtocol),
                 CipherSuiteOf(ssl),
                 ssl.LocalCertificate is not null,
-                srvSubject, srvIssuer, srvThumb, srvNotAfter, chain, revocationStatus);
+                srvSubject, srvIssuer, srvThumb, srvNotAfter, chain, revocationStatus)
+                { ServerCertificateSpkiSha256 = srvSpki, ServerCertificateIssuerThumbprint = srvIssuerThumb };
             self!.RecordHandshake(OriginKey(context.InitialRequestMessage.RequestUri!), info);
 
             return ssl;
         };
 
+        // The handler's OWN TLS options, for the one case the callback above does not cover: a
+        // redirect hop that leaves the direct disposition and goes through the proxy. The callback
+        // is then invoked for the tunnel request — whose URI is the proxy's, plain http — and hands
+        // back a plain socket, after which the handler negotiates TLS to the origin itself. Without
+        // this, that hop would go out with no client certificate, OS trust only, and none of
+        // --insecure / pins / revocation / --ca-file: a login redirect to an SSO host on the other
+        // side of a PAC "DIRECT" rule is exactly that shape. Same certificate, same judgement.
+        handler.SslOptions = new SslClientAuthenticationOptions
+        {
+            RemoteCertificateValidationCallback = (_, cert, certChain, errors) =>
+            {
+                var (judgedErrors, judgedFlags) = ExtraRoots.Reconsider(
+                    errors, RevocationCheck.ChainFlagsOf(certChain), cert, certChain, transport.ExtraRoots);
+                return RevocationCheck.Decide(
+                    transport.Revocation, transport.RevocationStrict, transport.IgnoreServerCertificateErrors,
+                    judgedErrors, judgedFlags,
+                    trustServerCertificate is null ? null : () => TrustContext.Run(certChain, () =>
+                    {
+                        using var c = cert is null ? null : new X509Certificate2(cert);
+                        return trustServerCertificate(c);
+                    })).Accepted;
+            }
+        };
+        RevocationCheck.Apply(handler.SslOptions, transport);
+        TlsPolicy.Apply(handler.SslOptions, transport with { Sni = null });
+        if (certificateCopy is not null)
+            handler.SslOptions.ClientCertificates = new X509CertificateCollection { certificateCopy };
+
         var entry = new HandlerEntry(handler, certificateCopy);
         self = entry;
         return entry;
+    }
+
+    /// <summary>The thumbprint of the certificate directly above the leaf in the presented chain —
+    /// what `trust add --from-url --ca` pins. Null for a self-signed leaf or an unreadable chain.</summary>
+    private static string? IssuerThumbprintOf(X509Chain chain, string? leafThumbprint)
+    {
+        try
+        {
+            foreach (var element in chain.ChainElements)
+                if (!element.Certificate.Thumbprint.Equals(leafThumbprint, StringComparison.OrdinalIgnoreCase))
+                    return element.Certificate.Thumbprint;
+        }
+        catch { }
+        return null;
     }
 
     // host:port, lowercased, IPv6 brackets stripped, computed from a Uri on both the recording side
@@ -953,7 +1031,11 @@ public sealed class ApiClient : IDisposable
             if (transport.Proxy is ProxyMode.None) return (ProxyDisposition.Direct, null);
 
             bool wouldProxy;
-            if (transport.Proxy is ProxyMode.Explicit)
+            if (transport.PacUrl is { } pac)
+            {
+                wouldProxy = new ProxyConfiguration.PacWebProxy(pac).GetProxy(uri) is not null;
+            }
+            else if (transport.Proxy is ProxyMode.Explicit)
             {
                 wouldProxy = !string.IsNullOrWhiteSpace(transport.ProxyUrl) &&
                              !new WebProxy(transport.ProxyUrl).IsBypassed(uri);
@@ -988,7 +1070,9 @@ public sealed class ApiClient : IDisposable
     {
         try
         {
-            if (transport.Proxy is ProxyMode.Explicit) return transport.ProxyUrl;
+            // Never with credentials: this string ends up in diagnostics, logs and the app.
+            if (transport.Proxy is ProxyMode.Explicit)
+                return transport.ProxyUrl is null ? null : MarkdownSecrets.RedactUrl(transport.ProxyUrl);
             if (!Uri.TryCreate(url, UriKind.Absolute, out var uri)) return null;
             return HttpClient.DefaultProxy?.GetProxy(uri)?.ToString();
         }

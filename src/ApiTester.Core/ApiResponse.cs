@@ -99,6 +99,11 @@ public sealed record ConnectionInfo
     public string? ServerCertificateSubject { get; init; }
     public string? ServerCertificateIssuer { get; init; }
     public string? ServerCertificateThumbprint { get; init; }
+    /// <summary>The thumbprint of the certificate directly above the leaf in the presented chain
+    /// — null for a self-signed leaf. What `trust add --ca` pins.</summary>
+    public string? ServerCertificateIssuerThumbprint { get; init; }
+    /// <summary>Base64 SHA-256 of the leaf's SubjectPublicKeyInfo. What `trust add --spki` pins.</summary>
+    public string? ServerCertificateSpkiSha256 { get; init; }
     public DateTime? ServerCertificateNotAfter { get; init; }
     public IReadOnlyList<string> ServerCertificateChain { get; init; } = Array.Empty<string>();
 

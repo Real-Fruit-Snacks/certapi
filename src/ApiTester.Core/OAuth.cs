@@ -127,7 +127,8 @@ public static class OAuthClient
 
         var options = transport ?? new TransportOptions();
         if (ignoreServerCertificateErrors) options = options with { IgnoreServerCertificateErrors = true };
-        var handler = StreamTransport.CreateHandler(clientCertificate, options, trustServerCertificate);
+        var handler = StreamTransport.CreateHandler(clientCertificate, options, trustServerCertificate,
+            Uri.TryCreate(req.TokenEndpoint, UriKind.Absolute, out var tokenDestination) ? tokenDestination : null);
 
         using var http = new HttpClient(handler, disposeHandler: true) { Timeout = TimeSpan.FromSeconds(100) };
         using var message = new HttpRequestMessage(HttpMethod.Post, req.TokenEndpoint)

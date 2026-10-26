@@ -18,7 +18,11 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>
-    <Version>1.92.3</Version>
+    <Version>1.93.0</Version>
+    <Product>certapi</Product>
+    <Description>mTLS API client for the Windows certificate store</Description>
+    <Authors>RFS</Authors>
+    <Copyright>MIT</Copyright>
     <ApplicationIcon>icon.ico</ApplicationIcon>
     <PublishSingleFile>true</PublishSingleFile>
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>

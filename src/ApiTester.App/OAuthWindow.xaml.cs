@@ -164,7 +164,7 @@ public partial class OAuthWindow : Window
     {
         StatusBar.Visibility = Visibility.Visible;
         StatusText.Text = message;
-        StatusText.SetResourceReference(System.Windows.Controls.TextBlock.ForegroundProperty, error ? "Red" : "Accent");
+        StatusText.SetResourceReference(System.Windows.Controls.TextBlock.ForegroundProperty, error ? "Red" : "Signal");
     }
 
     private static string? Blank(string s) => string.IsNullOrWhiteSpace(s) ? null : s.Trim();

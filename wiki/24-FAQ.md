@@ -44,9 +44,8 @@ check it in. By default secrets are stripped from an export (`--include-secrets`
 for you), so a checked-in workspace doesn't hand out credentials.
 
 **Does it do OAuth?**
-Yes — client-credentials, password, refresh, and interactive authorization-code with PKCE (Proof Key
-for Code Exchange), in the app
-and (except the interactive flow) via `certapi token`. See [Authentication](08-Authentication.md).
+Yes — client-credentials, password, refresh, device code, and interactive authorization-code with
+PKCE (Proof Key for Code Exchange), in the app and (except the interactive flow) via `certapi token`. See [Authentication](08-Authentication.md).
 
 **Does it do Windows Integrated Auth (NTLM (NT LAN Manager) / Kerberos)?**
 Yes — a *Windows (integrated)* auth type with SSO (single sign-on) or explicit credentials, and
@@ -70,8 +69,23 @@ Transfer Protocol)/TLS/mTLS. See
 [Mock Server](18-Mock-Server.md).
 
 **How do I reach a cert-protected API from a tool that can't do mTLS?**
-Run `certapi serve <upstream> --cert …` and point the tool at the local port. See
+Run `certapi serve <upstream> --port 8819 --cert …` and point the tool at the local port. See
 [Local Gateway](19-Local-Gateway.md).
+
+**Can one gateway front many sites?**
+Yes. Name each one — `--upstream api=https://api.corp --upstream hr=https://hr.corp` — and each is
+at `http://127.0.0.1:8819/<name>/`, or on its own origin (`http://api.gw.localhost:8819/`) with
+`--vhost`. `--allow "*.corp"` reaches any matching host without listing it. The gateway prints a
+table of what it built; `--check` prints it without starting.
+
+**What if the sites need different certificates or settings?**
+Put them in a `--routes` file (or a profile's `serve.sites`): each site can have its own `cert`,
+`insecure`, `caFile`, `revocation`, `windowsAuth` and `headers`, and inherits everything it leaves
+out from the gateway's flags.
+
+**How do I keep a gateway I start every day?**
+Put it in a profile's `serve` section in `certapi.config.json`; then `certapi serve --profile corp`
+is the whole command. See [Configuration](27-Configuration.md#a-gateway-in-a-profile).
 
 **Is `--insecure` dangerous?**
 It skips **server** certificate validation, so only use it for internal/self-signed servers you trust.
