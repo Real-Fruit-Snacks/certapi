@@ -11,8 +11,8 @@ namespace ApiTester.App;
 
 public partial class HelpWindow : Window
 {
-    private const string RepoUrl = "https://github.com/Real-Fruit-Snacks/windows-cert-api-tester";
-    private const string DocsUrl = "https://real-fruit-snacks.github.io/windows-cert-api-tester/";
+    private const string RepoUrl = "https://github.com/Real-Fruit-Snacks/certapi";
+    private const string DocsUrl = "https://real-fruit-snacks.github.io/certapi/";
 
     private readonly List<(string Title, Func<UIElement> Build)> _sections;
     private static readonly FontFamily Code = new("Consolas");

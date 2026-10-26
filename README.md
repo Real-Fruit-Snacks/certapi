@@ -13,7 +13,7 @@ mTLS API client for the Windows certificate store
 irm rfs.sh/certapi | iex
 ```
 
-Or take the two portable executables from the [latest release](https://github.com/Real-Fruit-Snacks/windows-cert-api-tester/releases/latest): `ApiTester.App.exe` (desktop) and `certapi.exe` (command line). Self-contained, no installer, no admin rights.
+Or take the two portable executables from the [latest release](https://github.com/Real-Fruit-Snacks/certapi/releases/latest): `ApiTester.App.exe` (desktop) and `certapi.exe` (command line). Self-contained, no installer, no admin rights.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/assets/cover-dark.svg">
@@ -22,7 +22,7 @@ Or take the two portable executables from the [latest release](https://github.co
 
 Some internal endpoints don't take a password. They ask the browser to choose a certificate and complete a mutual-TLS handshake, and most API clients want that certificate and its private key as files on disk, which enterprise and smart-card certificates deliberately don't allow. certapi picks the certificate from `CurrentUser\My` (or `LocalMachine\My`, or a `.pfx`/`.pem` file) and lets Windows sign the handshake, so the key never leaves the store and never has to be exportable. With no certificate selected it is an ordinary HTTP client. I wrote it for my own internal APIs; it assumes Windows 10/11 and nothing else.
 
-Site: [real-fruit-snacks.github.io/windows-cert-api-tester](https://real-fruit-snacks.github.io/windows-cert-api-tester/) · Handbook: [`wiki/`](wiki/README.md) · [Changelog](CHANGELOG.md)
+Site: [real-fruit-snacks.github.io/certapi](https://real-fruit-snacks.github.io/certapi/) · Handbook: [`wiki/`](wiki/README.md) · [Changelog](CHANGELOG.md)
 
 ## What's in it
 

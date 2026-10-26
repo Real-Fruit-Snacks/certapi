@@ -8,7 +8,7 @@
 <meta property="og:title" content="certapi">
 <meta property="og:description" content="mTLS API client for the Windows certificate store">
 <meta property="og:type" content="website">
-<meta property="og:image" content="https://real-fruit-snacks.github.io/windows-cert-api-tester/assets/cover-dark.png">
+<meta property="og:image" content="https://real-fruit-snacks.github.io/certapi/assets/cover-dark.png">
 <meta name="twitter:card" content="summary_large_image">
 <link rel="icon" href="assets/icon.svg" type="image/svg+xml">
 <link rel="icon" href="assets/favicon.ico" sizes="48x48">
@@ -161,8 +161,8 @@
       <a href="#whats-in-it">What's in it</a>
       <a href="#headless">Headless</a>
       <a href="#screens">Screens</a>
-      <a class="keep" href="https://github.com/Real-Fruit-Snacks/windows-cert-api-tester/blob/main/wiki/README.md">Handbook</a>
-      <a class="keep" href="https://github.com/Real-Fruit-Snacks/windows-cert-api-tester">GitHub</a>
+      <a class="keep" href="https://github.com/Real-Fruit-Snacks/certapi/blob/main/wiki/README.md">Handbook</a>
+      <a class="keep" href="https://github.com/Real-Fruit-Snacks/certapi">GitHub</a>
       <button class="toggle" type="button" id="theme" aria-label="Switch theme"><span class="night">Nightshift</span><span class="day">Dayshift</span></button>
     </nav>
   </div>
@@ -187,10 +187,10 @@
         <div class="pane" data-active data-id="pwsh"><pre><code>irm rfs.sh/certapi | iex</code></pre><button class="copy" data-copy="irm rfs.sh/certapi | iex">Copy</button></div>
         <div class="pane" data-id="exe"><pre><code><span class="c"># two portable exes, no installer, no admin</span>
 ApiTester.App.exe   <span class="c"># the desktop app</span>
-certapi.exe         <span class="c"># the command line</span></code></pre><a class="copy" href="https://github.com/Real-Fruit-Snacks/windows-cert-api-tester/releases/latest">Releases</a></div>
-        <div class="pane" data-id="src"><pre><code>git clone https://github.com/Real-Fruit-Snacks/windows-cert-api-tester
-dotnet publish src/ApiTester.Cli -c Release -r win-x64 --self-contained -o publish</code></pre><button class="copy" data-copy="git clone https://github.com/Real-Fruit-Snacks/windows-cert-api-tester && cd windows-cert-api-tester && dotnet publish src/ApiTester.Cli -c Release -r win-x64 --self-contained -o publish">Copy</button></div>
-        <div class="foot">Self-contained single-file executables. Nothing to install first; the .NET runtime is inside. <a href="https://github.com/Real-Fruit-Snacks/windows-cert-api-tester/releases/latest">Latest release</a></div>
+certapi.exe         <span class="c"># the command line</span></code></pre><a class="copy" href="https://github.com/Real-Fruit-Snacks/certapi/releases/latest">Releases</a></div>
+        <div class="pane" data-id="src"><pre><code>git clone https://github.com/Real-Fruit-Snacks/certapi
+dotnet publish src/ApiTester.Cli -c Release -r win-x64 --self-contained -o publish</code></pre><button class="copy" data-copy="git clone https://github.com/Real-Fruit-Snacks/certapi && cd certapi && dotnet publish src/ApiTester.Cli -c Release -r win-x64 --self-contained -o publish">Copy</button></div>
+        <div class="foot">Self-contained single-file executables. Nothing to install first; the .NET runtime is inside. <a href="https://github.com/Real-Fruit-Snacks/certapi/releases/latest">Latest release</a></div>
       </div>
     </div>
     <div class="term" aria-label="Example: certapi send with a Windows-store client certificate">
@@ -275,7 +275,7 @@ certapi bench https://api.internal/health -n 500 -c 20
 certapi mock --har session.har --port 8770
 certapi mcp --cert <span class="a">"CN=matt"</span> --allow internal.corp</code></pre>
     </div>
-    <p class="mute" style="margin-top:14px">Body to stdout, diagnostics to stderr. Exit codes: 0 success · 1 failure · 2 usage · 3 data. <code>certapi help &lt;command&gt;</code> lists every option; the <a href="https://github.com/Real-Fruit-Snacks/windows-cert-api-tester/blob/main/wiki/21-CLI-Reference.md">CLI reference</a> has them all on one page.</p>
+    <p class="mute" style="margin-top:14px">Body to stdout, diagnostics to stderr. Exit codes: 0 success · 1 failure · 2 usage · 3 data. <code>certapi help &lt;command&gt;</code> lists every option; the <a href="https://github.com/Real-Fruit-Snacks/certapi/blob/main/wiki/21-CLI-Reference.md">CLI reference</a> has them all on one page.</p>
   </div>
 </section>
 
@@ -348,7 +348,7 @@ certapi mcp --cert <span class="a">"CN=matt"</span> --allow internal.corp</code>
 
 <footer>
   <div class="wrap">
-    <span>MIT · <a href="https://github.com/Real-Fruit-Snacks/windows-cert-api-tester">Source</a> · <a href="https://github.com/Real-Fruit-Snacks/windows-cert-api-tester/blob/main/wiki/README.md">Handbook</a> · <a href="https://github.com/Real-Fruit-Snacks/windows-cert-api-tester/blob/main/CHANGELOG.md">Changelog</a> · <a href="https://github.com/Real-Fruit-Snacks/windows-cert-api-tester/blob/main/SECURITY.md">Security</a></span>
+    <span>MIT · <a href="https://github.com/Real-Fruit-Snacks/certapi">Source</a> · <a href="https://github.com/Real-Fruit-Snacks/certapi/blob/main/wiki/README.md">Handbook</a> · <a href="https://github.com/Real-Fruit-Snacks/certapi/blob/main/CHANGELOG.md">Changelog</a> · <a href="https://github.com/Real-Fruit-Snacks/certapi/blob/main/SECURITY.md">Security</a></span>
     <span><a href="https://github.com/Real-Fruit-Snacks">RFS</a> · Real tools. No filler. · <a href="https://github.com/Real-Fruit-Snacks/.github/blob/main/BRAND.md">Brand</a></span>
   </div>
 </footer>
