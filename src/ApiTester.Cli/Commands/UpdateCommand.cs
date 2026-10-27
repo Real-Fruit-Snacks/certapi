@@ -107,9 +107,9 @@ public static class UpdateCommand
                          ? new[] { (CliAsset, exe), (AppAsset, appPath!) }
                          : new[] { (CliAsset, exe) })
             {
-                var asset = release.Assets.FirstOrDefault(a => a.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
-                if (asset is not null) stderr.WriteLine($"downloading {name} ({asset.Size / 1048576.0:0.0} MB) from {release.Tag} ...");
-                downloads.Add((target, updater.DownloadVerifiedAsync(release, name, services.Cancel).GetAwaiter().GetResult()));
+                var bytes = updater.DownloadVerifiedAsync(release, name, services.Cancel).GetAwaiter().GetResult();
+                stderr.WriteLine($"downloaded {name} ({bytes.Length / 1048576.0:0.0} MB) from {release.Tag}; SHA-256 matches");
+                downloads.Add((target, bytes));
             }
 
             // The app first: it is not running, so if anything is going to refuse, it is the one more

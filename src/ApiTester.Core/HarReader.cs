@@ -51,7 +51,9 @@ public static class HarReader
             .ToList();
 
         string? body = entry.Request.PostData?.TextOrNull();
-        string? contentType = entry.Request.PostData is { MimeType.Length: > 0 } pd ? pd.MimeType : null;
+        // A binary body has no text form for a saved request; its type would only mislabel the
+        // empty body left in its place.
+        string? contentType = body is not null && entry.Request.PostData is { MimeType.Length: > 0 } pd ? pd.MimeType : null;
 
         return new ParsedRequest
         {

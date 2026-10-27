@@ -268,6 +268,14 @@ public class UpdateCommandTests
         Assert.False(File.Exists(i.Exe + ".old"));
     }
 
+    [Fact]
+    public void A_release_without_a_tag_is_not_a_release()
+    {
+        Assert.Throws<InvalidOperationException>(() => ReleaseInfo.Parse(Encoding.UTF8.GetBytes("""{"tag_name":null,"assets":[]}""")));
+        var r = ReleaseInfo.Parse(Encoding.UTF8.GetBytes("""{"tag_name":"v1.0.0","assets":[{"name":null,"browser_download_url":"x"},{"name":"a","browser_download_url":"u"}]}"""));
+        Assert.Single(r.Assets);
+    }
+
     [Theory]
     [InlineData("1.94.0", "1.93.0", 1)]
     [InlineData("v1.93.0", "1.93.0", 0)]

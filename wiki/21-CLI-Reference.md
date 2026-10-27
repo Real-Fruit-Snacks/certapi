@@ -312,13 +312,13 @@ Accepts the [certificate](#certificate-options), [transport](#transport-options)
 | `--query name=value` | none | Add a query parameter to the URL, percent-encoded, after any query the URL already has. Repeatable; `name` alone sends `name=` |
 | `-d, --data <body>` | none | Request body. Implies POST unless `-X` says otherwise. As in curl, `-d @file` reads the body from a file |
 | `--data-file <path>` | none | Read the body from a file instead, without interpreting a leading `@` — for a body too large or too awkward to quote on a command line |
-
-A body file that is UTF-8 text is sent as written, with `{{variables}}` resolved and `application/json` as the default content type. Any other file — an image, an archive, a signed payload — is sent **byte for byte**, with `application/octet-stream` unless `--content-type` says otherwise, and nothing in it is changed. `--har` records such a body base64-encoded (`"encoding": "base64"` on `postData`), and so does `serve --record`.
 | `-F, --form name=value` | none | A `multipart/form-data` field. `name=@path` uploads a file; `name=@path;type=<ct>` sets that part's content type. Repeatable, implies POST, and mutually exclusive with `-d` |
 | `--graphql <query>` | none | Send a GraphQL query as a correctly formed `{query, variables}` POST |
 | `--gql-variables <json>` | none | A JSON object of GraphQL variables to go with it |
-| `--content-type <ct>` | `application/json` | The body's content type. Ignored for `-F`, which sets its own |
+| `--content-type <ct>` | `application/json` (`application/octet-stream` for a binary body file) | The body's content type. Ignored for `-F`, which sets its own. A `-H "Content-Type: …"` sets it too, as in curl; `--content-type` wins |
 | `--timeout <seconds>` | `100` | How long to wait for the whole exchange |
+
+A body file that is text — UTF-8, or UTF-16/32 with a byte-order mark — is sent as text, with `{{variables}}` resolved and `application/json` as the default content type. Any other file — an image, an archive, a signed payload — is sent **byte for byte**, with `application/octet-stream` unless `--content-type` says otherwise, and nothing in it is changed. `--har` records such a body base64-encoded (`"encoding": "base64"` on `postData`), and so does `serve --record`.
 
 ### Authentication
 
@@ -638,7 +638,7 @@ Accepts the [certificate](#certificate-options), [transport](#transport-options)
 | `-X, --method <m>` | `GET` | HTTP method |
 | `-H, --header "k: v"` | none | Add a header. Repeatable |
 | `-d, --data <body>` | none | Request body. `-d @file` reads it from a file, byte for byte when it is not text |
-| `--content-type <ct>` | `application/json` | Body content type |
+| `--content-type <ct>` | `application/json` (`application/octet-stream` for a binary `-d @file`) | Body content type |
 | `--bearer <token>` | none | `Authorization: Bearer …` |
 | `--timeout <seconds>` | `100` | Per-request timeout |
 

@@ -9,7 +9,9 @@ All notable changes to this project are documented here. The format follows
 ### Added
 - **Binary request bodies.** A body file (`-d @file`, `--data-file`) that is not UTF-8 text is sent
   byte for byte, as `application/octet-stream` unless `--content-type` says otherwise, so an image
-  or an archive can be PUT as it is. Text files behave as before. `bench` takes `-d @file` too, and
+  or an archive can be PUT as it is. Text files (UTF-8, or UTF-16/32 with a byte-order mark) behave
+  as before; a file in another legacy encoding is now sent as its bytes rather than mis-decoded.
+  On `send`, a `-H "Content-Type: …"` now sets the body's type, as in curl. `bench` takes `-d @file` too, and
   `grpc` reads a message from `-d @file`.
 - **The desktop app updates itself.** Help › About › **Check for updates** looks for a newer
   release; an **Update to x.y.z** button then installs it — the app, and `certapi.exe` when it sits
@@ -24,8 +26,8 @@ All notable changes to this project are documented here. The format follows
   `actions/upload-artifact@v7`, which run on Node 24; GitHub had warned that the `@v4` versions
   were being forced off the deprecated Node 20.
 - The virtual-host tests skip, with the reason, on a Windows session that cannot bind
-  `http://+:<port>/` (not elevated, no URL reservation) instead of failing after minutes of
-  retries; CI still runs them. A gateway that exits before listening now fails its test at once.
+  `http://+:<port>/` (not elevated, no URL reservation) instead of failing after a long run of
+  connection retries; CI still runs them. A gateway that exits before listening now fails its test at once.
 
 ## [1.94.0] - 2026-10-27
 

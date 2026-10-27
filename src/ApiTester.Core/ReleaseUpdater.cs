@@ -21,14 +21,16 @@ public sealed record ReleaseInfo(string Tag, string Page, IReadOnlyList<ReleaseA
             foreach (var a in list.EnumerateArray())
             {
                 string? digest = a.TryGetProperty("digest", out var d) && d.ValueKind == JsonValueKind.String ? d.GetString() : null;
+                if (a.GetProperty("name").GetString() is not { } assetName ||
+                    a.GetProperty("browser_download_url").GetString() is not { } assetUrl) continue;
                 assets.Add(new ReleaseAsset(
-                    a.GetProperty("name").GetString()!,
-                    a.GetProperty("browser_download_url").GetString()!,
+                    assetName,
+                    assetUrl,
                     a.TryGetProperty("size", out var s) && s.TryGetInt64(out var n) ? n : 0,
                     digest is not null && digest.StartsWith("sha256:", StringComparison.OrdinalIgnoreCase) ? digest[7..].ToLowerInvariant() : null));
             }
         return new ReleaseInfo(
-            root.GetProperty("tag_name").GetString()!,
+            root.GetProperty("tag_name").GetString() is { Length: > 0 } tag ? tag : throw new InvalidOperationException("the release has no tag_name"),
             root.TryGetProperty("html_url", out var page) ? page.GetString() ?? "" : "",
             assets);
     }

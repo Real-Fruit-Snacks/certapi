@@ -354,6 +354,13 @@ public static class SendCommand
         url = R(url);
         if (querySpecs.Count > 0) url = RequestUrl.AppendQuery(url, ParseQuery(querySpecs).Select(kv => new KeyValuePair<string, string>(R(kv.Key), R(kv.Value))));
         var headerPairs = new List<KeyValuePair<string, string>>();
+        // A Content-Type typed with -H describes the body, as in curl; the HTTP stack only takes it
+        // from the body itself, so it becomes the body's type (--content-type still wins).
+        if (contentType is null && headers.LastOrDefault(h => h.TrimStart().StartsWith("Content-Type:", StringComparison.OrdinalIgnoreCase)) is { } typed)
+        {
+            contentType = R(typed[(typed.IndexOf(':') + 1)..].Trim());
+            headers = headers.Where(h => !h.TrimStart().StartsWith("Content-Type:", StringComparison.OrdinalIgnoreCase)).ToList();
+        }
         // As in curl, a User-Agent typed with -H wins over -A.
         if (userAgent is not null && !headers.Any(h => h.TrimStart().StartsWith("User-Agent:", StringComparison.OrdinalIgnoreCase)))
             headerPairs.Add(new("User-Agent", R(userAgent)));

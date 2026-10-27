@@ -89,7 +89,7 @@ public class AppUpdateTests
             using var client = new ApiClient();
             var release = (await AppUpdate.CheckAsync(client, default, feed))!;
             var done = await AppUpdate.InstallAsync(client, release, app, null, default, feed);
-            Assert.Equal(2, done.Count);
+            Assert.Equal(new[] { cli, app }, done);   // the running app last
             Assert.Equal("new app", File.ReadAllText(app));
             Assert.Equal("new cli", File.ReadAllText(cli));
         }

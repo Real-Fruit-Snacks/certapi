@@ -64,8 +64,9 @@ public sealed class HarPostData
 {
     public string MimeType = "";
     public string Text = "";
-    /// <summary>"base64" when <see cref="Text"/> holds a binary body, else null (as on a response's
-    /// content, the same widely read extension to HAR 1.2).</summary>
+    /// <summary>"base64" when <see cref="Text"/> holds a binary body, else null. HAR 1.2 defines
+    /// this only for a response's content; on postData it is this tool's extension, and a tool
+    /// that does not know it sees the base64 text.</summary>
     public string? Encoding;
 
     /// <summary>A recorded request body: text when it is UTF-8, base64 otherwise, so a binary

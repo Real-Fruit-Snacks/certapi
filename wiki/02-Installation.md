@@ -57,7 +57,7 @@ immediately. You can also point either tool at a separate **workspace file** wit
 - **Command line:** `certapi update` replaces `certapi.exe` (and `ApiTester.App.exe` beside it) with the latest release; `certapi update --check` only asks. See [`update`](21-CLI-Reference.md#update).
 - **Desktop app:** **Help › About › Check for updates**. When a newer release exists, an **Update to x.y.z** button appears in the title bar; it downloads the app (and `certapi.exe` when it sits in the same folder), checks each file, replaces them and restarts. Tick **Check for a new release when certapi starts** to have the app ask GitHub at most once a day — it is off until you turn it on, and the app makes no other call of its own.
 
-Both check every file against the SHA-256 GitHub publishes for it before anything is replaced; nothing changes if a check fails. A copy installed with Scoop is updated with `scoop update certapi`.
+Both check every file against the SHA-256 GitHub publishes for it before anything is replaced; nothing changes if a check fails. A copy installed with Scoop is updated with `scoop update certapi`. The app's check goes out through Windows' own proxy settings; on a network that needs a CA file or a PAC file of your own, use `certapi update` with `--ca-file` / `--pac`, which updates the app beside it too.
 
 ## Verifying a download
 

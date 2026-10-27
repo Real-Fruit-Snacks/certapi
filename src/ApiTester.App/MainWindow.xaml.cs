@@ -249,9 +249,10 @@ public partial class MainWindow : Window
             SaveState();
             if (newer is not null) ShowUpdateAvailable(newer);
         }
-        catch (Exception ex) when (ex is ReleaseUpdateException or HttpRequestException or TaskCanceledException)
+        catch (Exception)
         {
-            // A startup check that fails says nothing: the user did not ask for it just now.
+            // A startup check that fails says nothing — the user did not ask for it just now — and
+            // must never take the app down with it (this is an async void handler).
         }
     }
 
@@ -267,7 +268,7 @@ public partial class MainWindow : Window
             ShowUpdateAvailable(newer);
             return $"certapi {newer.Version} is available (this is {AppUpdate.CurrentVersion}). Use the Update button in the title bar to install it.";
         }
-        catch (ReleaseUpdateException ex) { return ex.Message; }
+        catch (Exception ex) { return "Could not check for updates: " + ex.Message; }
     }
 
     private void ShowUpdateAvailable(ReleaseInfo release)
@@ -281,6 +282,12 @@ public partial class MainWindow : Window
     private async void UpdateButton_Click(object sender, RoutedEventArgs e)
     {
         if (_availableUpdate is not { } release) return;
+        // Installing ends with a restart, which would cut off a request that is still running.
+        if (_cts is not null)
+        {
+            StatusText.Text = "A request is still running — let it finish (or cancel it), then install the update.";
+            return;
+        }
         string? exe = Environment.ProcessPath;
         if (AppUpdate.CannotInstall(exe) is { } why) { StatusText.Text = why; return; }
         bool withCli = File.Exists(Path.Combine(Path.GetDirectoryName(exe!) ?? ".", ReleaseUpdater.CliAsset));
@@ -300,7 +307,7 @@ public partial class MainWindow : Window
             _restartInto = exe;
             Close();
         }
-        catch (Exception ex) when (ex is ReleaseUpdateException or IOException or UnauthorizedAccessException or HttpRequestException)
+        catch (Exception ex)
         {
             StatusText.Text = "Update not installed: " + ex.Message;
             UpdateButton.IsEnabled = true;

@@ -136,6 +136,30 @@ public class BinaryBodyTests
     }
 
     [Fact]
+    public void A_utf16_file_with_a_bom_is_text_as_windows_powershell_writes_it()
+    {
+        // Windows PowerShell 5.1: '{"a":1}' > body.json writes UTF-16LE with a BOM.
+        var le = new byte[] { 0xFF, 0xFE }.Concat(Encoding.Unicode.GetBytes("{\"a\":1}")).ToArray();
+        Assert.Equal("{\"a\":1}", BodyFile.FromBytes(le).Text);
+        var be = new byte[] { 0xFE, 0xFF }.Concat(Encoding.BigEndianUnicode.GetBytes("x")).ToArray();
+        Assert.Equal("x", BodyFile.FromBytes(be).Text);
+    }
+
+    [Fact]
+    public void A_content_type_typed_with_dash_H_sets_the_body_type()
+    {
+        var file = TempFile(Png);
+        try
+        {
+            using var server = new Capture();
+            Assert.Equal(0, Send(server.Url, "-X", "PUT", "--data-file", file, "-H", "Content-Type: image/png").Code);
+            server.Wait();
+            Assert.Equal("image/png", server.ContentType);
+        }
+        finally { File.Delete(file); }
+    }
+
+    [Fact]
     public void Recorded_and_imported_bodies_keep_text_and_never_mangle_binary()
     {
         var text = HarPostData.From(Encoding.UTF8.GetBytes("{\"a\":1}"), "application/json");
