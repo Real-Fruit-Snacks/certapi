@@ -147,6 +147,10 @@ public static class OAuthClient
         {
             using var response = await http.SendAsync(message, ct);
             raw = await response.Content.ReadAsStringAsync(ct);
+            if ((int)response.StatusCode is >= 300 and < 400)
+                return Failure("redirected",
+                    $"The token endpoint answered {(int)response.StatusCode} pointing at {response.Headers.Location?.ToString() ?? "(no Location)"}. " +
+                    "A token request is never sent on to another address — its body carries the secret; if that is the real endpoint, use it.", raw);
             return Parse(raw);
         }
         catch (TaskCanceledException) when (!ct.IsCancellationRequested)

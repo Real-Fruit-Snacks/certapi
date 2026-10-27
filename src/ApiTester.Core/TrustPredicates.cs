@@ -28,8 +28,13 @@ public sealed class TrustPredicates
     /// <c>c =&gt; c is not null &amp;&amp; TrustService.IsTrusted(state, host, c.Thumbprint!)</c>, but
     /// the same delegate instance is returned for every call with the same host (compared
     /// case-insensitively), so repeated requests to it can share a pooled connection.</summary>
+    /// <remarks>The pins consulted are the ones for the host this connection actually reached when
+    /// the validation callback says so (<see cref="TrustContext.CurrentHost"/>): a redirect to
+    /// another host is judged by that host's pins, never by the pins of the host the request
+    /// started at.</remarks>
     public Func<X509Certificate2?, bool> For(string host) =>
-        _byHost.GetOrAdd(host, h => c => c is not null && TrustService.IsTrusted(_state, h, c, TrustContext.CurrentChain));
+        _byHost.GetOrAdd(host, h => c => c is not null &&
+            TrustService.IsTrusted(_state, TrustContext.CurrentHost ?? h, c, TrustContext.CurrentChain, TrustContext.CurrentPolicyErrors));
 }
 
 /// <summary>How a validation callback lends the presented chain to the trust predicate without
@@ -40,14 +45,44 @@ public sealed class TrustPredicates
 public static class TrustContext
 {
     [ThreadStatic] private static X509Chain? _chain;
+    [ThreadStatic] private static System.Net.Security.SslPolicyErrors _errors;
+    [ThreadStatic] private static string? _host;
 
     public static X509Chain? CurrentChain => _chain;
 
-    public static bool Run(X509Chain? chain, Func<bool> predicate)
+    /// <summary>What the platform (and <c>--ca-file</c>) found wrong with the certificate. An issuer
+    /// pin waives an untrusted chain, never a certificate issued for some other name.</summary>
+    public static System.Net.Security.SslPolicyErrors CurrentPolicyErrors => _errors;
+
+    /// <summary>The host this connection was opened to, when the callback knows it and it differs
+    /// from the name the predicate was made for (a redirect hop); null otherwise.</summary>
+    public static string? CurrentHost => _host;
+
+    public static bool Run(X509Chain? chain, System.Net.Security.SslPolicyErrors errors, Func<bool> predicate) =>
+        Run(chain, errors, null, predicate);
+
+    public static bool Run(X509Chain? chain, System.Net.Security.SslPolicyErrors errors, string? host, Func<bool> predicate)
     {
-        var previous = _chain;
-        _chain = chain;
+        var (previousChain, previousErrors, previousHost) = (_chain, _errors, _host);
+        (_chain, _errors, _host) = (chain, errors, host);
         try { return predicate(); }
-        finally { _chain = previous; }
+        finally { (_chain, _errors, _host) = (previousChain, previousErrors, previousHost); }
+    }
+
+    /// <summary>The host a TLS validation callback's <paramref name="sender"/> was connecting to —
+    /// an <see cref="System.Net.Security.SslStream"/>'s target, or a request's host — unless that
+    /// is <paramref name="sni"/>, a name chosen for the handshake rather than the host whose pins
+    /// apply.</summary>
+    public static string? HostOf(object? sender, string? sni)
+    {
+        string? host = sender switch
+        {
+            System.Net.Security.SslStream s => s.TargetHostName,
+            System.Net.Http.HttpRequestMessage r => r.RequestUri?.IdnHost,
+            _ => null
+        };
+        if (string.IsNullOrEmpty(host)) return null;
+        if (sni is not null && string.Equals(host, sni, StringComparison.OrdinalIgnoreCase)) return null;
+        return host;
     }
 }

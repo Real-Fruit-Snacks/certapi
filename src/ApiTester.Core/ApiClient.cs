@@ -220,7 +220,7 @@ public sealed class ApiClient : IDisposable
             DateTime? srvNotAfter = null;
             IReadOnlyList<string> chain = Array.Empty<string>();
 
-            bool Validate(object _, X509Certificate? cert, X509Chain? certChain, SslPolicyErrors errors)
+            bool Validate(object sender, X509Certificate? cert, X509Chain? certChain, SslPolicyErrors errors)
             {
                 if (cert is not null)
                 {
@@ -254,7 +254,7 @@ public sealed class ApiClient : IDisposable
                     transport.IgnoreServerCertificateErrors,
                     judgedErrors,
                     judgedFlags,
-                    trustServerCertificate is null ? null : () => TrustContext.Run(certChain, () =>
+                    trustServerCertificate is null ? null : () => TrustContext.Run(certChain, judgedErrors, TrustContext.HostOf(sender, transport.Sni), () =>
                     {
                         using var c = cert is null ? null : new X509Certificate2(cert);
                         return trustServerCertificate(c);
@@ -374,6 +374,8 @@ public sealed class ApiClient : IDisposable
         try
         {
             string currentUrl = request.Url;
+            OriginBoundCredentials.Origin.Value = Uri.TryCreate(request.Url, UriKind.Absolute, out var credentialOrigin)
+                ? OriginKeyOf(credentialOrigin) : null;
             var currentMethod = request.Method;
             var sentHeaders = request.Headers.ToList();
             bool sendBody = true;
@@ -453,8 +455,13 @@ public sealed class ApiClient : IDisposable
 
                     // .NET strips Authorization on its own cross-origin redirects; match that, but
                     // having recorded it, so a 401 from the new origin is explicable.
+                    // Cookie and Proxy-Authorization typed by the user go too, as curl does
+                    // (CVE-2022-27776): the jar scopes its own cookies, a typed one is for the host
+                    // it was typed for.
                     if (crossOrigin)
-                        sentHeaders.RemoveAll(h => h.Key.Equals("Authorization", StringComparison.OrdinalIgnoreCase));
+                        sentHeaders.RemoveAll(h => h.Key.Equals("Authorization", StringComparison.OrdinalIgnoreCase) ||
+                                                   h.Key.Equals("Cookie", StringComparison.OrdinalIgnoreCase) ||
+                                                   h.Key.Equals("Proxy-Authorization", StringComparison.OrdinalIgnoreCase));
 
                     // Curl and every browser rewrite a redirected POST as a GET on a 301/302; the
                     // entity was for the resource that moved, not for the one it moved to. A 303
@@ -659,9 +666,12 @@ public sealed class ApiClient : IDisposable
         // connection to persist across the handshake legs — which SocketsHttpHandler does.
         if (windowsAuth is { } wa)
         {
-            handler.Credentials = wa.UseDefaultCredentials
+            // Bound to the origin the request was made to: redirects are followed by hand on this
+            // same handler, so .NET's own rule (no credentials after a redirect) never applies, and
+            // a 302 to any other host would otherwise be answered with the user's password.
+            handler.Credentials = new OriginBoundCredentials(wa.UseDefaultCredentials
                 ? CredentialCache.DefaultCredentials
-                : new NetworkCredential(wa.Username, wa.Password, wa.Domain);
+                : new NetworkCredential(wa.Username, wa.Password, wa.Domain));
             handler.PreAuthenticate = true;
         }
         return handler;
@@ -737,7 +747,7 @@ public sealed class ApiClient : IDisposable
             RevocationStatus revocationStatus = RevocationStatus.NotChecked;
             RevocationStatus? revocationRefusal = null;
 
-            bool Validate(object _, X509Certificate? cert, X509Chain? certChain, SslPolicyErrors errors)
+            bool Validate(object sender, X509Certificate? cert, X509Chain? certChain, SslPolicyErrors errors)
             {
                 if (cert is not null)
                 {
@@ -766,7 +776,7 @@ public sealed class ApiClient : IDisposable
                     transport.IgnoreServerCertificateErrors,
                     judgedErrors,
                     judgedFlags,
-                    trustServerCertificate is null ? null : () => TrustContext.Run(certChain, () =>
+                    trustServerCertificate is null ? null : () => TrustContext.Run(certChain, judgedErrors, TrustContext.HostOf(sender, transport.Sni), () =>
                     {
                         using var c = cert is null ? null : new X509Certificate2(cert);
                         return trustServerCertificate(c);
@@ -841,14 +851,14 @@ public sealed class ApiClient : IDisposable
         // side of a PAC "DIRECT" rule is exactly that shape. Same certificate, same judgement.
         handler.SslOptions = new SslClientAuthenticationOptions
         {
-            RemoteCertificateValidationCallback = (_, cert, certChain, errors) =>
+            RemoteCertificateValidationCallback = (sender, cert, certChain, errors) =>
             {
                 var (judgedErrors, judgedFlags) = ExtraRoots.Reconsider(
                     errors, RevocationCheck.ChainFlagsOf(certChain), cert, certChain, transport.ExtraRoots);
                 return RevocationCheck.Decide(
                     transport.Revocation, transport.RevocationStrict, transport.IgnoreServerCertificateErrors,
                     judgedErrors, judgedFlags,
-                    trustServerCertificate is null ? null : () => TrustContext.Run(certChain, () =>
+                    trustServerCertificate is null ? null : () => TrustContext.Run(certChain, judgedErrors, TrustContext.HostOf(sender, transport.Sni), () =>
                     {
                         using var c = cert is null ? null : new X509Certificate2(cert);
                         return trustServerCertificate(c);
@@ -883,6 +893,9 @@ public sealed class ApiClient : IDisposable
     // (inside the ConnectCallback above) and the lookup side (BuildConnection in SendOnceAsync) so
     // the two can never disagree about which origin a connection belongs to.
     private static string OriginKey(Uri uri) => uri.Host.Trim('[', ']').ToLowerInvariant() + ":" + uri.Port;
+
+    /// <summary>Scheme, host and port: what "the same origin" means for a credential.</summary>
+    internal static string OriginKeyOf(Uri uri) => uri.Scheme.ToLowerInvariant() + "://" + OriginKey(uri);
 
     /// <summary>The message for one hop. A chain rebuilds it from the original <see cref="ApiRequest"/>
     /// every time rather than resending the previous message: an HttpContent can only be consumed
@@ -1152,4 +1165,17 @@ public sealed class ApiClient : IDisposable
         try { cipher = ssl.NegotiatedCipherSuite; } catch { /* not available on all platforms */ }
         return cipher == default ? null : cipher.ToString();
     }
+}
+
+/// <summary>Windows credentials that answer only the origin the request was sent to. The origin
+/// is set per send (an async-local, so concurrent sends sharing one handler each see their own);
+/// a hop to any other scheme, host or port gets no credential at all.</summary>
+internal sealed class OriginBoundCredentials(ICredentials inner) : ICredentials
+{
+    public static readonly AsyncLocal<string?> Origin = new();
+
+    public NetworkCredential? GetCredential(Uri uri, string authType) =>
+        Origin.Value is { } origin && string.Equals(origin, ApiClient.OriginKeyOf(uri), StringComparison.OrdinalIgnoreCase)
+            ? inner.GetCredential(uri, authType)
+            : null;
 }

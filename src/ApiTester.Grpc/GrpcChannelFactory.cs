@@ -68,7 +68,7 @@ internal static class GrpcChannelFactory
                 transport.IgnoreServerCertificateErrors,
                 judgedErrors,
                 judgedFlags,
-                trustServerCertificate is null ? null : () => TrustContext.Run(chain, () =>
+                trustServerCertificate is null ? null : () => TrustContext.Run(chain, judgedErrors, () =>
                 {
                     using var c = cert is null ? null : new X509Certificate2(cert);
                     return trustServerCertificate(c);

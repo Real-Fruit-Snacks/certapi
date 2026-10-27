@@ -268,7 +268,7 @@ public sealed class MtlsGateway : IDisposable
                         judgedErrors, judgedFlags,
                         trustServerCertificate is null
                             ? null
-                            : () => TrustContext.Run(chain, () => trustServerCertificate(cert as X509Certificate2))).Accepted;
+                            : () => TrustContext.Run(chain, judgedErrors, () => trustServerCertificate(cert as X509Certificate2))).Accepted;
                 }
             }
         };

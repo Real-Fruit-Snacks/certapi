@@ -66,8 +66,13 @@ public static class TrustService
     /// <summary>Every kind of pin at once: the leaf's thumbprint, the leaf's public key, or any
     /// issuer in <paramref name="chain"/>. The chain is the one the handshake built (it carries the
     /// intermediates the server sent, which a chain rebuilt from the leaf alone would not).</summary>
-    public static bool IsTrusted(AppState state, string host, X509Certificate2 leaf, X509Chain? chain)
+    public static bool IsTrusted(AppState state, string host, X509Certificate2 leaf, X509Chain? chain,
+                                 System.Net.Security.SslPolicyErrors policyErrors = System.Net.Security.SslPolicyErrors.None)
     {
+        // A leaf or key pin names this server's own certificate, so it stands in for the name check
+        // too (an IP literal, an internal alias). An issuer pin only vouches for the chain: a
+        // certificate the pinned CA issued for some other name is still some other server's.
+        bool nameMatches = !policyErrors.HasFlag(System.Net.Security.SslPolicyErrors.RemoteCertificateNameMismatch);
         if (string.IsNullOrEmpty(host)) return false;
         string? spki = null;
         List<string>? issuerThumbprints = null;
@@ -84,6 +89,7 @@ public static class TrustService
                     if (pin.Thumbprint.Equals(spki, StringComparison.Ordinal)) return true;
                     break;
                 case PinKind.Issuer:
+                    if (!nameMatches) break;
                     issuerThumbprints ??= IssuerThumbprints(leaf, chain);
                     if (issuerThumbprints.Any(t => t.Equals(pin.Thumbprint, StringComparison.OrdinalIgnoreCase))) return true;
                     break;
@@ -92,22 +98,41 @@ public static class TrustService
         return false;
     }
 
-    /// <summary>The thumbprints of everything above the leaf in the presented chain. With no chain
-    /// to read — a platform that handed the callback none — there is nothing to match, and an
-    /// issuer pin does not fall back to trusting the leaf.</summary>
+    /// <summary>The thumbprints of the certificates above the leaf in the presented chain that
+    /// actually vouch for it: walking up from the leaf, each one is included only while every
+    /// certificate below it was validly signed by the next and is fit to sit where it does. A leaf
+    /// that merely names the pinned CA as its issuer — signed by some other key — matches nothing.
+    /// With no chain to read — a platform that handed the callback none — there is nothing to
+    /// match, and an issuer pin does not fall back to trusting the leaf.</summary>
     private static List<string> IssuerThumbprints(X509Certificate2 leaf, X509Chain? chain)
     {
         var result = new List<string>();
         if (chain is null) return result;
         try
         {
-            foreach (var element in chain.ChainElements)
-                if (!element.Certificate.Thumbprint.Equals(leaf.Thumbprint, StringComparison.OrdinalIgnoreCase))
-                    result.Add(element.Certificate.Thumbprint);
+            var elements = chain.ChainElements;
+            if (elements.Count == 0 ||
+                !elements[0].Certificate.Thumbprint.Equals(leaf.Thumbprint, StringComparison.OrdinalIgnoreCase))
+                return result;
+            for (int i = 0; i < elements.Count; i++)
+            {
+                if (i > 0) result.Add(elements[i].Certificate.Thumbprint);
+                var flags = X509ChainStatusFlags.NoError;
+                foreach (var st in elements[i].ChainElementStatus) flags |= st.Status;
+                if ((flags & BrokenLink) != 0) break; // nothing above this one vouches for it
+            }
         }
         catch { /* a disposed chain contributes nothing */ }
         return result;
     }
+
+    private const X509ChainStatusFlags BrokenLink =
+        X509ChainStatusFlags.NotSignatureValid | X509ChainStatusFlags.InvalidBasicConstraints |
+        X509ChainStatusFlags.HasNotSupportedCriticalExtension | X509ChainStatusFlags.Cyclic |
+        X509ChainStatusFlags.InvalidNameConstraints | X509ChainStatusFlags.HasNotPermittedNameConstraint |
+        X509ChainStatusFlags.HasExcludedNameConstraint | X509ChainStatusFlags.HasNotSupportedNameConstraint |
+        X509ChainStatusFlags.HasNotDefinedNameConstraint | X509ChainStatusFlags.ExplicitDistrust |
+        X509ChainStatusFlags.Revoked | X509ChainStatusFlags.InvalidExtension;
 
     /// <summary>Base64 SHA-256 of the certificate's SubjectPublicKeyInfo — the value
     /// <c>openssl x509 -pubkey | openssl pkey -pubin -outform der | openssl dgst -sha256 -binary | base64</c>
