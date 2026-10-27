@@ -62,8 +62,8 @@ certapi sse https://api.example.com/stream --max-events 5 --json
 Events go to stdout; the connecting/ended notices to stderr. Exit 0 when the stream ends, 1 on a
 transport error.
 
-`sse` follows a redirect on the same origin (scheme, host and port) and refuses one to another
-origin, because the request's headers and client certificate would go with it — connect to that
+`sse` follows a redirect on the same origin (scheme, host and port), or from http to https on the
+same host, and refuses one to another origin, because the request's headers and client certificate would go with it — connect to that
 URL directly if it is the right one. `ws` does not follow redirects: a handshake answered with one
 fails. Neither has redirect options.
 

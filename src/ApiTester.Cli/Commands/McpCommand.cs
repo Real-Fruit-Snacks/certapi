@@ -47,8 +47,8 @@ public static class McpCommand
                                   descriptor_set_out and include_imports options). Pinned at
                                   launch; the agent cannot name files.
 
-        Transport (applies to every call the tools make; same rules as `send`):
-        """ + "\n" + TransportFlags.Help + "\n" + """
+        The transport options apply to every call the tools make, with the same rules as `send`.
+        """ + "\n\n" + TransportFlags.Help + "\n\n" + """
         Redirects are never followed (the redirect options above are accepted and change nothing): a 3xx comes back as itself, so every hop an agent takes is
         an explicit call checked against the allowlist. A host pinned with `certapi trust add`
         is reachable without --insecure, exactly as it is for send/run.
@@ -544,6 +544,11 @@ public static class McpCommand
         // would freeze every later call too, so each call has the --timeout deadline.
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(services.Cancel);
         deadline.CancelAfter(TimeSpan.FromSeconds(timeout));
+        bool DeadlinePassed() => deadline.IsCancellationRequested && !services.Cancel.IsCancellationRequested;
+        // A stream cut off by the deadline still returns what it delivered, marked as cut off.
+        ToolResult DeadlineWithPartial(IReadOnlyList<string> received) => new(
+            GrpcStreamPayload(received, 4, "DEADLINE_EXCEEDED", $"stopped after {timeout} s (--timeout); the messages received until then are listed"),
+            IsError: true);
         try
         {
             var caller = new GrpcCaller(new Uri(address!), cert, transport(new TransportOptions()),
@@ -587,6 +592,10 @@ public static class McpCommand
                     {
                         return new ToolResult(GrpcStreamPayload(received, ex.StatusCode, ex.StatusName, ex.StatusDetail), IsError: true);
                     }
+                    catch (OperationCanceledException) when (DeadlinePassed() && received.Count > 0)
+                    {
+                        return DeadlineWithPartial(received);
+                    }
                     return new ToolResult(GrpcStreamPayload(received, 0, "OK", ""), IsError: false);
                 }
                 if (!methodInfo.ServerStreaming)
@@ -596,14 +605,21 @@ public static class McpCommand
                     return GrpcResult(result, null);
                 }
                 var responses = new List<string>();
-                var duplex = caller.InvokeDuplexAsync(service, methodPart, ToAsync(messages), metadata,
-                        onResponse: s => { responses.Add(s); return responses.Count < maxMessages; }, ct)
-                    .GetAwaiter().GetResult();
-                return GrpcResult(duplex, responses);
+                try
+                {
+                    var duplex = caller.InvokeDuplexAsync(service, methodPart, ToAsync(messages), metadata,
+                            onResponse: s => { lock (responses) responses.Add(s); return responses.Count < maxMessages; }, ct)
+                        .GetAwaiter().GetResult();
+                    return GrpcResult(duplex, responses);
+                }
+                catch (OperationCanceledException) when (DeadlinePassed() && responses.Count > 0)
+                {
+                    lock (responses) return DeadlineWithPartial(responses.ToList());
+                }
             }
             finally { caller.DisposeAsync().AsTask().GetAwaiter().GetResult(); }
         }
-        catch (OperationCanceledException) when (deadline.IsCancellationRequested && !services.Cancel.IsCancellationRequested)
+        catch (OperationCanceledException) when (DeadlinePassed())
         { return Err($"the gRPC call did not finish within {timeout} s (--timeout)"); }
         catch (CliDataException ex) { return Err(ex.Message); }
         catch (GrpcReflectionUnavailableException ex) { return Err(ex.Message); }

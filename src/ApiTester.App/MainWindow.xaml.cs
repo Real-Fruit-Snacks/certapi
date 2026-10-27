@@ -217,6 +217,18 @@ public partial class MainWindow : Window
 
     // The virtual screen can start left of or above the primary monitor (a second screen on that
     // side), so its origin is negative there; a window saved on it is still on screen.
+    /// <summary>Whether a tab still targets the saved request it came from: same method and path,
+    /// and the same website — or none saved, since a saved request without a website takes it from
+    /// the tab (typed in, or filled from the collection's defaults).</summary>
+    private static bool TargetsSavedEndpoint(RequestModel saved, RequestModel tab)
+    {
+        static string Site(string? url) => (url ?? "").Trim().TrimEnd('/');
+        return string.Equals(saved.Method, tab.Method, StringComparison.OrdinalIgnoreCase) &&
+               string.Equals((saved.Path ?? "").Trim(), (tab.Path ?? "").Trim(), StringComparison.Ordinal) &&
+               (string.IsNullOrWhiteSpace(saved.BaseUrl) ||
+                string.Equals(Site(saved.BaseUrl), Site(tab.BaseUrl), StringComparison.OrdinalIgnoreCase));
+    }
+
     private static bool IsOnScreen(double l, double t) =>
         l >= SystemParameters.VirtualScreenLeft - 50 && t >= SystemParameters.VirtualScreenTop - 50 &&
         l < SystemParameters.VirtualScreenLeft + SystemParameters.VirtualScreenWidth - 100 &&
@@ -1453,7 +1465,7 @@ public partial class MainWindow : Window
         // The saved entry this tab came from, found the way the send path finds it to record a result.
         var node = ActiveRequest is { SourceCollectionId: { } srcId } active &&
                    FindNodeById(srcId) is { IsFolder: false, Request: { } saved } leaf &&
-                   saved.Method == active.Method && saved.EffectiveUrl() == active.EffectiveUrl()
+                   TargetsSavedEndpoint(saved, active)
             ? leaf
             : null;
 
@@ -2527,7 +2539,7 @@ public partial class MainWindow : Window
             // tab still targets that saved endpoint (same method and URL).
             if (model.SourceCollectionId is { } srcId &&
                 FindNodeById(srcId) is { IsFolder: false, Request: { } saved } srcNode &&
-                saved.Method == model.Method && saved.EffectiveUrl() == model.EffectiveUrl())
+                TargetsSavedEndpoint(saved, model))
                 srcNode.RecordResult(response.Error is null ? response.StatusCode : null, DateTime.UtcNow,
                                      KnownGoodSnapshot(response));
             // First successful send from a collection whose root has no defaults yet: remember
@@ -2536,7 +2548,7 @@ public partial class MainWindow : Window
             // website, or a tab pointed elsewhere, must not become every sibling's default.
             if (response.IsSuccess && model.SourceCollectionId is { } rememberId &&
                 FindNodeById(rememberId) is { IsFolder: false, Request: { } rememberSaved } rememberLeaf &&
-                rememberSaved.Method == model.Method && rememberSaved.EffectiveUrl() == model.EffectiveUrl() &&
+                TargetsSavedEndpoint(rememberSaved, model) &&
                 CollectionDefaults.RootOf(_collections, rememberLeaf) is { } rootFolder &&
                 string.IsNullOrWhiteSpace(rootFolder.DefaultBaseUrl) &&
                 string.IsNullOrEmpty(rootFolder.DefaultCertThumbprint) &&

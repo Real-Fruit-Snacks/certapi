@@ -23,8 +23,8 @@ public static class UpdateCommand
           --no-app          Leave the desktop app alone
 
         Runs through the same transport options as every other command, so a corporate proxy, a
-        PAC file or a private root works here too:
-        """ + "\n" + TransportFlags.Help + "\n" + """
+        PAC file or a private root works here too.
+        """ + "\n\n" + TransportFlags.Help + "\n\n" + """
         GITHUB_TOKEN or GH_TOKEN, when set, is sent to the GitHub API (not to the download) to lift
         its hourly limit for anonymous callers.
 

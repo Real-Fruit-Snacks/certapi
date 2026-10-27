@@ -100,7 +100,7 @@ The point of `mcp` is to give an agent **capability without keys**:
 | `--cert-pin <pin>` | Smart-card or HSM PIN, supplied ahead of the prompt (or `CERTAPI_CERT_PIN`) |
 | `--allow <host>` | Allowed upstream host (repeatable) |
 | `--insecure` | Ignore upstream server-certificate errors (internal CAs — certificate authorities) |
-| `--timeout <seconds>` | Deadline for `send_request`, `grpc_list` and `grpc_call` (default 100; a saved request keeps its own saved timeout). A gRPC call past it returns a tool error instead of holding up later calls |
+| `--timeout <seconds>` | Deadline for `send_request`, `grpc_list` and `grpc_call` (default 100; a saved request keeps its own saved timeout). A gRPC call past it returns a tool error instead of holding up later calls; a stream cut off this way still lists the messages it delivered |
 | `--workspace <file>` | Load saved requests / environments / chains from a workspace file (read once at launch). Without it, the app's live `state.json` is read |
 | `--no-auto-token` | Don't capture/reuse bearer tokens across the session |
 | `--protoset <file>` | Compiled descriptor set for `grpc_list`/`grpc_call` against a server without reflection — pinned at launch; the agent cannot name files |

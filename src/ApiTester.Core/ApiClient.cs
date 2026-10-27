@@ -1222,13 +1222,22 @@ internal sealed class OriginBoundCredentials(ICredentials inner) : ICredentials
 {
     public static readonly AsyncLocal<string?> Origin = new();
 
-    // Windows integrated authentication only. A Basic (or Digest) challenge would otherwise be
-    // answered with the domain password — base64 in the clear on http — by whoever asked for it.
-    private static readonly HashSet<string> IntegratedSchemes = new(StringComparer.OrdinalIgnoreCase) { "Negotiate", "NTLM", "Kerberos" };
-
     public NetworkCredential? GetCredential(Uri uri, string authType) =>
-        IntegratedSchemes.Contains(authType) &&
+        IntegratedOnlyCredentials.IsIntegrated(authType) &&
         Origin.Value is { } origin && string.Equals(origin, ApiClient.OriginKeyOf(uri), StringComparison.OrdinalIgnoreCase)
             ? inner.GetCredential(uri, authType)
             : null;
+}
+
+/// <summary>Windows credentials that answer only Windows integrated authentication. A Basic (or
+/// Digest) challenge would otherwise be answered with the domain password — base64 in the clear on
+/// http — by whichever server asked for it.</summary>
+internal sealed class IntegratedOnlyCredentials(ICredentials inner) : ICredentials
+{
+    private static readonly HashSet<string> IntegratedSchemes = new(StringComparer.OrdinalIgnoreCase) { "Negotiate", "NTLM", "Kerberos" };
+
+    public static bool IsIntegrated(string authType) => IntegratedSchemes.Contains(authType);
+
+    public NetworkCredential? GetCredential(Uri uri, string authType) =>
+        IsIntegrated(authType) ? inner.GetCredential(uri, authType) : null;
 }

@@ -23,7 +23,7 @@ public partial class App : Application
         base.OnStartup(e);
         // What an update left behind (the previous exe, renamed because it was running) goes now.
         ReleaseUpdater.CleanUpPrevious(Environment.ProcessPath);
-        ApplyTheme(AppState.Load().Theme);
+        ApplyTheme(SavedTheme());
         DispatcherUnhandledException += OnUnhandledUiException;
     }
 
@@ -51,6 +51,14 @@ public partial class App : Application
 
     /// <summary>Apply a theme by name. "Light" (case-insensitive) merges the light palette overlay
     /// over the base dark palette; anything else removes the overlay and reverts to dark.</summary>
+    /// <summary>The saved theme, read without side effects: an unreadable workspace is reported (and
+    /// kept) once, by the main window's own load, not here.</summary>
+    private static string? SavedTheme()
+    {
+        try { return System.IO.File.Exists(AppState.DefaultPath) ? AppState.LoadFrom(AppState.DefaultPath).Theme : null; }
+        catch (Exception) { return null; }
+    }
+
     public void ApplyTheme(string? theme)
     {
         bool light = string.Equals(theme, "Light", StringComparison.OrdinalIgnoreCase);

@@ -342,12 +342,18 @@ public class ServeWindowsAuthTests
     [Fact]
     public void The_gateway_handler_carries_the_credentials_and_preauthenticates()
     {
+        // Wrapped so that they answer Negotiate/NTLM only, never a Basic or Digest challenge.
+        var upstream = new Uri("https://upstream.example/");
         using var sso = MtlsGateway.CreateHandler(null, true, null, null, new WindowsAuthOptions(true));
-        Assert.Same(CredentialCache.DefaultCredentials, sso.Credentials);
+        var ssoCreds = Assert.IsType<IntegratedOnlyCredentials>(sso.Credentials);
+        Assert.Same(CredentialCache.DefaultCredentials.GetCredential(upstream, "Negotiate"), ssoCreds.GetCredential(upstream, "Negotiate"));
+        Assert.Null(ssoCreds.GetCredential(upstream, "Basic"));
         Assert.True(sso.PreAuthenticate);
 
         using var explicitCreds = MtlsGateway.CreateHandler(null, true, null, null, WindowsAuthOptions.FromCredentials(@"CORP\matt", "pw"));
-        var cred = Assert.IsType<NetworkCredential>(explicitCreds.Credentials);
+        var wrapped = Assert.IsType<IntegratedOnlyCredentials>(explicitCreds.Credentials);
+        Assert.Null(wrapped.GetCredential(upstream, "Basic"));
+        var cred = wrapped.GetCredential(upstream, "NTLM")!;
         Assert.Equal("matt", cred.UserName);
         Assert.Equal("CORP", cred.Domain);
         Assert.Equal("pw", cred.Password);

@@ -193,6 +193,9 @@ public sealed class ReleaseUpdater
         try { if (File.Exists(path)) File.Delete(path); } catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
     }
 
+    /// <summary>How old a leftover <c>.new</c> download must be before it is taken as abandoned.</summary>
+    internal static readonly TimeSpan StaleDownload = TimeSpan.FromMinutes(10);
+
     /// <summary>Removes what an earlier update left beside <paramref name="exe"/>. Called on every
     /// start of either program, so it must cost nothing when there is nothing to do and never fail.</summary>
     public static void CleanUpPrevious(string? exe)
@@ -203,10 +206,18 @@ public sealed class ReleaseUpdater
         foreach (var asset in new[] { CliAsset, AppAsset })
         {
             // .old, the .old-<id> copies moved aside while still running, and a .new left by an
-            // update that stopped half way.
+            // update that stopped half way — only a stale one: a fresh .new may be an update in
+            // progress in the other program, between writing the download and moving it into place.
             string[] leftovers;
-            try { leftovers = Directory.GetFiles(dir, asset + ".old*").Append(Path.Combine(dir, asset + ".new")).ToArray(); }
+            try { leftovers = Directory.GetFiles(dir, asset + ".old*"); }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { continue; }
+            string pending = Path.Combine(dir, asset + ".new");
+            try
+            {
+                if (File.Exists(pending) && DateTime.UtcNow - File.GetLastWriteTimeUtc(pending) > StaleDownload)
+                    leftovers = leftovers.Append(pending).ToArray();
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
             foreach (var path in leftovers)
             {
                 try { if (File.Exists(path)) File.Delete(path); } catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }

@@ -10,17 +10,21 @@ Console.CancelKeyPress += (_, e) =>
     cts.Cancel();
 };
 
-// UTF-8 both ways on Windows, whose console otherwise reads and writes the OEM code page: an MCP
-// client's {"name":"Zoë"} arrived as "Zo├½", and `send --pretty > out.json` wrote cp437 bytes.
-// The code pages belong to the console window, not to this process, so they are put back after.
+// UTF-8 on Windows, whose console otherwise reads and writes the OEM code page: an MCP client's
+// {"name":"Zoë"} arrived as "Zo├½", and `send --pretty > out.json` wrote cp437 bytes. Input is
+// switched only when it is piped: typed input through the UTF-8 code page turns non-ASCII keys
+// into NULs on older Windows 10 consoles. The code pages belong to the console window, not to
+// this process, so they are put back after.
 var (inputBefore, outputBefore) = (Console.InputEncoding, Console.OutputEncoding);
+bool inputSwitched = false, outputSwitched = false;
 if (OperatingSystem.IsWindows())
 {
-    try
+    if (Console.IsInputRedirected)
     {
-        Console.InputEncoding = new System.Text.UTF8Encoding(false);
-        Console.OutputEncoding = new System.Text.UTF8Encoding(false);
+        try { Console.InputEncoding = new System.Text.UTF8Encoding(false); inputSwitched = true; }
+        catch (IOException) { /* no console to configure */ }
     }
+    try { Console.OutputEncoding = new System.Text.UTF8Encoding(false); outputSwitched = true; }
     catch (IOException) { /* no console to configure */ }
 }
 try
@@ -32,7 +36,7 @@ finally
 {
     if (OperatingSystem.IsWindows())
     {
-        try { Console.InputEncoding = inputBefore; Console.OutputEncoding = outputBefore; }
-        catch (IOException) { }
+        try { if (inputSwitched) Console.InputEncoding = inputBefore; } catch (IOException) { }
+        try { if (outputSwitched) Console.OutputEncoding = outputBefore; } catch (IOException) { }
     }
 }

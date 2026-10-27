@@ -287,7 +287,7 @@ public static class RunCommand
         else
         {
             try { rows = DataSet.Load(dataFile).Cast<IReadOnlyDictionary<string, string>?>().ToList(); }
-            catch (Exception ex) when (ex is IOException or System.Text.Json.JsonException or UnauthorizedAccessException)
+            catch (Exception ex) when (ex is IOException or InvalidDataException or System.Text.Json.JsonException or UnauthorizedAccessException)
             { throw new CliDataException($"Could not read data file '{dataFile}': {ex.Message}"); }
             if (rows.Count == 0) throw new CliDataException($"The data file '{dataFile}' has no rows.");
         }

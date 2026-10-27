@@ -38,18 +38,18 @@ All notable changes to this project are documented here. The format follows
   file beside the old one and moves it into place, so an interrupted save never leaves half a file.
 - The release workflow builds the tag it names on a manual run, and stops when a project's
   `<Version>` does not match the tag.
-- `send -d` and `--data-file` imply POST unless `-X` is given, as in curl (a GET with a body was sent).
+- `send -d`, `send --data-file` and `bench -d` imply POST unless `-X` is given, as in curl (a GET with a body was sent).
 - A configuration field of the wrong JSON type (`"timeout": "60"`, `"insecure": "true"`) is an error
   naming the field; it used to be ignored without a word, leaving the default in force.
-- On Windows the command line reads and writes UTF-8 at the console (an MCP client's non-ASCII
-  input arrived mangled, and `send --pretty > file` wrote the OEM code page); the console's own
-  code pages are put back on exit.
+- On Windows the command line writes UTF-8 at the console, and reads it from piped input (an MCP
+  client's non-ASCII input arrived mangled, and `send --pretty > file` wrote the OEM code page);
+  typed input keeps the console's code page, and the code pages are put back on exit.
 - A header name the HTTP stack cannot send (a space, an accent) fails the request with a message
   instead of being dropped. A URL that is not http(s) fails that one request instead of ending the
   whole run. `import openapi` says plainly that YAML must be converted to JSON first.
 - `grpc call` on a streaming method reads piped stdin only; at a terminal give the messages with
   `-d`. MCP's `grpc_list` and `grpc_call` have the `--timeout` deadline. `doctor` bounds the TLS
-  handshake (`--connect-timeout`, else 30 s) and the HTTP answer (100 s).
+  handshake (30 s, or `--connect-timeout` when longer) and the HTTP answer (100 s).
 - `connections`, `update` and `mcp --help` list every certificate and transport option they take,
   so completion offers them.
 
@@ -73,9 +73,10 @@ All notable changes to this project are documented here. The format follows
 - OpenAPI exports wrote header and query secrets as examples. Vault notes kept credential fields
   in bodies. A doctor note for an unparseable URL put its password in the title.
 - Windows integrated credentials answered a Basic or Digest challenge, sending the domain password
-  base64-encoded. They now answer only Negotiate and NTLM.
+  base64-encoded. They now answer only Negotiate and NTLM, on `send`/`run` and through the
+  gateway's `--windows-auth` alike.
 - `sse` followed a redirect to another host with every typed header (`X-Api-Key`, `Cookie`) and the
-  client certificate. It now follows only same-origin redirects and refuses the rest, naming them;
+  client certificate. It now follows only same-origin redirects (and http → https on the same host) and refuses the rest, naming them;
   a WebSocket handshake answered with a redirect fails instead of following it.
 - MCP resources and `list_saved` published credentials typed into headers, query strings and
   request bodies. They are now withheld like the auth secret (`{{variable}}` references are kept).
@@ -137,15 +138,17 @@ All notable changes to this project are documented here. The format follows
 - **Data that could be lost.**
   - When the live workspace could not be read, `send` (and the app) started with an empty one, and
     the next save replaced the file with it. The unreadable file is now kept as
-    `state.json.unreadable-<time>.bak` first, and you are told.
+    `state.json.unreadable-<time>.bak` first (one copy per broken file, however often it is
+    loaded), and you are told.
   - Cookie jars held only 20 cookies per domain (.NET's default), so a jar file was cut down on its
     next save; they now hold 180 per domain. A jar is written beside the old one and moved into
     place, a read-only one is a warning rather than an error after the request was sent, and a
     hand-edited bad one is a data error (exit 3).
   - `run --md-vault` overwrote a note written in the same second.
 - **Robustness.**
-  - A `"` inside an unquoted CSV field swallowed the rest of the file into it; a non-UTF-8 data file
-    is now refused with a message instead of being read with replacement characters.
+  - A `"` inside an unquoted CSV field swallowed the rest of the file into it; a data file that is
+    neither UTF-8 nor UTF-16 with a byte-order mark is now refused with a message (exit 3) instead
+    of being read with replacement characters.
   - A HAR with `null` entries, requests or headers crashed every reader; it is now read or refused
     with a message (exit 3). A HAR entry whose method is not a method fails that entry only.
   - Postman path segments written as objects (allowed by the v2.0 schema) failed the import.

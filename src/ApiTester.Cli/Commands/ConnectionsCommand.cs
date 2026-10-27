@@ -34,7 +34,7 @@ public static class ConnectionsCommand
 
           --insecure              Ignore server certificate errors (a host pinned with
                                   `certapi trust add` needs no --insecure)
-        """ + "\n" + CliCert.HelpLines + "\n" + TransportFlags.Help + "\n" + """
+        """ + "\n" + CliCert.HelpLines + "\n\n" + TransportFlags.Help + "\n\n" + """
         Global: --debug (verbose diagnostics) and --log-file <path> work here too.
 
         Examples:

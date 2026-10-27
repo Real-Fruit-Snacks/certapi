@@ -39,8 +39,7 @@ public static class SseClient
         // client certificate to whatever host a 302 names.
         handler.AllowAutoRedirect = false;
         using var http = new HttpClient(handler, disposeHandler: true) { Timeout = Timeout.InfiniteTimeSpan };
-        var origin = new Uri(url);
-        var current = origin;
+        var current = new Uri(url);
         HttpResponseMessage response;
         for (int hops = 0; ; hops++)
         {
@@ -55,8 +54,7 @@ public static class SseClient
                 break;
             var next = location.IsAbsoluteUri ? location : new Uri(current, location);
             response.Dispose();
-            if (!string.Equals(next.Scheme, origin.Scheme, StringComparison.OrdinalIgnoreCase) ||
-                !string.Equals(next.Host, origin.Host, StringComparison.OrdinalIgnoreCase) || next.Port != origin.Port)
+            if (!SameOriginOrUpgrade(current, next))
                 throw new HttpRequestException(
                     $"The stream redirected to another origin ({next.GetLeftPart(UriPartial.Authority)}); it is not followed, because " +
                     "the request's headers and client certificate would go with it. Connect to that URL directly if it is the right one.");
@@ -109,6 +107,15 @@ public static class SseClient
                 // unknown fields are ignored per the spec
             }
         }
+    }
+
+    /// <summary>A redirect the stream follows: the same scheme, host and port, or the same host
+    /// moving from http to https (on 443 or the same port) — an upgrade, never a downgrade.</summary>
+    internal static bool SameOriginOrUpgrade(Uri from, Uri to)
+    {
+        if (!string.Equals(from.Host, to.Host, StringComparison.OrdinalIgnoreCase)) return false;
+        if (string.Equals(from.Scheme, to.Scheme, StringComparison.OrdinalIgnoreCase)) return from.Port == to.Port;
+        return from.Scheme == Uri.UriSchemeHttp && to.Scheme == Uri.UriSchemeHttps && (to.Port == 443 || to.Port == from.Port);
     }
 }
 

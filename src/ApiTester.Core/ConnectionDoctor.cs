@@ -304,8 +304,10 @@ public static class ConnectionDoctor
                 TlsPolicy.Apply(sslOptions, options);
 
                 // A listener that accepts TCP and never speaks TLS (a wrong port, a middlebox) must
-                // be reported, not waited on forever: the handshake gets --connect-timeout, or 30 s.
-                var tlsBudget = options.ConnectTimeout ?? TimeSpan.FromSeconds(30);
+                // be reported, not waited on forever. The handshake gets 30 s, or --connect-timeout
+                // when that is longer: a fail-fast connect timeout must not also cut short a
+                // smart-card PIN prompt or a revocation fetch inside the handshake.
+                var tlsBudget = options.ConnectTimeout is { } longer && longer > TimeSpan.FromSeconds(30) ? longer : TimeSpan.FromSeconds(30);
                 using var tlsDeadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
                 tlsDeadline.CancelAfter(tlsBudget);
                 try
@@ -315,7 +317,7 @@ public static class ConnectionDoctor
                     {
                         stages.Add(DoctorStage.Fail("tls", $"no TLS answer within {tlsBudget.TotalSeconds:0.#} s — the port accepted the connection but never completed a handshake",
                             clock.Elapsed - start, detail,
-                            "Something is listening that does not speak TLS here (a plain-HTTP port, the wrong service, or a device holding the connection). Check the port and scheme."));
+                            "Usually something is listening that does not speak TLS here (a plain-HTTP port, the wrong service, or a device holding the connection): check the port and scheme. Less often the handshake's own checks (a revocation download, a smart-card PIN) took that long."));
                         ssl.Dispose();
                         return new DoctorReport(url, stages);
                     }

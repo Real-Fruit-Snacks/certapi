@@ -176,9 +176,15 @@ public sealed class MockServer : IAsyncDisposable
             {
                 TcpClient client;
                 // A connection reset while it waited in the backlog (a scanner, a client that gave
-                // up) is that connection's problem; the server keeps accepting.
+                // up) is that connection's problem; the server keeps accepting. Any other accept
+                // error (out of file handles) is retried after a pause, not in a tight loop.
                 try { client = await _listener.AcceptTcpClientAsync(_cts.Token); }
-                catch (SocketException) when (!_cts.IsCancellationRequested) { continue; }
+                catch (SocketException ex) when (!_cts.IsCancellationRequested)
+                {
+                    if (ex.SocketErrorCode is not (SocketError.ConnectionReset or SocketError.ConnectionAborted))
+                        await Task.Delay(100, _cts.Token);
+                    continue;
+                }
                 var handler = Task.Run(async () =>
                 {
                     try { await HandleAsync(client, _cts.Token); }

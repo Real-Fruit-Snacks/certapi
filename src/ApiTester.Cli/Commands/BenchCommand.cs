@@ -33,10 +33,10 @@ public static class BenchCommand
                                   close' makes every request pay a fresh handshake
 
         Request:
-          -X, --method <m>        HTTP method (default GET)
+          -X, --method <m>        HTTP method (default GET, or POST with -d)
           -H, --header "k: v"     Add a header (repeatable)
-          -d, --data <body>       Request body; -d @file reads it from a file (sent byte for byte
-                                  when it is not UTF-8 text)
+          -d, --data <body>       Request body (implies POST unless -X); -d @file reads it from a
+                                  file (sent byte for byte when it is not UTF-8 text)
           --content-type <ct>     Body content type (default application/json)
           --bearer <token>        Authorization: Bearer …
           --timeout <seconds>     Per-request timeout (default 100)
@@ -208,7 +208,7 @@ public static class BenchCommand
             string? body = dataSource?.Text is { } text ? R(text) : null;
             request = new ApiRequest
             {
-                Method = new HttpMethod((methodOpt ?? "GET").ToUpperInvariant()),
+                Method = new HttpMethod((methodOpt ?? (dataSource is not null ? "POST" : "GET")).ToUpperInvariant()),
                 Url = target,
                 Headers = headerPairs,
                 Body = body,

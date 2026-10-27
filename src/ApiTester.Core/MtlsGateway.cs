@@ -283,9 +283,9 @@ public sealed class MtlsGateway : IDisposable
         // does. Connection-bound, which is why it lives on the handler and not on a request.
         if (windowsAuth is { } wa)
         {
-            handler.Credentials = wa.UseDefaultCredentials
+            handler.Credentials = new IntegratedOnlyCredentials(wa.UseDefaultCredentials
                 ? CredentialCache.DefaultCredentials
-                : new NetworkCredential(wa.Username, wa.Password, wa.Domain);
+                : new NetworkCredential(wa.Username, wa.Password, wa.Domain));
             handler.PreAuthenticate = true;
         }
 

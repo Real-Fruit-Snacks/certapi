@@ -13,12 +13,16 @@ public sealed class CertificateStoreService
         all.AddRange(ReadStore(StoreLocation.CurrentUser));
         if (includeLocalMachine)
         {
-            // A certificate imported into both stores is one certificate: listed once (the
-            // CurrentUser copy), so --cert <thumbprint> --store LocalMachine is not "ambiguous".
-            var seen = new HashSet<string>(all.Cast<X509Certificate2>().Select(c => c.Thumbprint), StringComparer.OrdinalIgnoreCase);
+            // A certificate imported into both stores is one certificate: listed once, so
+            // --cert <thumbprint> --store LocalMachine is not "ambiguous". The CurrentUser copy is
+            // kept unless only the LocalMachine one has the private key (a .cer imported for the
+            // user, the .pfx for the machine) — dropping that copy would drop the certificate.
+            var byThumbprint = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            for (int i = 0; i < all.Count; i++) byThumbprint.TryAdd(all[i].Thumbprint, i);
             foreach (var c in ReadStore(StoreLocation.LocalMachine))
             {
-                if (seen.Add(c.Thumbprint)) all.Add(c);
+                if (!byThumbprint.TryGetValue(c.Thumbprint, out int at)) { byThumbprint[c.Thumbprint] = all.Count; all.Add(c); }
+                else if (!all[at].HasPrivateKey && c.HasPrivateKey) { var userCopy = all[at]; all[at] = c; userCopy.Dispose(); }
                 else c.Dispose();
             }
         }

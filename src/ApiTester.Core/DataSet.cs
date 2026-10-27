@@ -11,10 +11,16 @@ public static class DataSet
     public static IReadOnlyList<IReadOnlyDictionary<string, string>> Load(string path)
     {
         if (!File.Exists(path)) throw new FileNotFoundException($"Data file not found: {path}");
-        // UTF-8 only, and said so: Excel's "CSV (Comma delimited)" is Windows-1252, and reading it
-        // as UTF-8 turned Müller into M\uFFFDller on the wire with nothing to show for it.
+        // UTF-8 (with or without a byte-order mark) or BOM-marked UTF-16, as PowerShell writes them;
+        // anything else is refused and said so: Excel's "CSV (Comma delimited)" is Windows-1252, and
+        // reading it as UTF-8 turned Müller into M\uFFFDller on the wire with nothing to show for it.
         string text;
-        try { text = new UTF8Encoding(false, throwOnInvalidBytes: true).GetString(File.ReadAllBytes(path)); }
+        try
+        {
+            using var reader = new StreamReader(path, new UTF8Encoding(false, throwOnInvalidBytes: true),
+                detectEncodingFromByteOrderMarks: true);
+            text = reader.ReadToEnd();
+        }
         catch (DecoderFallbackException)
         {
             throw new InvalidDataException($"{path} is not UTF-8 text. Save it as UTF-8 (in Excel: \"CSV UTF-8 (Comma delimited)\").");
@@ -64,9 +70,10 @@ public static class DataSet
                 }
                 else sb.Append(ch);
             }
-            // A quote opens a quoted field only at the start of one; elsewhere (5" screen) it is
-            // just a character, as in RFC 4180 and every spreadsheet.
-            else if (ch == '"' && sb.Length == 0 && !fieldWasQuoted) inQuotes = fieldWasQuoted = true;
+            // A quote opens a quoted field only at the start of one, after any spaces (a
+            // hand-written row like  1, "x,y"); elsewhere (5" screen) it is just a character,
+            // as in RFC 4180 and every spreadsheet.
+            else if (ch == '"' && !fieldWasQuoted && IsBlank(sb)) { sb.Clear(); inQuotes = fieldWasQuoted = true; }
             else if (ch == ',') { fields.Add(sb.ToString()); sb.Clear(); fieldWasQuoted = false; }
             else if (ch is '\r' or '\n')
             {
@@ -104,5 +111,11 @@ public static class DataSet
             rows.Add(row);
         }
         return rows;
+    }
+
+    private static bool IsBlank(StringBuilder sb)
+    {
+        for (int i = 0; i < sb.Length; i++) if (sb[i] is not (' ' or '\t')) return false;
+        return true;
     }
 }

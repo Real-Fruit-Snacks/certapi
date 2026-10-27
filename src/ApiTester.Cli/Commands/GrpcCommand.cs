@@ -756,9 +756,8 @@ public static class GrpcCommand
             try { return CliWorkspace.Load(null, services.LiveStatePath, stderr); }
             catch (CliDataException ex)
             {
-                string? kept = AppState.PreserveUnreadable(services.LiveStatePath);
-                stderr.WriteLine($"warning: could not read the live state ({ex.Message}) — continuing without saved tokens/environments" +
-                                 (kept is null ? "" : $"; the file was kept as {kept}"));
+                // grpc never saves the state, so the unreadable file is left exactly as it is.
+                stderr.WriteLine($"warning: could not read the live state ({ex.Message}) — continuing without saved tokens/environments");
                 return new AppState();
             }
         }

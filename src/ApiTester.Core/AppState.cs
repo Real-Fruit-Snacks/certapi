@@ -98,12 +98,21 @@ public sealed class AppState
 
     /// <summary>Copies a workspace file that exists but could not be loaded to
     /// <c>&lt;file&gt;.unreadable-&lt;time&gt;.bak</c> before anything can save over it. Returns the
-    /// copy's path, or null when there was no file (or it could not be copied).</summary>
+    /// copy's path — an earlier copy with the same contents when there is one, so repeated loads of
+    /// the same broken file keep one copy — or null when there was no file (or it could not be copied).</summary>
     public static string? PreserveUnreadable(string path)
     {
         try
         {
             if (!File.Exists(path)) return null;
+            byte[] content = File.ReadAllBytes(path);
+            string? dir = Path.GetDirectoryName(Path.GetFullPath(path));
+            if (dir is not null)
+                foreach (string earlier in Directory.EnumerateFiles(dir, Path.GetFileName(path) + ".unreadable-*.bak"))
+                {
+                    try { if (new FileInfo(earlier).Length == content.Length && File.ReadAllBytes(earlier).AsSpan().SequenceEqual(content)) return earlier; }
+                    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+                }
             string copy = $"{path}.unreadable-{DateTime.Now:yyyyMMdd-HHmmss}.bak";
             File.Copy(path, copy, overwrite: false);
             return copy;

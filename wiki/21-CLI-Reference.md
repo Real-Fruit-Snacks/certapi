@@ -653,9 +653,9 @@ Accepts the [certificate](#certificate-options), [transport](#transport-options)
 
 | Option | Default | What it does |
 |---|---|---|
-| `-X, --method <m>` | `GET` | HTTP method |
+| `-X, --method <m>` | `GET` (`POST` with `-d`) | HTTP method |
 | `-H, --header "k: v"` | none | Add a header. Repeatable |
-| `-d, --data <body>` | none | Request body. `-d @file` reads it from a file, byte for byte when it is not text |
+| `-d, --data <body>` | none | Request body. `-d @file` reads it from a file, byte for byte when it is not text. Implies POST unless `-X` says otherwise |
 | `--content-type <ct>` | `application/json` (`application/octet-stream` for a binary `-d @file`) | Body content type |
 | `--bearer <token>` | none | `Authorization: Bearer …` |
 | `--timeout <seconds>` | `100` | Per-request timeout |
@@ -1171,8 +1171,8 @@ Accepts the [certificate](#certificate-options) and
 - On a DNS or TCP failure, **whether the internet is reachable at all**, distinguishing a captive
   portal from a host that needs the VPN.
 
-**Every stage is bounded.** TCP and the TLS handshake get `--connect-timeout` (the handshake 30 s
-when it is not given), the HTTP answer 100 s: a port that accepts the connection and never speaks
+**Every stage is bounded.** TCP gets `--connect-timeout`, the TLS handshake 30 s (or
+`--connect-timeout` when that is longer), the HTTP answer 100 s: a port that accepts the connection and never speaks
 TLS is reported as such rather than waited on. `--tls-min` and `--sni` apply to the handshake as
 they would to a send.
 
