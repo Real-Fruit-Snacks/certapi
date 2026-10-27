@@ -32,7 +32,7 @@ public class UpdateCommandTests
     {
         string dl = $"http://127.0.0.1:{port}/dl";
         object Asset(string name, string body) => digests
-            ? new { name, browser_download_url = $"{dl}/{name}", size = body.Length, digest = "sha256:" + Sha(body) }
+            ? new { name, browser_download_url = $"{dl}/{name}", size = body.Length, digest = (string?)("sha256:" + Sha(body)) }
             : new { name, browser_download_url = $"{dl}/{name}", size = body.Length, digest = (string?)null };
         var assets = new List<object> { Asset("certapi.exe", NewCli), Asset("ApiTester.App.exe", NewApp) };
         if (sums) assets.Add(Asset("SHA256SUMS.txt", $"{Sha(NewCli)}  certapi.exe\n{Sha(NewApp)} *ApiTester.App.exe\n"));
