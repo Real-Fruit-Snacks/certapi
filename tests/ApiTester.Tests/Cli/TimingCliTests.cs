@@ -6,6 +6,12 @@ using ApiTester.Core;
 
 namespace ApiTester.Tests.Cli;
 
+/// <summary>The timer listens to the whole process's networking events, so a test running beside it
+/// would add its own requests to the measurement. Alone, it measures exactly the one send.</summary>
+[CollectionDefinition(nameof(TimingCliTests), DisableParallelization = true)]
+public sealed class TimingCollection { }
+
+[Collection(nameof(TimingCliTests))]
 public class TimingCliTests
 {
     private static (int Code, string Out, string Err) Run(params string[] args)
