@@ -14,6 +14,10 @@ namespace ApiTester.App;
 public partial class SessionCaptureWindow : Window
 {
     private readonly AppState _state;
+    // Tokens seen while browsing are held here and stored only on Finish: Cancel means none of
+    // this session is kept, and a token in the live state would be attached to later sends.
+    private readonly AppState _pending = new();
+    private bool _finishing;
     private readonly SessionCaptureController _controller;
     private readonly List<ObservedCall> _calls = new();
     private readonly HashSet<string> _origins = new();
@@ -70,7 +74,7 @@ public partial class SessionCaptureWindow : Window
     // app does on normal sends — and count it for the live panel.
     private void OnBodyForToken(byte[] body, string? contentType, IReadOnlyList<KeyValuePair<string, string>> headers, string url)
     {
-        if (TokenService.Capture(_state, url, body, contentType, headers) is not null) { _tokenCount++; RefreshSummary(); }
+        if (TokenService.Capture(_pending, url, body, contentType, headers) is not null) { _tokenCount++; RefreshSummary(); }
     }
 
     private void RefreshSummary() =>
@@ -80,23 +84,46 @@ public partial class SessionCaptureWindow : Window
 
     private async void Finish_Click(object sender, RoutedEventArgs e)
     {
-        foreach (var origin in _origins.ToList())
+        // Once: a second click (or Cancel) while the cookies are being read must not finish twice.
+        if (_finishing) return;
+        _finishing = true;
+        FinishButton.IsEnabled = false;
+        try
         {
-            var cookies = await _controller.ReadCookiesAsync(origin);
-            if (cookies.Count > 0) CookieService.Capture(_state, origin, cookies);
-        }
+            var cookiesByOrigin = new List<(string Origin, IReadOnlyList<SessionCookie> Cookies)>();
+            foreach (var origin in _origins.ToList())
+            {
+                var cookies = await _controller.ReadCookiesAsync(origin);
+                if (cookies.Count > 0) cookiesByOrigin.Add((origin, cookies));
+            }
+            if (!IsLoaded) return;   // closed while the cookies were read: that was a Cancel
 
-        CapturedCalls = ObservedCall.Dedup(_calls);
-        if (CapturedCalls.Count > 0)
+            foreach (var (origin, cookies) in cookiesByOrigin) CookieService.Capture(_state, origin, cookies);
+            foreach (var token in _pending.SessionTokens)
+            {
+                _state.SessionTokens.RemoveAll(t => t.Origin == token.Origin);
+                _state.SessionTokens.Add(token);
+            }
+
+            CapturedCalls = ObservedCall.Dedup(_calls);
+            if (CapturedCalls.Count > 0)
+            {
+                var name = InputDialog.Show(this, "Save requests",
+                    $"Save {CapturedCalls.Count} observed call(s) as requests into a new collection named:", "captured");
+                SaveCollectionName = string.IsNullOrWhiteSpace(name) ? null : name;
+            }
+
+            _state.Save();
+            DialogResult = true;
+            Close();
+        }
+        catch (Exception ex)
         {
-            var name = InputDialog.Show(this, "Save requests",
-                $"Save {CapturedCalls.Count} observed call(s) as requests into a new collection named:", "captured");
-            SaveCollectionName = string.IsNullOrWhiteSpace(name) ? null : name;
+            if (!IsLoaded) return;
+            CaptureSummary.Text = "Could not finish the capture: " + ex.Message;
+            _finishing = false;
+            FinishButton.IsEnabled = true;
         }
-
-        _state.Save();
-        DialogResult = true;
-        Close();
     }
 
     private void AddressBox_KeyDown(object sender, KeyEventArgs e)
@@ -105,7 +132,12 @@ public partial class SessionCaptureWindow : Window
         {
             var url = NormalizeUrl(AddressBox.Text.Trim());
             AddressBox.Text = url;
-            _controller.Navigate(url);
+            // WebView2 throws on an address it cannot parse ("https://my app"): say so instead.
+            try { _controller.Navigate(url); }
+            catch (Exception ex) when (ex is ArgumentException or UriFormatException or System.Runtime.InteropServices.COMException)
+            {
+                CaptureSummary.Text = $"That is not an address the browser can open: {ex.Message}";
+            }
         }
     }
 

@@ -15,7 +15,12 @@ public partial class CollectionDefaultsDialog : Window
         IReadOnlyList<(string Label, string? Thumbprint)> certOptions, IReadOnlyList<string> savedBaseUrls)
     {
         InitializeComponent();
-        _certOptions = certOptions;
+        // A saved certificate that is not in the list now (removed from the store, a smart card not
+        // inserted) stays selectable by its thumbprint, so saving only a new base URL keeps it.
+        var options = certOptions.ToList();
+        if (!string.IsNullOrEmpty(currentThumbprint) && !options.Any(o => o.Thumbprint == currentThumbprint))
+            options.Add(($"— not in the certificate store: {currentThumbprint} —", currentThumbprint));
+        _certOptions = options;
         HeaderText.Text = $"Defaults for “{folderName}”";
         BaseUrlBox.Text = currentBaseUrl ?? "";
 
@@ -24,8 +29,8 @@ public partial class CollectionDefaultsDialog : Window
         SavedCombo.ItemsSource = saved;
         SavedCombo.SelectedIndex = 0;
 
-        CertCombo.ItemsSource = certOptions.Select(o => o.Label).ToList();
-        int idx = certOptions.ToList().FindIndex(o => o.Thumbprint == currentThumbprint);
+        CertCombo.ItemsSource = _certOptions.Select(o => o.Label).ToList();
+        int idx = _certOptions.ToList().FindIndex(o => o.Thumbprint == currentThumbprint);
         CertCombo.SelectedIndex = idx >= 0 ? idx : 0;
     }
 
@@ -46,7 +51,7 @@ public partial class CollectionDefaultsDialog : Window
         if (dlg._cleared) return (true, null, null);
         string? baseUrl = string.IsNullOrWhiteSpace(dlg.BaseUrlBox.Text) ? null : dlg.BaseUrlBox.Text.Trim();
         int i = dlg.CertCombo.SelectedIndex;
-        string? thumb = i >= 0 && i < certOptions.Count ? certOptions[i].Thumbprint : null;
+        string? thumb = i >= 0 && i < dlg._certOptions.Count ? dlg._certOptions[i].Thumbprint : null;
         return (true, baseUrl, thumb);
     }
 

@@ -87,7 +87,7 @@ public class WsdlImportTests
         Assert.Contains("element GetOrder", body);
         Assert.Contains("fill in from the schema", body, StringComparison.OrdinalIgnoreCase);
         // Document/literal: the element is the body's content, not wrapped in the operation again.
-        Assert.Equal(1, System.Text.RegularExpressions.Regex.Matches(body, "<tns:GetOrder>").Count);
+        Assert.Single(System.Text.RegularExpressions.Regex.Matches(body, "<tns:GetOrder>"));
         Assert.DoesNotContain("<GetOrder>", body);
     }
 

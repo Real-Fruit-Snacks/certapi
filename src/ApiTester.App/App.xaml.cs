@@ -24,6 +24,22 @@ public partial class App : Application
         // What an update left behind (the previous exe, renamed because it was running) goes now.
         ReleaseUpdater.CleanUpPrevious(Environment.ProcessPath);
         ApplyTheme(AppState.Load().Theme);
+        DispatcherUnhandledException += OnUnhandledUiException;
+    }
+
+    /// <summary>A bug in one handler must not take the workspace down with it: the error is shown,
+    /// the workspace is saved, and the app keeps running. Without this, any exception escaping a
+    /// UI event ends the process before the window's own save on close ever runs.</summary>
+    private void OnUnhandledUiException(object sender, System.Windows.Threading.DispatcherUnhandledExceptionEventArgs e)
+    {
+        e.Handled = true;
+        try { (MainWindow as MainWindow)?.SaveAfterUnexpectedError(); } catch { /* nothing more to try */ }
+        try
+        {
+            MessageBox.Show(MainWindow, $"Something went wrong, and the workspace was saved.\n\n{e.Exception.GetType().Name}: {e.Exception.Message}",
+                "certapi", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+        catch { /* no window to show it in */ }
     }
 
     /// <summary>Apply a theme by name. "Light" (case-insensitive) merges the light palette overlay

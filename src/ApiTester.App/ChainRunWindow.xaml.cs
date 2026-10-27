@@ -75,8 +75,20 @@ public partial class ChainRunWindow : Window
         // Stop any in-flight chain run so closing this window doesn't leave requests going out
         // after it's gone.
         _cts?.Cancel();
+        // The run still writes the shared workspace (environments, captured tokens) until it has
+        // actually stopped; closing before then would let the main window read lists the runner is
+        // changing. So the window stays until the run ends, and closes itself then.
+        if (_cts is not null)
+        {
+            e.Cancel = true;
+            _closeWhenStopped = true;
+            StatusText.Text = "Stopping…";
+            return;
+        }
         base.OnClosing(e);
     }
+
+    private bool _closeWhenStopped;
 
     private void Header_Drag(object sender, MouseButtonEventArgs e)
     {
@@ -115,10 +127,11 @@ public partial class ChainRunWindow : Window
             Debug = null
         };
 
-        var progress = new Progress<ChainRunProgress>(p =>
+        // The notes are taken when the step reports — on the runner's thread, before the next step
+        // starts writing its own — not when the report reaches the UI, by which time step N+1's
+        // "using captured token" would already be in the list and land on step N's row.
+        var progress = new NotedProgress(_noteLock, _pendingNotes, (p, notes) =>
         {
-            List<string> notes;
-            lock (_noteLock) { notes = new List<string>(_pendingNotes); _pendingNotes.Clear(); }
             int idx = p.Number - 1;
             var completed = StepRow.Completed(p.Number, _rows[idx].Label, p.Outcome, notes);
             bool wasSelected = ReferenceEquals(ResultsGrid.SelectedItem, _rows[idx]);
@@ -166,6 +179,7 @@ public partial class ChainRunWindow : Window
             StopButton.IsEnabled = false;
             _cts?.Dispose();
             _cts = null;
+            if (_closeWhenStopped) _ = Dispatcher.BeginInvoke(Close);
         }
     }
 
@@ -328,5 +342,30 @@ public partial class ChainRunWindow : Window
         var brush = new SolidColorBrush((Color)ColorConverter.ConvertFromString(hex));
         brush.Freeze();
         return brush;
+    }
+
+    /// <summary>An <see cref="IProgress{T}"/> that drains the notes written so far at the moment of
+    /// the report and hands both to the UI thread together.</summary>
+    private sealed class NotedProgress : IProgress<ChainRunProgress>
+    {
+        private readonly object _gate;
+        private readonly List<string> _notes;
+        private readonly Action<ChainRunProgress, List<string>> _onUi;
+        private readonly System.Threading.SynchronizationContext _ui;
+
+        public NotedProgress(object gate, List<string> notes, Action<ChainRunProgress, List<string>> onUi)
+        {
+            _gate = gate;
+            _notes = notes;
+            _onUi = onUi;
+            _ui = System.Threading.SynchronizationContext.Current ?? new System.Threading.SynchronizationContext();
+        }
+
+        public void Report(ChainRunProgress value)
+        {
+            List<string> taken;
+            lock (_gate) { taken = new List<string>(_notes); _notes.Clear(); }
+            _ui.Post(_ => _onUi(value, taken), null);
+        }
     }
 }

@@ -111,8 +111,20 @@ public partial class FuzzWindow : Window
         // Stop any in-flight discovery run so closing (or double-click-to-open) doesn't leave
         // probes hammering the target after the window is gone.
         _cts?.Cancel();
+        // The run still writes the shared workspace (environments, captured tokens) until it has
+        // actually stopped; closing before then would let the main window read lists the runner is
+        // changing. So the window stays until the run ends, and closes itself then.
+        if (_cts is not null)
+        {
+            e.Cancel = true;
+            _closeWhenStopped = true;
+            StatusText.Text = "Stopping…";
+            return;
+        }
         base.OnClosing(e);
     }
+
+    private bool _closeWhenStopped;
 
     private void Header_Drag(object sender, MouseButtonEventArgs e)
     {
@@ -136,10 +148,20 @@ public partial class FuzzWindow : Window
 
     private async void Run_Click(object sender, RoutedEventArgs e)
     {
-        string listText = !string.IsNullOrWhiteSpace(PasteBox.Text) ? PasteBox.Text
-            : !string.IsNullOrWhiteSpace(WordlistPathBox.Text) && System.IO.File.Exists(WordlistPathBox.Text)
-                ? System.IO.File.ReadAllText(WordlistPathBox.Text)
-                : BuiltInWordlist.Text;   // nothing supplied: fall back to the built-in starter list
+        string listText;
+        try
+        {
+            listText = !string.IsNullOrWhiteSpace(PasteBox.Text) ? PasteBox.Text
+                : !string.IsNullOrWhiteSpace(WordlistPathBox.Text) && System.IO.File.Exists(WordlistPathBox.Text)
+                    ? System.IO.File.ReadAllText(WordlistPathBox.Text)
+                    : BuiltInWordlist.Text;   // nothing supplied: fall back to the built-in starter list
+        }
+        catch (Exception ex) when (ex is System.IO.IOException or UnauthorizedAccessException)
+        {
+            // A locked or unreadable file is a message, not a crash of the whole app.
+            StatusText.Text = $"Could not read the wordlist: {ex.Message}";
+            return;
+        }
         var entries = EndpointList.Parse(listText);
         if (entries.Count == 0) { StatusText.Text = "Add a wordlist file or paste some endpoints first."; return; }
 
@@ -189,7 +211,11 @@ public partial class FuzzWindow : Window
             SaveCollectionButton.IsEnabled = report.Discovered > 0;
         }
         catch (System.OperationCanceledException) { StatusText.Text = $"Stopped. {_all.Count} probed."; }
-        finally { RunButton.IsEnabled = true; StopButton.IsEnabled = false; _cts?.Dispose(); _cts = null; }
+        finally
+        {
+            RunButton.IsEnabled = true; StopButton.IsEnabled = false; _cts?.Dispose(); _cts = null;
+            if (_closeWhenStopped) _ = Dispatcher.BeginInvoke(Close);
+        }
     }
 
     private void AddRow(FuzzResult r)

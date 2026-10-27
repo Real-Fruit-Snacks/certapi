@@ -249,6 +249,7 @@
                 <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled">
                     <ListBox x:Name="TabStrip" Style="{StaticResource TabStripList}" VerticalAlignment="Bottom"
                              SelectionChanged="TabStrip_SelectionChanged"
+                             PreviewMouseUp="TabStrip_PreviewMouseUp"
                              ItemContainerStyle="{StaticResource TabStripItem}">
                         <ListBox.ItemTemplate>
                             <DataTemplate>

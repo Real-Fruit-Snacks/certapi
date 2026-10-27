@@ -187,6 +187,15 @@ public partial class MainWindow : Window
         _state.LastBaseUrl = string.IsNullOrWhiteSpace(ActiveRequest?.BaseUrl) ? null : ActiveRequest!.BaseUrl!.Trim();
     }
 
+    /// <summary>For the app's last-resort error handler: save what the user has, as closing would.</summary>
+    internal void SaveAfterUnexpectedError()
+    {
+        try { if (ActiveRequest is { } active) CaptureControlsInto(active); }
+        catch { /* the controls may be what failed; the models still hold everything else */ }
+        CaptureStateForSave();
+        SaveState();
+    }
+
     /// <summary>Persist the workspace and surface anything the user needs to know about the write.</summary>
     // Callers write a routine confirmation to StatusText BEFORE calling this, so a rare one-time
     // notice about the user's secrets (below) wins the status line rather than losing it.
@@ -199,9 +208,12 @@ public partial class MainWindow : Window
             StatusText.Text = "Per-user encryption is unavailable on this system, so secrets were saved in the clear.";
     }
 
+    // The virtual screen can start left of or above the primary monitor (a second screen on that
+    // side), so its origin is negative there; a window saved on it is still on screen.
     private static bool IsOnScreen(double l, double t) =>
-        l >= -50 && t >= -50 &&
-        l < SystemParameters.VirtualScreenWidth - 100 && t < SystemParameters.VirtualScreenHeight - 100;
+        l >= SystemParameters.VirtualScreenLeft - 50 && t >= SystemParameters.VirtualScreenTop - 50 &&
+        l < SystemParameters.VirtualScreenLeft + SystemParameters.VirtualScreenWidth - 100 &&
+        t < SystemParameters.VirtualScreenTop + SystemParameters.VirtualScreenHeight - 100;
 
     // ---------- window chrome ----------
 
@@ -299,18 +311,33 @@ public partial class MainWindow : Window
             return;
 
         UpdateButton.IsEnabled = false;
+        // No new request while the files are being replaced: the restart would cut it off.
+        SendButton.IsEnabled = false;
+        bool closing = false;
         try
         {
             var progress = new Progress<string>(m => StatusText.Text = m);
             await AppUpdate.InstallAsync(_apiClient, release, exe!, progress);
-            StatusText.Text = $"certapi {release.Version} is installed. Restarting…";
             _restartInto = exe;
+            // A window opened meanwhile (a chain run, Discover) or a request still running is the
+            // user's work in progress: the new copy then opens when they close the app themselves.
+            if (_cts is not null || OwnedWindows.Count > 0)
+            {
+                StatusText.Text = $"certapi {release.Version} is installed. Close certapi when you are done and it reopens as the new version.";
+                return;
+            }
+            StatusText.Text = $"certapi {release.Version} is installed. Restarting…";
+            closing = true;
             Close();
         }
         catch (Exception ex)
         {
             StatusText.Text = "Update not installed: " + ex.Message;
             UpdateButton.IsEnabled = true;
+        }
+        finally
+        {
+            if (!closing) SendButton.IsEnabled = true;
         }
     }
 
@@ -395,6 +422,19 @@ public partial class MainWindow : Window
     private void CloseTab_Click(object sender, RoutedEventArgs e)
     {
         if (sender is Button { Tag: RequestTab tab }) CloseTab(tab);
+    }
+
+    /// <summary>Middle-click on a tab closes it, as Help says and as every tabbed app does.</summary>
+    private void TabStrip_PreviewMouseUp(object sender, MouseButtonEventArgs e)
+    {
+        if (e.ChangedButton != MouseButton.Middle) return;
+        var hit = e.OriginalSource as DependencyObject;
+        while (hit is not null and not ListBoxItem) hit = System.Windows.Media.VisualTreeHelper.GetParent(hit);
+        if (hit is ListBoxItem { DataContext: RequestTab tab })
+        {
+            e.Handled = true;
+            CloseTab(tab);
+        }
     }
 
     private void CloseTab(RequestTab tab)
@@ -1538,7 +1578,13 @@ public partial class MainWindow : Window
         }
     }
 
-    private async Task<bool> EnsureBrowserAsync()
+    // One start, shared: two calls that overlap while WebView2 starts (open the Rendered tab, then
+    // Reload) must not both subscribe — every page resource would then be fetched twice.
+    private Task<bool>? _browserStart;
+
+    private Task<bool> EnsureBrowserAsync() => _browserStart ??= StartBrowserAsync();
+
+    private async Task<bool> StartBrowserAsync()
     {
         if (_browserReady) return true;
         try
@@ -1557,6 +1603,7 @@ public partial class MainWindow : Window
             RenderHint.Text = "The rendered view needs the Microsoft Edge WebView2 runtime, " +
                               "which couldn't be started on this machine:\n" + ex.Message;
             RenderHint.Visibility = Visibility.Visible;
+            _browserStart = null;   // a later attempt may succeed (the runtime installed meanwhile)
             return false;
         }
     }
@@ -1997,6 +2044,16 @@ public partial class MainWindow : Window
     private void SelectCertByThumbprint(string? thumbprint)
     {
         if (string.IsNullOrEmpty(thumbprint)) { CertCombo.SelectedIndex = 0; return; }
+        // Never fall back to "no certificate" for a certificate the request names: the next save
+        // would write that over the tab's thumbprint and the request would go out without it.
+        if (!_allOptions.Any(o => o.Thumbprint == thumbprint))
+        {
+            // Not in the store any more (or not yet: a smart card not inserted) — kept, by name.
+            _allOptions.Add(new CertOption($"— not in the certificate store: {thumbprint} —", null, thumbprint));
+            ApplyCertFilter();
+        }
+        if (!_visibleOptions.Any(o => o.Thumbprint == thumbprint) && !string.IsNullOrEmpty(CertFilter.Text))
+            CertFilter.Text = "";   // the filter was hiding it; TextChanged re-applies
         int idx = _visibleOptions.FindIndex(o => o.Thumbprint == thumbprint);
         CertCombo.SelectedIndex = idx >= 0 ? idx : 0;
     }
@@ -2368,6 +2425,9 @@ public partial class MainWindow : Window
 
         var cert = SelectedCert();
         var request = BuildRequest();
+        // The tab this send belongs to. The user may switch tabs (or open and close them) while it
+        // is in flight; the answer goes to this tab, and is drawn only if it is still the one shown.
+        var sendingTab = ActiveTab;
         _cts = new CancellationTokenSource();
         SendButton.IsEnabled = false;
         SendButton.Content = "Sending…";
@@ -2386,15 +2446,23 @@ public partial class MainWindow : Window
                 transport: model.Transport.ToOptions(model.IgnoreServerCert),
                 trustServerCertificate: _trustPredicates.For(host),
                 cookies: _cookieJar, cancellationToken: _cts.Token);
-            RenderResponse(response);
-            ShowAssertionResults(model, response);
-            if (_unresolvedVars.Count > 0)
-                StatusText.Text += "   ⚠ unresolved " +
-                    string.Join(", ", _unresolvedVars.Select(v => "{{" + v + "}}"));
-            if (ActiveTab is { } tab)
+            bool stillShown = sendingTab is not null && ReferenceEquals(ActiveTab, sendingTab);
+            if (stillShown)
+            {
+                RenderResponse(response);
+                ShowAssertionResults(model, response);
+                if (_unresolvedVars.Count > 0)
+                    StatusText.Text += "   ⚠ unresolved " +
+                        string.Join(", ", _unresolvedVars.Select(v => "{{" + v + "}}"));
+            }
+            else
+            {
+                StatusText.Text = $"The response to {model.Method} {model.EffectiveUrl()} arrived on its own tab: {(response.Error is null ? response.StatusCode?.ToString() ?? "" : "error")}.";
+            }
+            if (sendingTab is { } tab)
             {
                 tab.LastResponse = response;
-                tab.LastRawText = _lastRawText;
+                tab.LastRawText = stillShown ? _lastRawText : "";
                 tab.Snapshot = BuildSnapshot(response);
                 // Each redirect was a request of its own: trace them oldest-first, ahead of the
                 // final response, so the Network view reads the way a browser's does.
@@ -2446,7 +2514,7 @@ public partial class MainWindow : Window
             UpdateTokenChip();
             if (response.Error is null && model.Captures.Count > 0)
                 ApplyCaptures(model, response);
-            AddToHistory(response);
+            AddToHistory(model, response);
         }
         finally
         {
@@ -2467,14 +2535,18 @@ public partial class MainWindow : Window
             string host = TokenService.HostOf(request.Url);
             if (!TrustService.IsTrusted(_state, host, thumb))
             {
+                // A retry resends the tab on screen, so it is offered only while that is still the
+                // tab this send came from.
+                bool canRetry = sendingTab is not null && ReferenceEquals(ActiveTab, sendingTab);
                 var c = ChoiceDialog.Show(this, "Untrusted server certificate",
-                    $"{host} presented a certificate that isn't trusted:\n{response.Connection.ServerCertificateSubject}\n{thumb}\n\nTrust it for this host and retry?",
-                    "Trust & retry", "Cancel");
+                    $"{host} presented a certificate that isn't trusted:\n{response.Connection.ServerCertificateSubject}\n{thumb}\n\n" +
+                    (canRetry ? "Trust it for this host and retry?" : "Trust it for this host?"),
+                    canRetry ? "Trust & retry" : "Trust", "Cancel");
                 if (c == DialogChoice.Primary)
                 {
                     TrustService.Trust(_state, host, thumb, response.Connection.ServerCertificateSubject);
                     SaveState();
-                    await SendRequestAsync();
+                    if (canRetry) await SendRequestAsync();
                 }
             }
         }
@@ -2655,9 +2727,8 @@ public partial class MainWindow : Window
         if (parts.Count > 0) StatusText.Text += "   •   " + string.Join("; ", parts);
     }
 
-    private void AddToHistory(ApiResponse response)
+    private void AddToHistory(RequestModel model, ApiResponse response)
     {
-        if (ActiveRequest is not { } model) return;
         var entry = model.ToHistoryEntry(response.StatusCode, BuildSnapshot(response));
         _state.History.RemoveAll(h => h.Method == entry.Method && h.EffectiveUrl == entry.EffectiveUrl);
         _state.History.Insert(0, entry);
@@ -2816,8 +2887,15 @@ public partial class MainWindow : Window
 
     private void SelectMethod(string method)
     {
+        string wanted = (method ?? "").Trim().ToUpperInvariant();
+        if (wanted.Length == 0) wanted = "GET";
         foreach (ComboBoxItem item in MethodCombo.Items)
-            if ((item.Content?.ToString() ?? "") == method) { MethodCombo.SelectedItem = item; return; }
+            if (string.Equals(item.Content?.ToString(), wanted, StringComparison.OrdinalIgnoreCase)) { MethodCombo.SelectedItem = item; return; }
+        // A method the list does not carry (PURGE, PROPFIND, from a cURL or HAR import) is added
+        // rather than leaving the previous tab's method selected — the next save would send that.
+        var added = new ComboBoxItem { Content = wanted };
+        MethodCombo.Items.Add(added);
+        MethodCombo.SelectedItem = added;
     }
 
     private void SelectContentType(string contentType)
