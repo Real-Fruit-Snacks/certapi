@@ -119,8 +119,9 @@ public static class ServeCommand
           --tls-untrust           Remove a previously trusted gateway certificate and exit
 
         Record / replay (two ends of one HAR format — capture a session live, replay it offline):
-          --record <file.har>     Append every forwarded exchange to a HAR file, written on Ctrl+C.
-                                  Secrets (Authorization, Cookie) are redacted by default
+          --record <file.har>     Record every forwarded exchange to a HAR file, written on Ctrl+C
+                                  (an existing file is replaced with this session). Credential
+                                  headers (Authorization, Cookie, tokens) are redacted by default
           --record-include-secrets   Keep the secrets in the recording (only with --record)
           --replay <file.har>     Answer from a recorded HAR without ever contacting the upstream —
                                   develop against a captured session when the real one is gone.
@@ -633,20 +634,33 @@ public static class ServeCommand
             gatewayThumb = LoopbackTlsBinding.NormalizeThumbprint(gatewayCert.Thumbprint!);
             if (replacedThumb is not null)
             {
-                Log($"the gateway certificate now also names the virtual hosts under {vhosts!.Suffix}; it was regenerated ({gatewayThumb}).");
+                Log(vhosts is not null
+                    ? $"the gateway certificate was regenerated ({gatewayThumb}): it now names the virtual hosts under {vhosts.Suffix}, or the old one was close to expiring."
+                    : $"the gateway certificate was close to expiring and was regenerated ({gatewayThumb}).");
                 var oldBinding = LoopbackTlsBinding.Describe(port);
                 if (oldBinding is not null && oldBinding.Thumbprint.Equals(LoopbackTlsBinding.NormalizeThumbprint(replacedThumb), StringComparison.OrdinalIgnoreCase))
                 {
                     // The binding is ours, to the certificate just replaced: move it along.
                     if (!LoopbackTlsBinding.IsElevated())
                         throw new CliUsageException(
-                            $"The gateway certificate was regenerated to name the virtual hosts, and 127.0.0.1:{port} is still bound to the old one. " +
+                            $"The gateway certificate was regenerated, and 127.0.0.1:{port} is still bound to the old one. " +
                             "From an elevated prompt run:\n  " + LoopbackTlsBinding.BuildDeleteCommand(port) + "\n  " +
                             LoopbackTlsBinding.BuildAddCommand(port, gatewayThumb) + "\nthen start the gateway again.");
                     LoopbackTlsBinding.Unbind(port);
                 }
-                if (!tlsTrust && GatewayCertificate.IsTrusted(LoopbackTlsBinding.NormalizeThumbprint(replacedThumb)))
-                    Log("  the old certificate is trusted in CurrentUser\\Root and the new one is not yet: add --tls-trust once.");
+                bool oldTrusted = GatewayCertificate.IsTrusted(LoopbackTlsBinding.NormalizeThumbprint(replacedThumb));
+                if (oldTrusted && tlsTrust)
+                {
+                    // Trusting the new one below: the old one goes, so roots never pile up.
+                    try
+                    {
+                        if (GatewayCertificate.Untrust(replacedThumb))
+                            Log($"removed the old gateway certificate {LoopbackTlsBinding.NormalizeThumbprint(replacedThumb)} from CurrentUser\\Root.");
+                    }
+                    catch (Exception ex) { Log($"  could not remove the old gateway certificate from CurrentUser\\Root: {ex.Message}"); }
+                }
+                else if (oldTrusted)
+                    Log("  the old certificate is trusted in CurrentUser\\Root and the new one is not yet: add --tls-trust once (it also removes the old one).");
             }
 
             if (tlsTrust)
@@ -774,6 +788,13 @@ public static class ServeCommand
             stderr.WriteLine($"removed the gateway certificate {thumb} from CurrentUser\\Root.");
         else
             stderr.WriteLine($"the gateway certificate {thumb} was not in CurrentUser\\Root; nothing to remove.");
+        // And any earlier one this tool generated and later replaced, still trusted from before.
+        foreach (var previous in GatewayCertificate.PreviousThumbprints())
+        {
+            string p = LoopbackTlsBinding.NormalizeThumbprint(previous);
+            if (!p.Equals(thumb, StringComparison.OrdinalIgnoreCase) && GatewayCertificate.Untrust(p))
+                stderr.WriteLine($"removed an earlier gateway certificate {p} from CurrentUser\\Root.");
+        }
         return ExitCodes.Ok;
     }
 
@@ -1603,7 +1624,9 @@ public static class ServeCommand
         if (s.EndsWith('k')) { mult = 1024; s = s[..^1]; }
         else if (s.EndsWith('m')) { mult = 1024 * 1024; s = s[..^1]; }
         else if (s.EndsWith('g')) { mult = 1024L * 1024 * 1024; s = s[..^1]; }
-        return long.TryParse(s, out var n) && n > 0 ? n * mult : null;
+        // A size too large to count is refused rather than wrapped into a negative limit that
+        // would answer every request 413.
+        return long.TryParse(s, out var n) && n > 0 && n <= long.MaxValue / mult ? n * mult : null;
     }
 
     private sealed class BodyTooLargeException(long limit) : Exception($"request body exceeds --max-body {limit}");

@@ -11,6 +11,7 @@ public static class GatewayCertificate
 {
     private const string PfxFileName = "gateway.pfx";
     private const string CerFileName = "gateway.cer";
+    private const string PreviousFileName = "previous-thumbprints.txt";
 
     /// <summary>%AppData%\CertApiTester\gateway-tls</summary>
     public static string DefaultDirectory =>
@@ -43,8 +44,13 @@ public static class GatewayCertificate
                 var has = DnsNames(cached);
                 bool covers = dnsNames is null || dnsNames.All(n => has.Contains(n, StringComparer.OrdinalIgnoreCase));
                 if (cached.NotAfter > DateTime.Now.AddDays(7) && covers) return cached;
-                if (!covers) { replaced = cached.Thumbprint; names.AddRange(has); }
+                // Replaced — near expiry, or missing a name: either way the caller must move a
+                // binding to the old one along, and the new one keeps every name the old one had.
+                replaced = cached.Thumbprint;
+                names.AddRange(has);
                 cached.Dispose();
+                try { File.AppendAllText(Path.Combine(dir, PreviousFileName), replaced + Environment.NewLine); }
+                catch (IOException) { /* only --tls-untrust's memory of it is lost */ }
             }
             catch
             {
@@ -97,6 +103,20 @@ public static class GatewayCertificate
         using var store = new X509Store(StoreName.Root, StoreLocation.CurrentUser);
         store.Open(OpenFlags.ReadWrite);
         store.Add(certificate);
+    }
+
+    /// <summary>Every gateway certificate this tool has generated and since replaced, newest last —
+    /// so --tls-untrust can remove a trusted one the cache no longer holds.</summary>
+    public static IReadOnlyList<string> PreviousThumbprints(string? directory = null)
+    {
+        string path = Path.Combine(directory ?? DefaultDirectory, PreviousFileName);
+        try
+        {
+            return File.Exists(path)
+                ? File.ReadAllLines(path).Select(l => l.Trim()).Where(l => l.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase).ToList()
+                : Array.Empty<string>();
+        }
+        catch (IOException) { return Array.Empty<string>(); }
     }
 
     /// <summary>Remove a certificate with this thumbprint from CurrentUser\Root; true when one was

@@ -894,7 +894,7 @@ verification off everywhere.
 | Option | Applies to | Default | What it does |
 |---|---|---|---|
 | `--thumbprint <t>` | `add` | — | Pin this exact SHA-1 thumbprint for the host. Colons, spaces and lower case are fine; it is stored as the 40 upper-case hex digits a certificate reports. Anything that is not a SHA-1 thumbprint (a SHA-256 fingerprint, say) is refused rather than stored as a pin that can never match |
-| `--ca <thumbprint>` | `add` | — | Pin the **issuer** instead of the leaf: any certificate for the host that chains to this CA is accepted. Survives the routine renewal that keeps the issuer |
+| `--ca <thumbprint>` | `add` | — | Pin the **issuer** instead of the leaf: any certificate for the host that chains to this CA is accepted. The certificate must still name the host, and every link up to the CA must be validly signed. Survives the routine renewal that keeps the issuer |
 | `--spki [<sha256>]` | `add` | — | Pin the **public key** (SPKI SHA-256, base64 or hex) instead of the leaf: survives a renewal that keeps the key. With `--from-url` and no value, the key the server presented is pinned |
 | `--from-url <https-url>` | `add` | — | Connect once, capture what the server actually presented, and pin its thumbprint — so you do not transcribe forty hex characters by hand. Exactly one of these two is required. The URL's host must be the host being pinned. Takes the [streaming transport subset](#transport-options-streaming-subset); through a proxy the TLS session is tunnelled and the certificate cannot be observed, which the command says plainly |
 | `--thumbprint <t>` | `remove` | all | Remove only this pin; omit it to remove every pin for the host |

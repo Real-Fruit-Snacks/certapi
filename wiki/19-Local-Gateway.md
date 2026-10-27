@@ -319,14 +319,15 @@ then answer from that capture when it is gone — a plane, a demo, an upstream t
 decommissioned, or a test suite that must not hit production.
 
 ```powershell
-# capture: every forwarded exchange is appended, written on Ctrl+C
+# capture: every forwarded exchange of this session, written on Ctrl+C (replacing session.har)
 certapi serve https://api.internal --port 8443 --cert "CN=My Client" --record session.har
 
 # replay: the upstream is never contacted; answers come from the file
 certapi serve https://api.internal --port 8443 --replay session.har
 ```
 
-`--record` redacts `Authorization` and `Cookie` by default, since a recording is a file people
+`--record` redacts credential headers (`Authorization`, `Cookie`, `Set-Cookie`, token and API-key
+headers) by default, since a recording is a file people
 share; `--record-include-secrets` keeps them. `--replay` matches a request the way `mock --har`
 does — method and path, query included when it disambiguates, in recorded order for a repeated
 call — and answers a path the session never saw with 404. The two flags are mutually exclusive:

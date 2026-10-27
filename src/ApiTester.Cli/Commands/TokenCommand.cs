@@ -69,8 +69,12 @@ public static class TokenCommand
         string? tokenUrl = args.Value("--token-url");
         string? clientId = args.Value("--client-id");
         string? clientSecret = args.Value("--client-secret");
-        var clientAuth = string.Equals(args.Value("--client-auth"), "basic", StringComparison.OrdinalIgnoreCase)
-            ? OAuthClientAuth.Basic : OAuthClientAuth.Body;
+        var clientAuth = args.Value("--client-auth")?.Trim().ToLowerInvariant() switch
+        {
+            null or "body" => OAuthClientAuth.Body,
+            "basic" => OAuthClientAuth.Basic,
+            var other => throw new CliUsageException($"--client-auth is body or basic, got '{other}'.")
+        };
         string? scope = args.Value("--scope");
         string? username = args.Value("--username");
         string? password = args.Value("--password");

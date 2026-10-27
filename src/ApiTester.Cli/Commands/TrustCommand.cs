@@ -22,8 +22,8 @@ public static class TrustCommand
 
         add:
           --thumbprint <t>         Pin this exact SHA-1 thumbprint for <host> (colons/spaces fine)
-          --ca <t>                 Pin an ISSUER instead: any certificate above the leaf in the
-                                   presented chain with this SHA-1 thumbprint is accepted. Survives
+          --ca <t>                 Pin an ISSUER instead: a certificate issued for <host> whose
+                                   chain this CA (SHA-1 thumbprint) validly signed is accepted. Survives
                                    renewals; the right pin for a TLS-intercepting proxy that
                                    re-mints a leaf per site (pin its CA once). `certapi doctor`
                                    prints every chain thumbprint
@@ -125,10 +125,14 @@ public static class TrustCommand
         // --from-url. --thumbprint is the leaf, as it always was.
         var kind = PinKind.Leaf;
         if (ca is not null && spki is not null) throw new CliUsageException("--ca and --spki are different kinds of pin; use one.");
+        // Checked before the values are merged: a typed --thumbprint beside --ca <t> or --spki <b64>
+        // is two pins, and only one of them would have been kept.
+        if ((ca?.Length > 0 || spki?.Length > 0) && (fromUrl is not null || thumbprint is not null))
+            throw new CliUsageException("Give one pin: --thumbprint <t>, --ca <t>, --spki <b64>, or --from-url (optionally with a bare --ca or --spki).");
+        if ((ca?.Length == 0 || spki?.Length == 0) && fromUrl is null)
+            throw new CliUsageException("A bare --ca or --spki qualifies --from-url (pin that server's issuer or key); with a thumbprint, write --ca <t> or --spki <b64>.");
         if (ca is not null) { kind = PinKind.Issuer; if (ca.Length > 0) thumbprint = ca; }
         if (spki is not null) { kind = PinKind.Spki; if (spki.Length > 0) thumbprint = spki; }
-        if ((ca?.Length > 0 || spki?.Length > 0) && (fromUrl is not null || args_thumbprint_given(thumbprint, ca, spki)))
-            throw new CliUsageException("Give one pin: --thumbprint <t>, --ca <t>, --spki <b64>, or --from-url (optionally with a bare --ca or --spki).");
         if (thumbprint is null && fromUrl is null)
             throw new CliUsageException("trust add needs --thumbprint <t>, --ca <t>, --spki <b64>, or --from-url <https-url>.");
 
@@ -229,9 +233,6 @@ public static class TrustCommand
         PinKind.Spki => "public key",
         _ => "certificate"
     };
-
-    private static bool args_thumbprint_given(string? thumbprint, string? ca, string? spki) =>
-        thumbprint is not null && thumbprint != ca && thumbprint != spki;
 
     /// <summary>Base64 of exactly 32 bytes, re-encoded canonically — or null.</summary>
     internal static string? NormalizeSpki(string raw)
