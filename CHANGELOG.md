@@ -33,7 +33,9 @@ All notable changes to this project are documented here. The format follows
   silently dropped), and a bare `--ca`/`--spki` without `--from-url`. `token --client-auth` refuses
   anything but `body` or `basic`. `run <file.har>` and `--diff-har` refuse `--har`, `--md`,
   `--cookies`, `--data`, `--env`, `--var` and the other options a replay does not use.
-- A second Ctrl+C always ends the process, so a command waiting on stdin (`mcp`, `fuzz -w -`) can be stopped.
+- A second Ctrl+C ends `mcp` and `fuzz -w -`, which wait on stdin and could not be stopped before.
+  Everywhere else Ctrl+C still lets the command finish its writes; `serve --record` now writes its
+  file beside the old one and moves it into place, so an interrupted save never leaves half a file.
 - The release workflow builds the tag it names on a manual run, and stops when a project's
   `<Version>` does not match the tag.
 

@@ -24,14 +24,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
         with:
-          ref: ${{ github.ref_type == 'tag' && github.ref || format('refs/tags/{0}', inputs.tag) }}
+          ref: ${{ github.event_name == 'workflow_dispatch' && format('refs/tags/{0}', inputs.tag) || github.ref }}
 
       # The exe reports the <Version> in its project; a tag that disagrees would make `certapi update`
       # and the app see this release as newer than themselves forever.
       - name: Check the projects carry the tag's version
         shell: bash
         env:
-          TAG: ${{ github.ref_type == 'tag' && github.ref_name || inputs.tag }}
+          TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
         run: |
           VERSION="${TAG#v}"
           for proj in src/ApiTester.App/ApiTester.App.csproj src/ApiTester.Cli/ApiTester.Cli.csproj; do
@@ -58,13 +58,13 @@ jobs:
       - name: Bundle the full repository source
         shell: bash
         env:
-          TAG: ${{ github.ref_type == 'tag' && github.ref_name || inputs.tag }}
+          TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
         run: git archive --format=zip --prefix="certapi-${TAG}/" -o "certapi-source-${TAG}.zip" HEAD
 
       - name: Checksums and a Scoop manifest
         shell: bash
         env:
-          TAG: ${{ github.ref_type == 'tag' && github.ref_name || inputs.tag }}
+          TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
         run: |
           VERSION="${TAG#v}"
           BASE="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}"
@@ -111,7 +111,7 @@ jobs:
       - name: Compose release notes from CHANGELOG
         shell: bash
         env:
-          TAG: ${{ github.ref_type == 'tag' && github.ref_name || inputs.tag }}
+          TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
         run: |
           VERSION="${TAG#v}"
           # Pull just this version's section (everything under "## [x.y.z]" up to the next "## [").
@@ -131,7 +131,7 @@ jobs:
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.ref_type == 'tag' && github.ref_name || inputs.tag }}
+          TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
         shell: bash
         run: |
           gh release create "$TAG" \

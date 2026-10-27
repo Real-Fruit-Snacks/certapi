@@ -629,6 +629,7 @@ public static class ServeCommand
         {
             // Under --vhost the certificate also names the suffix and *.suffix, so every site's
             // host (api.gw.localhost) and every dynamic one is covered and the browser accepts it.
+            string? untrustAfterTrust = null;
             gatewayCert = GatewayCertificate.LoadOrCreate(null,
                 vhosts is null ? null : VirtualHosts.CertificateNames(vhosts.Suffix, allow?.Entries, out _), out var replacedThumb);
             gatewayThumb = LoopbackTlsBinding.NormalizeThumbprint(gatewayCert.Thumbprint!);
@@ -649,16 +650,9 @@ public static class ServeCommand
                     LoopbackTlsBinding.Unbind(port);
                 }
                 bool oldTrusted = GatewayCertificate.IsTrusted(LoopbackTlsBinding.NormalizeThumbprint(replacedThumb));
-                if (oldTrusted && tlsTrust)
-                {
-                    // Trusting the new one below: the old one goes, so roots never pile up.
-                    try
-                    {
-                        if (GatewayCertificate.Untrust(replacedThumb))
-                            Log($"removed the old gateway certificate {LoopbackTlsBinding.NormalizeThumbprint(replacedThumb)} from CurrentUser\\Root.");
-                    }
-                    catch (Exception ex) { Log($"  could not remove the old gateway certificate from CurrentUser\\Root: {ex.Message}"); }
-                }
+                // With --tls-trust the old one goes once the new one is trusted (below), so roots
+                // never pile up — and a declined prompt for the new one never leaves neither.
+                if (oldTrusted && tlsTrust) untrustAfterTrust = replacedThumb;
                 else if (oldTrusted)
                     Log("  the old certificate is trusted in CurrentUser\\Root and the new one is not yet: add --tls-trust once (it also removes the old one).");
             }
@@ -673,6 +667,15 @@ public static class ServeCommand
                         "Could not install the gateway certificate into CurrentUser\\Root.", ex);
                 }
                 Log($"trusted the gateway certificate {gatewayThumb} in CurrentUser\\Root (undo with certapi serve --tls-untrust).");
+                if (untrustAfterTrust is { } old && GatewayCertificate.IsTrusted(gatewayThumb))
+                {
+                    try
+                    {
+                        if (GatewayCertificate.Untrust(old))
+                            Log($"removed the old gateway certificate {LoopbackTlsBinding.NormalizeThumbprint(old)} from CurrentUser\\Root.");
+                    }
+                    catch (Exception ex) { Log($"  could not remove the old gateway certificate from CurrentUser\\Root: {ex.Message}"); }
+                }
             }
 
             var bound = LoopbackTlsBinding.Describe(port);

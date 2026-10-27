@@ -52,4 +52,15 @@ public class CliParsingSweepTests
     [InlineData("10.0.0.5", false)]
     public void Serve_listen_addresses_that_stay_loopback_only(string? listen, bool loopback) =>
         Assert.Equal(loopback, ServeCommand.IsLoopbackListen(listen));
+
+    [Fact]
+    public void An_attached_value_is_never_read_as_an_option_whatever_order_options_are_read_in()
+    {
+        var a = new Args(new[] { "url", "--data=--insecure", "--cors=--insecure" });
+        Assert.False(a.Flag("--insecure"));
+        Assert.Equal("--insecure", a.Value("--data"));
+        Assert.True(a.OptionalValue(out var cors, "--cors"));
+        Assert.Equal("--insecure", cors);
+        Assert.Equal(new[] { "url" }, a.Positionals());
+    }
 }

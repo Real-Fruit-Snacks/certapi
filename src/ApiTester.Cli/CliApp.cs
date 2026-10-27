@@ -147,6 +147,10 @@ public static class CliApp
         Run 'certapi <command> --help' (or 'certapi help <command>') for options. 'certapi --version' prints the version.
         """;
 
+    /// <summary>Set by a command that blocks on stdin, where a cancelled token goes unnoticed until
+    /// the next line: a second Ctrl+C then ends the process (see Program.cs).</summary>
+    public static volatile bool SecondCtrlCQuits;
+
     public static int Run(string[] args, TextReader input, TextWriter stdout, TextWriter stderr,
                           Stream? bodyOut = null, CliServices? services = null)
     {
@@ -186,6 +190,8 @@ public static class CliApp
                 // that applies to `send` but not to `ws` would be a trap rather than a convenience.
                 if (PrintedHelp(cmd, g.Remaining, stdout)) return ExitCodes.Ok;
                 services.Profile = ResolveProfile(g.Config, g.Profile, g.NoConfig, services, log);
+                // mcp reads stdin line by line; fuzz with "-w -" reads it to the end.
+                SecondCtrlCQuits = cmd == "mcp" || (cmd == "fuzz" && g.Remaining.Contains("-"));
                 return cmd switch
                 {
                     "mcp"  => Commands.McpCommand.Run(new Args(g.Remaining), input, stdout, err, services),

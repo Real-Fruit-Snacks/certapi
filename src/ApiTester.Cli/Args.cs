@@ -98,7 +98,7 @@ public sealed class Args
     {
         names = Expand(names);
         for (int i = 0; i < OptionEnd; i++)
-            if (_tokens[i] is { } t && AnyMatches(t, names))
+            if (!_attached.Contains(i) && _tokens[i] is { } t && AnyMatches(t, names))
             {
                 _tokens[i] = null;
                 _seen.Add(t);
@@ -139,7 +139,7 @@ public sealed class Args
         names = Expand(names);
         for (int i = 0; i < OptionEnd; i++)
         {
-            if (_tokens[i] is not { } t || !AnyMatches(t, names)) continue;
+            if (_attached.Contains(i) || _tokens[i] is not { } t || !AnyMatches(t, names)) continue;
             if (i + 1 >= _tokens.Length || _tokens[i + 1] is null)
                 throw new CliUsageException($"Option {t} needs a value.");
             var value = _tokens[i + 1]!;
@@ -164,7 +164,7 @@ public sealed class Args
         names = Expand(names);
         for (int i = 0; i < OptionEnd; i++)
         {
-            if (_tokens[i] is not { } t || !AnyMatches(t, names)) continue;
+            if (_attached.Contains(i) || _tokens[i] is not { } t || !AnyMatches(t, names)) continue;
             _tokens[i] = null;
             // The next token belongs to this option only when it could not be an option itself —
             // the same shape rule Positionals() uses — so "--cors --insecure" leaves --insecure be.

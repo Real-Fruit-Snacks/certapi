@@ -30,8 +30,15 @@ public partial class App : Application
     /// <summary>A bug in one handler must not take the workspace down with it: the error is shown,
     /// the workspace is saved, and the app keeps running. Without this, any exception escaping a
     /// UI event ends the process before the window's own save on close ever runs.</summary>
+    private int _unexpectedErrors;
+
     private void OnUnhandledUiException(object sender, System.Windows.Threading.DispatcherUnhandledExceptionEventArgs e)
     {
+        // Only once the main window holds the workspace: an error while it is still being built
+        // must not save its empty lists over the file — and a window that never appeared would
+        // leave the process running headless. Then the crash is the honest outcome. The same goes
+        // for an error that keeps recurring (a layout or timer loop of message boxes).
+        if (MainWindow is not MainWindow { CanSaveAfterError: true } || ++_unexpectedErrors > 5) return;
         e.Handled = true;
         try { (MainWindow as MainWindow)?.SaveAfterUnexpectedError(); } catch { /* nothing more to try */ }
         try

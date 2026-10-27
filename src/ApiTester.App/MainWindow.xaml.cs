@@ -96,6 +96,7 @@ public partial class MainWindow : Window
         PreviewKeyDown += Window_PreviewKeyDown;
         UpdateTokenChip();
         UpdateThemeToggleGlyph();
+        _builtForSave = true;
 
         // Tell the user what happened to their secrets: either some were just dropped on this
         // load (per-user decryption failed), or the file is still waiting for its first encrypted
@@ -187,9 +188,15 @@ public partial class MainWindow : Window
         _state.LastBaseUrl = string.IsNullOrWhiteSpace(ActiveRequest?.BaseUrl) ? null : ActiveRequest!.BaseUrl!.Trim();
     }
 
+    // True once the window holds the workspace it loaded; before that, saving would write the
+    // half-built window's empty lists over the user's file.
+    private bool _builtForSave;
+    internal bool CanSaveAfterError => _builtForSave;
+
     /// <summary>For the app's last-resort error handler: save what the user has, as closing would.</summary>
     internal void SaveAfterUnexpectedError()
     {
+        if (!_builtForSave) return;
         try { if (ActiveRequest is { } active) CaptureControlsInto(active); }
         catch { /* the controls may be what failed; the models still hold everything else */ }
         CaptureStateForSave();
@@ -312,6 +319,7 @@ public partial class MainWindow : Window
 
         UpdateButton.IsEnabled = false;
         // No new request while the files are being replaced: the restart would cut it off.
+        _installingUpdate = true;
         SendButton.IsEnabled = false;
         bool closing = false;
         try
@@ -337,7 +345,9 @@ public partial class MainWindow : Window
         }
         finally
         {
-            if (!closing) SendButton.IsEnabled = true;
+            _installingUpdate = false;
+            // Send comes back only when no request is still running (its own end re-enables it).
+            if (!closing) SendButton.IsEnabled = _cts is null;
         }
     }
 
@@ -1582,7 +1592,14 @@ public partial class MainWindow : Window
     // Reload) must not both subscribe — every page resource would then be fetched twice.
     private Task<bool>? _browserStart;
 
-    private Task<bool> EnsureBrowserAsync() => _browserStart ??= StartBrowserAsync();
+    private async Task<bool> EnsureBrowserAsync()
+    {
+        var start = _browserStart ??= StartBrowserAsync();
+        if (await start) return true;
+        // Failed: forget it, so a later attempt can succeed (the runtime installed meanwhile).
+        if (ReferenceEquals(_browserStart, start)) _browserStart = null;
+        return false;
+    }
 
     private async Task<bool> StartBrowserAsync()
     {
@@ -1603,7 +1620,6 @@ public partial class MainWindow : Window
             RenderHint.Text = "The rendered view needs the Microsoft Edge WebView2 runtime, " +
                               "which couldn't be started on this machine:\n" + ex.Message;
             RenderHint.Visibility = Visibility.Visible;
-            _browserStart = null;   // a later attempt may succeed (the runtime installed meanwhile)
             return false;
         }
     }
@@ -2415,9 +2431,11 @@ public partial class MainWindow : Window
 
     private void SendButton_Click(object sender, RoutedEventArgs e) => _ = SendRequestAsync();
 
+    private bool _installingUpdate;
+
     private async System.Threading.Tasks.Task SendRequestAsync()
     {
-        if (!SendButton.IsEnabled) return;
+        if (!SendButton.IsEnabled || _installingUpdate) return;
         if (ActiveRequest is not { } model) return;
         CaptureControlsInto(model);
         if (string.IsNullOrWhiteSpace(model.EffectiveUrl())) { StatusText.Text = "Enter a URL."; return; }
@@ -2458,6 +2476,11 @@ public partial class MainWindow : Window
             else
             {
                 StatusText.Text = $"The response to {model.Method} {model.EffectiveUrl()} arrived on its own tab: {(response.Error is null ? response.StatusCode?.ToString() ?? "" : "error")}.";
+                if (model.Assertions.Any(a => a.Enabled))
+                {
+                    var results = AssertionEvaluator.Evaluate(model.Assertions, response);
+                    StatusText.Text += $"   {(results.All(r => r.Passed) ? "✓" : "✗")} tests {results.Count(r => r.Passed)}/{results.Count} passed";
+                }
             }
             if (sendingTab is { } tab)
             {
@@ -2518,7 +2541,7 @@ public partial class MainWindow : Window
         }
         finally
         {
-            SendButton.IsEnabled = true;
+            SendButton.IsEnabled = !_installingUpdate;
             SendButton.Content = "Send";
             CancelButton.IsEnabled = false;
             SendProgress.Visibility = Visibility.Collapsed;

@@ -66,7 +66,11 @@ public sealed class GatewayRecorder
     {
         HarEntry[] snapshot;
         lock (_lock) snapshot = _entries.ToArray();
-        File.WriteAllText(path, HarWriter.Write(snapshot, GatewayVersion));
+        // Written beside and moved into place: an interrupted save never leaves half a file where
+        // the recording (or the one it replaces) was.
+        string temp = path + ".tmp";
+        File.WriteAllText(temp, HarWriter.Write(snapshot, GatewayVersion));
+        File.Move(temp, path, overwrite: true);
     }
 
     private const string GatewayVersion = "certapi serve --record";
