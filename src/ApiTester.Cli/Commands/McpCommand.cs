@@ -278,7 +278,7 @@ public static class McpCommand
             _ =>
             {
                 var items = SavedLeaves(state)
-                    .Select(l => new { path = l.Path, method = l.Node.Request!.Method, url = l.Node.Request!.EffectiveUrl() });
+                    .Select(l => new { path = l.Path, method = l.Node.Request!.Method, url = MarkdownSecrets.RedactUrl(l.Node.Request!.EffectiveUrl()) });
                 return new ToolResult(JsonSerializer.Serialize(new { items }), false);
             })
         {
@@ -658,6 +658,15 @@ public static class McpCommand
         await Task.CompletedTask;
     }
 
+    /// <summary>"{{token}}" names a variable; it is not itself a secret.</summary>
+    private static bool IsOnlyVariable(string value)
+    {
+        string v = value.Trim();
+        if (v.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase)) v = v[7..].Trim();
+        return v.StartsWith("{{", StringComparison.Ordinal) && v.EndsWith("}}", StringComparison.Ordinal) &&
+               v.IndexOf("}}", StringComparison.Ordinal) == v.Length - 2;
+    }
+
     private static List<(string Path, CollectionNode Node)> SavedLeaves(AppState state)
     {
         try { return CliWorkspace.ResolveTargets(state, null, all: true); }
@@ -682,14 +691,18 @@ public static class McpCommand
                     {
                         ["path"] = path,
                         ["method"] = m.Method,
-                        ["url"] = m.EffectiveUrl(),
+                        // A credential typed into a header, a query (?api_key=) or a body field is
+                        // withheld like the auth secret: the agent reading this is the transcript.
+                        ["url"] = MarkdownSecrets.RedactUrl(m.EffectiveUrl()),
                         ["headers"] = new JsonArray(m.Headers
                             .Select(h => (JsonNode)new JsonObject
                             {
-                                ["name"] = h.Name, ["value"] = h.Value, ["enabled"] = h.Enabled
+                                ["name"] = h.Name,
+                                ["value"] = SecretHeaders.IsSecret(h.Name) && !string.IsNullOrEmpty(h.Value) && !IsOnlyVariable(h.Value) ? "(redacted)" : h.Value,
+                                ["enabled"] = h.Enabled
                             }).ToArray()),
                         ["contentType"] = m.ContentType,
-                        ["body"] = m.Body,
+                        ["body"] = m.Body is null ? null : MarkdownSecrets.RedactBody(m.Body, m.ContentType),
                         ["authType"] = m.AuthType,
                         ["authSecret"] = string.IsNullOrEmpty(m.AuthSecret) ? null : "(redacted)",
                         ["timeoutSeconds"] = m.TimeoutSeconds,

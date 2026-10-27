@@ -228,14 +228,6 @@ public sealed class MockServer : IAsyncDisposable
             string path = target.Split('?')[0];
             string query = target.Contains('?') ? target[(target.IndexOf('?') + 1)..] : "";
 
-            // WebSocket upgrade (any path).
-            if (headers.TryGetValue("Upgrade", out var up) && up.Contains("websocket", StringComparison.OrdinalIgnoreCase))
-            {
-                await HandleWebSocketAsync(stream, headers, ct);
-                _onRequest?.Invoke(new(method, path, 101, clientCertSubject));
-                return;
-            }
-
             // Before any route: what the scenario says every caller must present. A protected
             // endpoint refuses before it routes, and a mock that echoed instead would teach a
             // client's authentication path nothing.
@@ -254,6 +246,15 @@ public sealed class MockServer : IAsyncDisposable
                 {
                     Replay = "refused"
                 });
+                return;
+            }
+
+            // WebSocket upgrade (any path) — after the scenario's requirements, so a protected
+            // mock refuses an unauthenticated socket as it refuses an unauthenticated request.
+            if (headers.TryGetValue("Upgrade", out var up) && up.Contains("websocket", StringComparison.OrdinalIgnoreCase))
+            {
+                await HandleWebSocketAsync(stream, headers, ct);
+                _onRequest?.Invoke(new(method, path, 101, clientCertSubject));
                 return;
             }
 

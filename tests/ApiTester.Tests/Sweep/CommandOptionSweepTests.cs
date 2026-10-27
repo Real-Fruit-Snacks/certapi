@@ -82,3 +82,30 @@ public class CommandOptionSweepTests2
     public void Completion_knows_transport_options_take_a_value(string option) =>
         Assert.True(CompletionCommand.TakesValue(McpCommand.Help, option));
 }
+
+public class Round2McpMockTests
+{
+    [Fact]
+    public void Mcp_resources_withhold_credentials_typed_into_headers_queries_and_bodies()
+    {
+        var state = new ApiTester.Core.AppState();
+        var request = new ApiTester.Core.RequestModel { Method = "POST", BaseUrl = "https://api.example", Path = "/login?api_key=QSECRET&page=1", Body = "{\"password\":\"BSECRET\",\"user\":\"alice\"}", ContentType = "application/json" };
+        request.Headers.Add(new ApiTester.Core.HeaderRow { Name = "X-Api-Key", Value = "HSECRET" });
+        request.Headers.Add(new ApiTester.Core.HeaderRow { Name = "Authorization", Value = "Bearer {{token}}" });
+        state.Collections.Add(new ApiTester.Core.CollectionNode { Name = "c", IsFolder = true, Children = { new ApiTester.Core.CollectionNode { Name = "login", Request = request } } });
+        string all = string.Join("\n", McpCommand.BuildResources(state).Select(r => r.Read()));
+        foreach (var secret in new[] { "QSECRET", "BSECRET", "HSECRET" }) Assert.DoesNotContain(secret, all);
+        Assert.Contains("{{token}}", all);   // a variable reference is not a secret
+        Assert.Contains("alice", all);
+    }
+
+    [Fact]
+    public async Task A_mock_scenario_requirement_also_guards_websocket_upgrades()
+    {
+        var scenario = ApiTester.Core.MockScenario.Parse("""{"require":{"bearer":"expected"},"routes":[]}""");
+        await using var srv = ApiTester.Core.MockServer.Start(0, ApiTester.Core.MockTlsMode.Http, scenario: scenario);
+        using var ws = new System.Net.WebSockets.ClientWebSocket();
+        await Assert.ThrowsAnyAsync<System.Net.WebSockets.WebSocketException>(() =>
+            ws.ConnectAsync(new Uri("ws://127.0.0.1:" + srv.Port + "/ws"), default));
+    }
+}
