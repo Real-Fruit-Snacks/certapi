@@ -207,7 +207,7 @@ public static class MarkdownExport
         else if (!string.IsNullOrWhiteSpace(request.Body))
         {
             sb.AppendLine("## Body").AppendLine();
-            sb.AppendLine(Fence(request.Body!, request.ContentType));
+            sb.AppendLine(Fence(MarkdownSecrets.RedactBody(request.Body!, request.ContentType, options.IncludeSecrets), request.ContentType));
             sb.AppendLine();
         }
 

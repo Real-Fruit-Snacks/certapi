@@ -80,7 +80,8 @@ public static class OpenApiExporter
                 ["in"] = "query",
                 ["required"] = false,
                 ["schema"] = new JsonObject { ["type"] = "string" },
-                ["example"] = q.Value
+                // A spec is shared; an api_key's value is not part of the contract.
+                ["example"] = MarkdownSecrets.IsSecretParameter(q.Key) ? null : q.Value
             });
         foreach (var h in r.Headers)
         {
@@ -93,7 +94,7 @@ public static class OpenApiExporter
                 ["in"] = "header",
                 ["required"] = false,
                 ["schema"] = new JsonObject { ["type"] = "string" },
-                ["example"] = h.Value
+                ["example"] = SecretHeaders.IsSecret(h.Key) ? null : h.Value
             });
         }
         if (parameters.Count > 0) op["parameters"] = parameters;
@@ -102,8 +103,9 @@ public static class OpenApiExporter
         {
             string ct = string.IsNullOrWhiteSpace(r.ContentType) ? "application/json" : r.ContentType!;
             JsonNode example;
-            try { example = JsonNode.Parse(r.Body!) ?? JsonValue.Create(r.Body!)!; }
-            catch (JsonException) { example = JsonValue.Create(r.Body!)!; }
+            string bodyExample = MarkdownSecrets.RedactBody(r.Body!, ct);
+            try { example = JsonNode.Parse(bodyExample) ?? JsonValue.Create(bodyExample)!; }
+            catch (JsonException) { example = JsonValue.Create(bodyExample)!; }
             op["requestBody"] = new JsonObject
             {
                 ["content"] = new JsonObject { [ct] = new JsonObject { ["example"] = example } }

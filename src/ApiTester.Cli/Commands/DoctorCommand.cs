@@ -138,6 +138,12 @@ public static class DoctorCommand
         var when = DateTimeOffset.UtcNow;
         string path = file ?? Path.Combine(vault!,
             DoctorMarkdown.VaultPath(report, when).Replace('/', Path.DirectorySeparatorChar));
+        // A vault never loses a past diagnosis: two runs for one host in the same second get -2, -3…
+        if (file is null && File.Exists(path))
+        {
+            string stem = Path.Combine(Path.GetDirectoryName(path) ?? "", Path.GetFileNameWithoutExtension(path));
+            for (int n = 2; File.Exists(path); n++) path = $"{stem}-{n}.md";
+        }
 
         try
         {

@@ -64,8 +64,92 @@ public static class MarkdownSecrets
         return rebuilt.Append(fragment).ToString();
     }
 
-    private static bool IsSecretParameter(string name) =>
+    public static bool IsSecretParameter(string name) =>
         SecretParameters.Contains(name.Trim(), StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>A body field whose value is a credential: a secret parameter name, or any name
+    /// that says password or secret (newPassword, client_secret, x_secret_key).</summary>
+    public static bool IsSecretField(string name) =>
+        IsSecretParameter(name) ||
+        name.Contains("password", StringComparison.OrdinalIgnoreCase) ||
+        name.Contains("secret", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>A request body safe to write into a note or a spec: in a JSON body or a form
+    /// (application/x-www-form-urlencoded) body, every credential field's value is replaced. A
+    /// value that is only a <c>{{variable}}</c> is a reference, not a secret, and stays. Any other
+    /// body — or one that does not parse — is returned unchanged.</summary>
+    public static string RedactBody(string body, string? contentType, bool includeSecrets = false)
+    {
+        if (includeSecrets || string.IsNullOrWhiteSpace(body)) return body;
+        string trimmed = body.TrimStart();
+        bool form = contentType?.Contains("x-www-form-urlencoded", StringComparison.OrdinalIgnoreCase) == true;
+        if (!form && trimmed.Length > 0 && trimmed[0] is '{' or '[')
+        {
+            try
+            {
+                var node = System.Text.Json.Nodes.JsonNode.Parse(body);
+                if (node is not null && RedactJson(node))
+                    return node.ToJsonString(new System.Text.Json.JsonSerializerOptions
+                    {
+                        WriteIndented = true,
+                        Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+                    });
+                return body;
+            }
+            catch (System.Text.Json.JsonException) { return body; }
+        }
+        if (form || (contentType is null && !trimmed.Contains(' ') && trimmed.Contains('=')))
+        {
+            var pairs = body.Split('&');
+            bool changed = false;
+            for (int i = 0; i < pairs.Length; i++)
+            {
+                int eq = pairs[i].IndexOf('=');
+                if (eq <= 0) continue;
+                string name = Uri.UnescapeDataString(pairs[i][..eq].Replace('+', ' '));
+                string value = pairs[i][(eq + 1)..];
+                if (IsSecretField(name) && !IsVariableReference(value))
+                {
+                    pairs[i] = pairs[i][..eq] + "=REDACTED";
+                    changed = true;
+                }
+            }
+            return changed ? string.Join("&", pairs) : body;
+        }
+        return body;
+    }
+
+    private static bool IsVariableReference(string value)
+    {
+        string v = Uri.UnescapeDataString(value).Trim();
+        return v.StartsWith("{{", StringComparison.Ordinal) && v.EndsWith("}}", StringComparison.Ordinal) && v.IndexOf("}}", StringComparison.Ordinal) == v.Length - 2;
+    }
+
+    private static bool RedactJson(System.Text.Json.Nodes.JsonNode node)
+    {
+        bool changed = false;
+        switch (node)
+        {
+            case System.Text.Json.Nodes.JsonObject obj:
+                foreach (var key in obj.Select(p => p.Key).ToList())
+                {
+                    var child = obj[key];
+                    if (IsSecretField(key) && child is System.Text.Json.Nodes.JsonValue v &&
+                        !(v.TryGetValue<string>(out var s) && (s.Length == 0 || IsVariableReference(s))))
+                    {
+                        obj[key] = "REDACTED";
+                        changed = true;
+                    }
+                    else if (child is not null) changed |= RedactJson(child);
+                }
+                break;
+            case System.Text.Json.Nodes.JsonArray arr:
+                foreach (var item in arr)
+                    if (item is not null) changed |= RedactJson(item);
+                break;
+        }
+        return changed;
+    }
 
     /// <summary>Mask the password in a URL's <c>user:password@host</c> prefix.
     ///

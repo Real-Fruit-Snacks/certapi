@@ -23,7 +23,8 @@ public static class DoctorMarkdown
     public static string Render(DoctorReport report, DateTimeOffset when, bool includeSecrets = false)
     {
         string url = MarkdownSecrets.RedactUrl(report.Url, includeSecrets);
-        string host = Uri.TryCreate(report.Url, UriKind.Absolute, out var parsed) ? parsed.Host : report.Url;
+        // Never the raw URL: one that does not parse can still carry user:password@ or ?api_key=.
+        string host = Uri.TryCreate(report.Url, UriKind.Absolute, out var parsed) ? parsed.Host : "unknown-host";
         var failure = report.FirstFailure;
 
         var sb = new StringBuilder();
