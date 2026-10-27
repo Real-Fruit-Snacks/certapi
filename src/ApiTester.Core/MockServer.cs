@@ -121,7 +121,9 @@ public sealed class MockServer : IAsyncDisposable
     private readonly TcpListener _listener;
     private readonly CancellationTokenSource _cts = new();
     private readonly Task _acceptLoop;
-    private readonly ConcurrentBag<Task> _handlers = new();
+    // Live connections only: each removes itself when it ends, so a mock that serves a million
+    // requests holds a handful of tasks rather than a million finished ones.
+    private readonly ConcurrentDictionary<Task, byte> _handlers = new();
     private readonly MockTlsMode _tls;
     private readonly X509Certificate2? _serverCert;
     private readonly Action<MockRequestLog>? _onRequest;
@@ -173,12 +175,14 @@ public sealed class MockServer : IAsyncDisposable
             while (!_cts.IsCancellationRequested)
             {
                 var client = await _listener.AcceptTcpClientAsync(_cts.Token);
-                _handlers.Add(Task.Run(async () =>
+                var handler = Task.Run(async () =>
                 {
                     try { await HandleAsync(client, _cts.Token); }
                     catch { /* a broken connection must not take the server down */ }
                     finally { client.Dispose(); }
-                }));
+                });
+                _handlers.TryAdd(handler, 0);
+                _ = handler.ContinueWith(t => _handlers.TryRemove(t, out _), TaskScheduler.Default);
             }
         }
         catch (OperationCanceledException) { }
@@ -554,24 +558,34 @@ public sealed class MockServer : IAsyncDisposable
         await stream.WriteAsync(Encoding.ASCII.GetBytes(handshake), ct);
         await stream.FlushAsync(ct);
 
+        // A message may arrive in several frames (the gateway relays in 8 KB pieces): continuation
+        // frames are collected until the final one, and the whole message is echoed back.
+        int messageOpcode = 0;
+        var message = new MemoryStream();
         while (!ct.IsCancellationRequested)
         {
             var frame = await ReadFrameAsync(stream, ct);
             if (frame is null) return;
-            if (frame.Value.Opcode == 0x8) { await stream.WriteAsync(BuildFrame(0x8, frame.Value.Payload), ct); await stream.FlushAsync(ct); return; }
-            if (frame.Value.Opcode is 0x1 or 0x2)
-            {
-                await stream.WriteAsync(BuildFrame(frame.Value.Opcode, frame.Value.Payload), ct);
-                await stream.FlushAsync(ct);
-            }
+            var (opcode, fin, payload) = frame.Value;
+            if (opcode == 0x8) { await stream.WriteAsync(BuildFrame(0x8, payload), ct); await stream.FlushAsync(ct); return; }
+            if (opcode == 0x9) { await stream.WriteAsync(BuildFrame(0xA, payload), ct); await stream.FlushAsync(ct); continue; }
+            if (opcode is 0x1 or 0x2) { messageOpcode = opcode; message.SetLength(0); }
+            else if (opcode != 0x0 || messageOpcode == 0) continue;   // a pong, or a continuation of nothing
+            message.Write(payload);
+            if (!fin) continue;
+            await stream.WriteAsync(BuildFrame(messageOpcode, message.ToArray()), ct);
+            await stream.FlushAsync(ct);
+            messageOpcode = 0;
+            message.SetLength(0);
         }
     }
 
-    private static async Task<(int Opcode, byte[] Payload)?> ReadFrameAsync(Stream s, CancellationToken ct)
+    private static async Task<(int Opcode, bool Fin, byte[] Payload)?> ReadFrameAsync(Stream s, CancellationToken ct)
     {
         var h = new byte[2];
         if (!await ReadExactAsync(s, h, 2, ct)) return null;
         int opcode = h[0] & 0x0F;
+        bool fin = (h[0] & 0x80) != 0;
         bool masked = (h[1] & 0x80) != 0;
         long len = h[1] & 0x7F;
         if (len == 126) { var e = new byte[2]; if (!await ReadExactAsync(s, e, 2, ct)) return null; len = (e[0] << 8) | e[1]; }
@@ -581,7 +595,7 @@ public sealed class MockServer : IAsyncDisposable
         var payload = new byte[len];
         if (len > 0 && !await ReadExactAsync(s, payload, (int)len, ct)) return null;
         if (masked) for (int i = 0; i < payload.Length; i++) payload[i] ^= mask[i % 4];
-        return (opcode, payload);
+        return (opcode, fin, payload);
     }
 
     private static byte[] BuildFrame(int opcode, byte[] payload)
@@ -628,8 +642,15 @@ public sealed class MockServer : IAsyncDisposable
             if (colon > 0) headers[lines[i][..colon].Trim()] = lines[i][(colon + 1)..].Trim();
         }
 
-        int contentLength = headers.TryGetValue("Content-Length", out var clRaw) && int.TryParse(clRaw, out var cl) ? cl : 0;
         var bodyBytes = new List<byte>(acc.Skip(headerEnd + 4));
+        if (headers.TryGetValue("Transfer-Encoding", out var te) && te.Contains("chunked", StringComparison.OrdinalIgnoreCase))
+        {
+            // A streamed body: decoded, so the echo shows what was sent rather than its framing,
+            // and read to its end, so the mock never answers while the client is still sending.
+            var decoded = await ReadChunkedAsync(bodyBytes, stream, buffer, ct);
+            return (method, target, headers, Encoding.UTF8.GetString(decoded));
+        }
+        int contentLength = headers.TryGetValue("Content-Length", out var clRaw) && int.TryParse(clRaw, out var cl) ? cl : 0;
         while (bodyBytes.Count < contentLength)
         {
             int n = await stream.ReadAsync(buffer, ct);
@@ -638,6 +659,61 @@ public sealed class MockServer : IAsyncDisposable
         }
         string body = Encoding.UTF8.GetString(bodyBytes.ToArray());
         return (method, target, headers, body);
+    }
+
+    /// <summary>Decodes a chunked body: <paramref name="pending"/> holds what already arrived with
+    /// the headers, the rest is read from <paramref name="stream"/>. Trailers are read and dropped.</summary>
+    private static async Task<byte[]> ReadChunkedAsync(List<byte> pending, Stream stream, byte[] buffer, CancellationToken ct)
+    {
+        var body = new List<byte>();
+        int pos = 0;
+
+        async Task<bool> EnsureAsync(int count)
+        {
+            while (pending.Count - pos < count)
+            {
+                int n = await stream.ReadAsync(buffer, ct);
+                if (n == 0) return false;
+                pending.AddRange(new ArraySegment<byte>(buffer, 0, n));
+            }
+            return true;
+        }
+
+        async Task<string?> ReadLineAsync()
+        {
+            while (true)
+            {
+                for (int i = pos; i + 1 < pending.Count; i++)
+                    if (pending[i] == '\r' && pending[i + 1] == '\n')
+                    {
+                        string line = Encoding.ASCII.GetString(pending.GetRange(pos, i - pos).ToArray());
+                        pos = i + 2;
+                        return line;
+                    }
+                if (pending.Count - pos > 64 * 1024) return null;   // no chunk-size line is that long
+                int n = await stream.ReadAsync(buffer, ct);
+                if (n == 0) return null;
+                pending.AddRange(new ArraySegment<byte>(buffer, 0, n));
+            }
+        }
+
+        while (true)
+        {
+            string? sizeLine = await ReadLineAsync();
+            if (sizeLine is null) break;
+            int semi = sizeLine.IndexOf(';');
+            if (!int.TryParse(semi >= 0 ? sizeLine[..semi] : sizeLine, System.Globalization.NumberStyles.HexNumber,
+                    System.Globalization.CultureInfo.InvariantCulture, out int size) || size < 0) break;
+            if (size == 0)
+            {
+                while (await ReadLineAsync() is { Length: > 0 }) { }   // trailers, up to the blank line
+                break;
+            }
+            if (!await EnsureAsync(size + 2)) { body.AddRange(pending.Skip(pos)); break; }
+            body.AddRange(pending.GetRange(pos, size));
+            pos += size + 2;
+        }
+        return body.ToArray();
     }
 
     private static int IndexOfHeaderEnd(List<byte> data)
@@ -677,7 +753,7 @@ public sealed class MockServer : IAsyncDisposable
         _cts.Cancel();
         _listener.Stop();
         try { await _acceptLoop; } catch { /* ignore */ }
-        try { await Task.WhenAll(_handlers.ToArray()); } catch { /* ignore */ }
+        try { await Task.WhenAll(_handlers.Keys.ToArray()); } catch { /* ignore */ }
         _cts.Dispose();
     }
 }

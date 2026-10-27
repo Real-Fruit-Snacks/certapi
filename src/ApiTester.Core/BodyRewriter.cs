@@ -106,6 +106,9 @@ public static class BodyRewriter
             }
             return output.ToArray();
         }
-        catch (InvalidDataException) { return null; }
+        // Corrupt gzip/deflate throws InvalidDataException; corrupt brotli throws
+        // InvalidOperationException ("Decoder ran into invalid data"). Either way the body is
+        // relayed untouched rather than turned into a 502.
+        catch (Exception ex) when (ex is InvalidDataException or InvalidOperationException or IOException) { return null; }
     }
 }

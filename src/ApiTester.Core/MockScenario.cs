@@ -197,9 +197,13 @@ public sealed record MockScenario(
     /// resolved against — the scenario file's own folder, so a scenario is portable as a unit.
     /// Throws <see cref="FormatException"/> only when the document is not a scenario at all;
     /// anything less total is a warning and a dropped route.</summary>
-    public static MockScenario Parse(string json, string? baseDirectory = null, Func<string, string>? readFile = null)
+    public static MockScenario Parse(string json, string? baseDirectory = null, Func<string, string>? readFile = null,
+                                     Func<string, byte[]>? readBytes = null)
     {
-        var read = readFile ?? File.ReadAllText;
+        // A bodyFile is served byte for byte — an image, a PDF, a pre-gzipped body — never decoded
+        // as UTF-8 and re-encoded, which would turn every invalid sequence into U+FFFD.
+        Func<string, byte[]> read = readBytes
+            ?? (readFile is not null ? path => Encoding.UTF8.GetBytes(readFile(path)) : File.ReadAllBytes);
 
         JsonDocument doc;
         try
@@ -330,7 +334,7 @@ public sealed record MockScenario(
     }
 
     private static MockResponse? ReadResponse(
-        JsonElement element, int routeIndex, string? baseDirectory, Func<string, string> read, List<string> warnings)
+        JsonElement element, int routeIndex, string? baseDirectory, Func<string, byte[]> read, List<string> warnings)
     {
         string where = routeIndex == 0 ? "the fallback" : $"route {routeIndex}";
 
@@ -351,7 +355,7 @@ public sealed record MockScenario(
             // Resolved against the scenario file's own folder, so a scenario plus its bodies moves
             // as one unit rather than depending on where the command happened to be run.
             string path = baseDirectory is null ? file : Path.Combine(baseDirectory, file);
-            try { body = Encoding.UTF8.GetBytes(read(path)); }
+            try { body = read(path); }
             catch (Exception ex)
             {
                 warnings.Add($"{where} names bodyFile '{file}' which could not be read ({ex.Message}); it answers with an empty body.");

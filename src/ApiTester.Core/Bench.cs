@@ -75,6 +75,7 @@ public static class Bench
 
         async Task<Sample?> SendOnceAsync()
         {
+            var started = System.Diagnostics.Stopwatch.StartNew();
             try
             {
                 var response = await client.SendAsync(request, certificate, transport,
@@ -91,7 +92,9 @@ public static class Bench
             {
                 // A send that throws instead of returning an ApiResponse must not tear down the bench:
                 // it is one failed request, named by the exception that caused it.
-                return new Sample(0, null, ex.GetType().Name, false);
+                // Timed to the throw, so it neither drags the latency figures toward zero nor
+                // pretends to be instant.
+                return new Sample(started.Elapsed.TotalMilliseconds, null, ex.GetType().Name, false);
             }
         }
 

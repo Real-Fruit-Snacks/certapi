@@ -140,10 +140,13 @@ public sealed class VirtualHosts
         if (label.StartsWith("http--", StringComparison.Ordinal)) { scheme = "http"; label = label[6..]; }
         string host = label;
         int? port = null;
+        // The port marker is a "--" in the last label (api.corp--8443): a "--" before a dot belongs
+        // to the host itself — punycode's xn--bcher-kva.example, or my--host.corp.
         int sep = label.LastIndexOf("--", StringComparison.Ordinal);
-        if (sep > 0)
+        if (sep > 0 && label.IndexOf('.', sep) < 0)
         {
-            if (!int.TryParse(label[(sep + 2)..], out var p) || p <= 0 || p > 65535) return null;
+            if (!int.TryParse(label[(sep + 2)..], System.Globalization.NumberStyles.None,
+                    System.Globalization.CultureInfo.InvariantCulture, out var p) || p <= 0 || p > 65535) return null;
             host = label[..sep];
             port = p;
         }

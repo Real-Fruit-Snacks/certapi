@@ -79,3 +79,81 @@ public class PrereleaseOrderTests
     public void Prereleases_order_as_semver_says(string a, string b, int sign) =>
         Assert.Equal(sign, Math.Sign(ReleaseUpdater.CompareVersions(a, b)));
 }
+
+public class SseDispatchTests
+{
+    [Fact]
+    public async Task Blocks_with_no_data_are_not_events()
+    {
+        await using var server = new RawHttpServer(_ => RawHttpServer.Response(200, "OK",
+            "retry: 3000\n\nid: 7\n\ndata: hello\n\ndata:\n\n", "Content-Type: text/event-stream"));
+        var events = new List<SseEvent>();
+        await foreach (var e in SseClient.StreamAsync(server.BaseUrl + "/s")) events.Add(e);
+        Assert.Equal(2, events.Count);
+        Assert.Equal("hello", events[0].Data);
+        Assert.Equal("7", events[0].Id);
+        Assert.Equal("3000", events[0].Retry);
+        Assert.Equal("", events[1].Data);   // "data:" with no value is still an event
+    }
+}
+
+public class GatewaySweepTests
+{
+    [Theory]
+    [InlineData("xn--bcher-kva.example", "https://xn--bcher-kva.example")]
+    [InlineData("my--host.corp", "https://my--host.corp")]
+    [InlineData("api.corp--8443", "https://api.corp:8443")]
+    [InlineData("http--api.corp--8080", "http://api.corp:8080")]
+    public void A_host_with_double_dashes_is_still_a_host(string label, string expected) =>
+        Assert.Equal(expected, VirtualHosts.DecodeAuthority(label));
+
+    [Fact]
+    public void A_scenario_body_file_is_served_byte_for_byte()
+    {
+        var png = new byte[] { 0x89, 0x50, 0x4E, 0x47, 0xFF, 0xFE, 0x00, 0xC3 };
+        var scenario = MockScenario.Parse("""{"routes":[{"path":"/img","respond":{"bodyFile":"a.png"}}]}""",
+            readBytes: _ => png);
+        Assert.Empty(scenario.Warnings);
+        Assert.Equal(png, scenario.Routes[0].Next().Body);
+    }
+
+    [Fact]
+    public void Corrupt_brotli_is_left_alone_rather_than_failing()
+    {
+        Assert.Null(BodyRewriter.Decode(System.Text.Encoding.ASCII.GetBytes("<html>not brotli at all</html>"), "br"));
+    }
+}
+
+public class MockSweepTests
+{
+    [Fact]
+    public async Task A_message_sent_in_pieces_is_echoed_whole()
+    {
+        await using var srv = MockServer.Start(0, MockTlsMode.Http);
+        using var ws = new System.Net.WebSockets.ClientWebSocket();
+        await ws.ConnectAsync(new Uri("ws://127.0.0.1:" + srv.Port + "/ws"), default);
+        await ws.SendAsync("part1-"u8.ToArray(), System.Net.WebSockets.WebSocketMessageType.Text, endOfMessage: false, default);
+        await ws.SendAsync("part2"u8.ToArray(), System.Net.WebSockets.WebSocketMessageType.Text, endOfMessage: true, default);
+        var buffer = new byte[1024];
+        var all = new MemoryStream();
+        System.Net.WebSockets.WebSocketReceiveResult r;
+        do { r = await ws.ReceiveAsync(buffer, default); all.Write(buffer, 0, r.Count); } while (!r.EndOfMessage);
+        Assert.Equal("part1-part2", System.Text.Encoding.UTF8.GetString(all.ToArray()));
+    }
+
+    [Fact]
+    public async Task A_chunked_request_body_is_decoded_before_it_is_echoed()
+    {
+        await using var srv = MockServer.Start(0, MockTlsMode.Http);
+        using var http = new HttpClient();
+        var content = new StreamContent(new MemoryStream("{\"hello\":\"world\"}"u8.ToArray()));
+        content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/json");
+        using var req = new HttpRequestMessage(HttpMethod.Post, srv.BaseUrl + "echo") { Content = content };
+        req.Headers.TransferEncodingChunked = true;
+        using var resp = await http.SendAsync(req);
+        string body = await resp.Content.ReadAsStringAsync();
+        Assert.Contains("hello", body);
+        Assert.DoesNotContain("\\r\\n0\\r\\n", body);
+        Assert.DoesNotContain("11\\r\\n", body);
+    }
+}

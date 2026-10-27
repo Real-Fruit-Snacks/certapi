@@ -49,7 +49,6 @@ public static class SseClient
 
         var data = new StringBuilder();
         string? eventName = null, id = null, retry = null;
-        bool haveFields = false;
 
         while (!ct.IsCancellationRequested)
         {
@@ -58,14 +57,18 @@ public static class SseClient
 
             if (line.Length == 0)                       // blank line dispatches the pending event
             {
-                if (haveFields)
+                // Only an event with data is dispatched (the WHATWG rule): a block of just "retry:"
+                // or "id:" sets state for the stream, it is not a message. Its retry rides along
+                // on the next real event so it is still reported.
+                if (data.Length > 0)
                 {
                     string payload = data.ToString();
                     if (payload.EndsWith('\n')) payload = payload[..^1];   // trim the trailing separator
                     yield return new SseEvent(eventName, payload, id, retry);
+                    retry = null;
                 }
                 data.Clear();
-                eventName = null; retry = null; haveFields = false;
+                eventName = null;
                 continue;
             }
             if (line[0] == ':') continue;               // comment / keep-alive heartbeat
@@ -77,10 +80,10 @@ public static class SseClient
 
             switch (field)
             {
-                case "event": eventName = value; haveFields = true; break;
-                case "data": data.Append(value).Append('\n'); haveFields = true; break;
-                case "id": id = value; haveFields = true; break;
-                case "retry": retry = value; haveFields = true; break;
+                case "event": eventName = value; break;
+                case "data": data.Append(value).Append('\n'); break;
+                case "id": id = value; break;
+                case "retry": retry = value; break;
                 // unknown fields are ignored per the spec
             }
         }
