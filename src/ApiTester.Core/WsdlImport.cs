@@ -149,6 +149,7 @@ public static class WsdlImport
             : "http://schemas.xmlsoap.org/soap/envelope/";
 
         var parts = new List<string>();
+        bool allElements = true;
         string? inputRef = Local((string?)operation.Elements(Wsdl + "input").FirstOrDefault()?.Attribute("message"));
         if (inputRef is not null && messages.TryGetValue(inputRef, out var message))
         {
@@ -159,8 +160,9 @@ public static class WsdlImport
                 string? type = Local((string?)part.Attribute("type"));
                 // Document/literal names an element; RPC/encoded names a type. Either way the
                 // placeholder says which, so the person filling it in knows what to look up.
+                if (element is null) allElements = false;
                 parts.Add(element is not null
-                    ? $"      <!-- {partName}: element {element} — fill in from the schema -->\n      <{element}></{element}>"
+                    ? $"      <!-- {partName}: element {element} — fill in from the schema -->\n      <tns:{element}></tns:{element}>"
                     : $"      <!-- {partName}: type {type ?? "unknown"} — fill in from the schema -->\n      <{partName}></{partName}>");
             }
         }
@@ -168,6 +170,21 @@ public static class WsdlImport
         string body = parts.Count > 0
             ? string.Join("\n", parts)
             : "      <!-- this operation takes no parameters -->";
+
+        // Document/literal: the part's element IS the body's content (in the wrapped style, an
+        // element named after the operation) — wrapping it in the operation name again gives
+        // <tns:GetQuote><GetQuote/></tns:GetQuote>, which the service refuses. RPC style names
+        // types, and the operation element is the wrapper the parts go in.
+        if (parts.Count > 0 && allElements)
+            return $"""
+            <?xml version="1.0" encoding="UTF-8"?>
+            <soap:Envelope xmlns:soap="{envelopeNs}" xmlns:tns="{targetNamespace}">
+              <soap:Header/>
+              <soap:Body>
+            {body.Replace("\n      ", "\n    ").Replace("      <!--", "    <!--")}
+              </soap:Body>
+            </soap:Envelope>
+            """;
 
         return $"""
             <?xml version="1.0" encoding="UTF-8"?>

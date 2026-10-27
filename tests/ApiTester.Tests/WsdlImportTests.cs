@@ -86,6 +86,9 @@ public class WsdlImportTests
         // expanded, and a made-up instance would look authoritative while being wrong.
         Assert.Contains("element GetOrder", body);
         Assert.Contains("fill in from the schema", body, StringComparison.OrdinalIgnoreCase);
+        // Document/literal: the element is the body's content, not wrapped in the operation again.
+        Assert.Equal(1, System.Text.RegularExpressions.Regex.Matches(body, "<tns:GetOrder>").Count);
+        Assert.DoesNotContain("<GetOrder>", body);
     }
 
     [Fact]
