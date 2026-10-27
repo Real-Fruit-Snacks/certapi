@@ -92,6 +92,7 @@ public static class CliApp
           serve             Run a local mTLS gateway in front of one site or many
           grpc              Discover and call a gRPC service (all four method kinds)
           mcp               Run an MCP server so AI agents can make mTLS calls
+          completion        Tab completion for PowerShell (certapi completion powershell)
           help [command]    Show help (for one command, or this overview)
 
         Global options (work on every command, anywhere on the line):
@@ -185,6 +186,8 @@ public static class CliApp
     {
         services ??= new CliServices();
         if (args.Length == 0) { stderr.WriteLine(Usage); return ExitCodes.Usage; }
+        // Tab completion passes the words being typed verbatim; none of them are options to act on.
+        if (args[0] == "__complete") return Commands.CompletionCommand.RunComplete(args[1..], stdout, services);
 
         (string[] Remaining, bool Debug, string? LogFile, string? Config, string? Profile, bool NoConfig,
          bool Trace, string? TraceFile, IReadOnlyList<string> TraceFilters, bool TraceVerbose, bool TraceIncludeSecrets) g;
@@ -227,6 +230,7 @@ public static class CliApp
                 "proxy" => Commands.ProxyCommand.Run(new Args(rest), stdout, err, services),
                 "connections" => Commands.ConnectionsCommand.Run(new Args(rest), stdout, err, services),
                 "config" => Commands.ConfigCommand.Run(new Args(rest), stdout, err, services),
+                "completion" => Commands.CompletionCommand.Run(new Args(rest), stdout, err),
                 _ => throw new CliUsageException($"Unknown command '{g.Remaining[0]}'.\n{Usage}")
             };
         }
@@ -364,6 +368,7 @@ public static class CliApp
         "proxy" => Commands.ProxyCommand.Help,
         "connections" => Commands.ConnectionsCommand.Help,
         "config" => Commands.ConfigCommand.Help,
+        "completion" => Commands.CompletionCommand.Help,
         _ => null
     };
 

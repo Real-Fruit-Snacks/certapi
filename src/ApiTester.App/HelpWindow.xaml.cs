@@ -501,7 +501,7 @@ public partial class HelpWindow : Window
             "certapi grpc list <address> discovers the services and methods a gRPC server advertises via server reflection; certapi grpc call <address> <Service/Method> -d '<json>' invokes one — unary, server-streaming, client-streaming, or bidirectional, chosen from the method's own definition — with your Windows-store client certificate attached exactly as send uses it. A response prints as JSON — one compact object per line for a streaming method as each arrives — and --max-messages <n> stops a stream early. See the note below for what this command deliberately does not do.",
             "certapi mcp runs a Model Context Protocol server so an AI agent can make mTLS calls with a certificate you pin at launch, bounded by a host allowlist — send_request, list_certificates, list_saved, run_saved, and self_test tools over stdio.",
             "certapi import / export move cURL commands, OpenAPI documents, and whole workspaces in and out.",
-            "Exit codes are script-friendly: 0 success, 1 failure, 2 usage error, 3 data error. Run certapi <command> --help for all options."),
+            "Exit codes are script-friendly: 0 success, 1 failure, 2 usage error, 3 data error. Run certapi <command> --help for all options, and certapi completion powershell | Out-String | Invoke-Expression for tab completion."),
         Sub("BENCHING AN ENDPOINT"),
         P("certapi bench sends the same request over and over down the same client-certificate path " +
           "the rest of the tool uses, so what it measures is what a real send does. Percentiles come " +

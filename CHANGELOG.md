@@ -19,6 +19,11 @@ All notable changes to this project are documented here. The format follows
 - **`send -I/--head`**, **`send -A/--user-agent`**, **`send --query name=value`** (encoded, repeatable),
   and **`-d @file`** reads the body from a file, as in curl.
 
+- **Tab completion for PowerShell**: `certapi completion powershell | Out-String | Invoke-Expression`.
+  Completes commands, subcommands, every option of the command being typed, HTTP methods,
+  certificates in your store, profile names, environments, collections, and the fixed choices of
+  options such as `--store` and `--revocation`. The script asks the binary, so it stays current.
+
 ### Changed
 - Single-letter options are now case-sensitive (`-x` is no longer read as `-X`). Long options are
   still case-insensitive.

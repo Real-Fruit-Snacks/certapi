@@ -46,6 +46,7 @@ other.
 | [`proxy [<url>]`](#proxy) | Show proxy settings, and which proxy a URL gets |
 | [`connections <url>`](#connections) | Are connections actually being reused? |
 | [`config`](#config) | Show the configuration file and profile in effect |
+| [`completion`](#completion) | Tab completion for PowerShell |
 | `help [command]` | Show help for a command |
 
 ## Global options
@@ -1199,3 +1200,35 @@ command behaves in a way you did not expect, `certapi config path` and then `--n
 two steps that separate "my configuration did this" from "the tool did this".
 
 Exit 0 when the configuration could be read, 3 when a named file does not exist, 2 for usage.
+
+## completion
+
+```
+certapi completion powershell
+```
+
+Prints a PowerShell script that adds tab completion for `certapi` (Windows PowerShell 5.1 and
+PowerShell 7). Load it for the session, or add the line to your profile to have it every time:
+
+```powershell
+certapi completion powershell | Out-String | Invoke-Expression
+Add-Content $PROFILE 'certapi completion powershell | Out-String | Invoke-Expression'
+```
+
+What completes:
+
+| Where | What |
+|---|---|
+| First word | Commands |
+| After a command with subcommands | `trust add`, `config show`, `import curl`, `grpc call`, … |
+| A word starting with `-` | Every option of the command being typed, plus the global options |
+| After `-X` | HTTP methods |
+| After `--cert` (and `trust --ca`) | Thumbprints and subjects of the certificates in your store |
+| After `--profile` | Profile names from the configuration file in effect |
+| After `--env` | Environment names from your workspace |
+| After `run` | Collection names |
+| After `--store`, `--revocation`, `--tls-min`, `--grant`, `--client-auth`, `--tls-mode` | Their fixed choices |
+
+Anything else, such as a path, falls through to PowerShell's own file completion. The script asks
+the binary for each completion, so it stays right after an update. Only PowerShell is supported;
+`certapi completion <other>` says so.

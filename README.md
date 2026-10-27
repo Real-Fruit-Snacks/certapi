@@ -38,7 +38,7 @@ Two front ends over one engine (`ApiTester.Core`). The desktop app covers everyt
 | `certapi import` / `certapi export` | cURL, Postman, OpenAPI, HAR, workspaces, markdown notes |
 | `certapi mcp` | Model Context Protocol server for an AI agent, behind a host allowlist |
 
-Also: `certs`, `trust`, `proxy`, `connections`, `config`, `selftest`. `certapi <command> --help` lists every flag, curl habits (`-k`, `-i`, `-u`, `-d @file`, …) work, and a mistyped flag names the one you meant; the [CLI reference](wiki/21-CLI-Reference.md) has them on one page.
+Also: `certs`, `trust`, `proxy`, `connections`, `config`, `selftest`, and `completion` for PowerShell tab completion. `certapi <command> --help` lists every flag, curl habits (`-k`, `-i`, `-u`, `-d @file`, …) work, and a mistyped flag names the one you meant; the [CLI reference](wiki/21-CLI-Reference.md) has them on one page.
 
 ```powershell
 certapi send https://internal.corp/api/orders --cert "CN=matt"
