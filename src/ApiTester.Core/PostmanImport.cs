@@ -153,7 +153,8 @@ public static class PostmanImport
                 if (body.TryGetProperty("urlencoded", out var fields) && fields.ValueKind == JsonValueKind.Array)
                     model.Body = string.Join("&", fields.EnumerateArray()
                         .Where(f => !(Bool(f, "disabled") ?? false))
-                        .Select(f => $"{Uri.EscapeDataString(Str(f, "key") ?? "")}={Uri.EscapeDataString(Str(f, "value") ?? "")}"));
+                        // {{variables}} stay as written so they still resolve; the text around them is encoded.
+                        .Select(f => $"{Esc(Str(f, "key") ?? "")}={Esc(Str(f, "value") ?? "")}"));
                 model.ContentType = "application/x-www-form-urlencoded";
                 break;
 
@@ -266,4 +267,6 @@ public static class PostmanImport
         o.ValueKind == JsonValueKind.Object && o.TryGetProperty(name, out var v) &&
         v.ValueKind is JsonValueKind.True or JsonValueKind.False
             ? v.GetBoolean() : null;
+
+    private static string Esc(string s) => VariableResolver.EscapeOutsideTokens(s, Uri.EscapeDataString);
 }

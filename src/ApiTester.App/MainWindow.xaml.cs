@@ -2553,7 +2553,8 @@ public partial class MainWindow : Window
         CaptureControlsInto(model);
         var (url, headers, body, _) = ResolveActive(preserveVariables: true);
         if (string.IsNullOrWhiteSpace(url)) return null;
-        return new CodeRequest(model.Method, url, headers, body, model.IgnoreServerCert, model.CertThumbprint);
+        return new CodeRequest(model.Method, url, headers, body, model.IgnoreServerCert, model.CertThumbprint,
+                               string.IsNullOrEmpty(body) ? null : model.ContentType);
     }
 
     private void TrySetClipboard(string text, string ok)

@@ -65,7 +65,13 @@ public static class OpenApiExporter
     private static void AddOperation(
         JsonObject paths, ParsedRequest r, string? tag, string? server, HashSet<string> authSchemes)
     {
-        var (pathKey, query, opServer) = SplitUrl(r.Url, r.BaseUrl ?? server);
+        // Judged against the document's server, not the request's own base: a request whose URL
+        // lives elsewhere (another host in the same HAR, another base) gets a path-level override.
+        var (pathKey, query, opServer) = SplitUrl(r.Url, server);
+        if (opServer is null && server is not null && NormalizeServer(r.BaseUrl) is { } own &&
+            !own.Equals(server, StringComparison.OrdinalIgnoreCase) &&
+            !Uri.TryCreate(QueryString.Split(r.Url ?? "").Path, UriKind.Absolute, out _))
+            opServer = own;
 
         var op = new JsonObject();
         if (tag is not null) op["tags"] = new JsonArray(tag);
@@ -148,7 +154,9 @@ public static class OpenApiExporter
             (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps))
         {
             string origin = uri.GetLeftPart(UriPartial.Authority);
-            if (server is not null && rawPath.StartsWith(server, StringComparison.OrdinalIgnoreCase))
+            // A prefix at a segment boundary: https://a/v1 contains https://a/v1/items, not https://a/v10.
+            if (server is not null && rawPath.StartsWith(server, StringComparison.OrdinalIgnoreCase) &&
+                (rawPath.Length == server.Length || rawPath[server.Length] == '/'))
             {
                 string rest = rawPath[server.Length..];
                 return (EnsureLeadingSlash(rest), query, null);

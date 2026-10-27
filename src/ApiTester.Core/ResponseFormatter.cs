@@ -27,12 +27,19 @@ public sealed class ResponseFormatter
         return new(BodyKind.Binary, HexDump(body));
     }
 
+    private static readonly JsonSerializerOptions PrettyOptions = new()
+    {
+        WriteIndented = true,
+        Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+    };
+
     private static bool TryJson(byte[] body, out string pretty)
     {
         try
         {
-            using var doc = JsonDocument.Parse(body);
-            pretty = JsonSerializer.Serialize(doc.RootElement, new JsonSerializerOptions { WriteIndented = true });
+            using var doc = JsonDocument.Parse(Utf8Json.Body(body));
+            // Relaxed escaping: the pretty view shows José and <b> as written, not as \u00E9 and \u003C.
+            pretty = JsonSerializer.Serialize(doc.RootElement, PrettyOptions);
             return true;
         }
         catch (JsonException)

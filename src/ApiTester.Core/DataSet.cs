@@ -16,17 +16,19 @@ public static class DataSet
             ? ParseJson(text) : ParseCsv(text);
     }
 
-    /// <summary>Parse CSV with a header row; quoted fields may contain commas and "" escapes.</summary>
+    /// <summary>Parse CSV with a header row; quoted fields may contain commas, line breaks and ""
+    /// escapes (RFC 4180). Blank lines are skipped; a leading byte-order mark is not a header.</summary>
     public static List<IReadOnlyDictionary<string, string>> ParseCsv(string text)
     {
         var rows = new List<IReadOnlyDictionary<string, string>>();
-        var lines = text.Replace("\r\n", "\n").Split('\n').Where(l => l.Length > 0).ToList();
-        if (lines.Count < 2) return rows;
+        if (text.Length > 0 && text[0] == '\uFEFF') text = text[1..];
+        var records = Records(text).Where(r => !(r.Count == 1 && r[0].Length == 0)).ToList();
+        if (records.Count < 2) return rows;
 
-        var headers = SplitLine(lines[0]).Select(h => h.Trim()).ToList();
-        for (int i = 1; i < lines.Count; i++)
+        var headers = records[0].Select(h => h.Trim()).ToList();
+        for (int i = 1; i < records.Count; i++)
         {
-            var fields = SplitLine(lines[i]);
+            var fields = records[i];
             var row = new Dictionary<string, string>(StringComparer.Ordinal);
             for (int c = 0; c < headers.Count; c++)
                 if (headers[c].Length > 0)
@@ -34,6 +36,43 @@ public static class DataSet
             rows.Add(row);
         }
         return rows;
+    }
+
+    /// <summary>The records of a CSV text, read quote-aware over the whole text so a quoted field
+    /// may span lines.</summary>
+    private static IEnumerable<List<string>> Records(string text)
+    {
+        var fields = new List<string>();
+        var sb = new StringBuilder();
+        bool inQuotes = false;
+        for (int i = 0; i < text.Length; i++)
+        {
+            char ch = text[i];
+            if (inQuotes)
+            {
+                if (ch == '"')
+                {
+                    if (i + 1 < text.Length && text[i + 1] == '"') { sb.Append('"'); i++; }
+                    else inQuotes = false;
+                }
+                else sb.Append(ch);
+            }
+            else if (ch == '"') inQuotes = true;
+            else if (ch == ',') { fields.Add(sb.ToString()); sb.Clear(); }
+            else if (ch is '\r' or '\n')
+            {
+                if (ch == '\r' && i + 1 < text.Length && text[i + 1] == '\n') i++;
+                fields.Add(sb.ToString()); sb.Clear();
+                yield return fields;
+                fields = new List<string>();
+            }
+            else sb.Append(ch);
+        }
+        if (sb.Length > 0 || fields.Count > 0)
+        {
+            fields.Add(sb.ToString());
+            yield return fields;
+        }
     }
 
     /// <summary>Parse a JSON array of objects; each value is stringified (a string as-is, else its JSON).</summary>
@@ -56,30 +95,5 @@ public static class DataSet
             rows.Add(row);
         }
         return rows;
-    }
-
-    private static List<string> SplitLine(string line)
-    {
-        var fields = new List<string>();
-        var sb = new StringBuilder();
-        bool inQuotes = false;
-        for (int i = 0; i < line.Length; i++)
-        {
-            char ch = line[i];
-            if (inQuotes)
-            {
-                if (ch == '"')
-                {
-                    if (i + 1 < line.Length && line[i + 1] == '"') { sb.Append('"'); i++; }
-                    else inQuotes = false;
-                }
-                else sb.Append(ch);
-            }
-            else if (ch == '"') inQuotes = true;
-            else if (ch == ',') { fields.Add(sb.ToString()); sb.Clear(); }
-            else sb.Append(ch);
-        }
-        fields.Add(sb.ToString());
-        return fields;
     }
 }

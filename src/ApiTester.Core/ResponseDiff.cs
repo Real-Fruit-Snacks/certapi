@@ -241,7 +241,7 @@ public static class ResponseDiff
     private static JsonDocument? TryParseJson(byte[] body)
     {
         if (body.Length == 0) return null;
-        try { return JsonDocument.Parse(body); }
+        try { return JsonDocument.Parse(Utf8Json.Body(body)); }
         catch (JsonException) { return null; }
     }
 

@@ -60,7 +60,9 @@ public static class HarToCollection
             string[] segments = uri.AbsolutePath.Split('/', StringSplitOptions.RemoveEmptyEntries);
             bool[] isCandidate = segments.Select(s => options.TemplateIds && IsIdentifierCandidate(s)).ToArray();
 
-            string shapeKey = method + " /" + string.Join("/",
+            // The origin is part of the shape: /users/1 on a.example and /users/2 on b.example are
+            // two APIs' operations, and grouping them would keep only the first one's origin.
+            string shapeKey = uri.GetLeftPart(UriPartial.Authority) + " " + method + " /" + string.Join("/",
                 segments.Select((s, i) => isCandidate[i] ? "" : s));
 
             if (!shapeGroups.TryGetValue(shapeKey, out var group))

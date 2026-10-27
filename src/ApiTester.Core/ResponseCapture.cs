@@ -22,7 +22,7 @@ public static class ResponseCapture
         }
 
         JsonDocument doc;
-        try { doc = JsonDocument.Parse(body); }
+        try { doc = JsonDocument.Parse(Utf8Json.Body(body)); }
         catch (JsonException) { return (null, "response body is not JSON"); }
 
         using (doc)

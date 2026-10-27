@@ -115,19 +115,24 @@ public static class MarkdownExport
     /// number.</summary>
     private static void DisambiguateTitles(List<ExportedRequest> requests)
     {
+        // Keyed on the name the note is actually written under: "a/b" and "a:b" are two titles but
+        // one file name (a-b.md), and on Windows case does not tell two files apart either.
         var seen = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        static string Key(string t) => Sanitize(t, "Untitled request");
         foreach (var request in requests)
         {
             string title = request.Title;
-            if (!seen.ContainsKey(title)) { seen[title] = 1; continue; }
+            if (!seen.ContainsKey(Key(title))) { seen[Key(title)] = 1; continue; }
 
             string candidate = request.Folders.Count > 0
                 ? $"{title} ({request.Folders[^1]})"
                 : title;
-            while (seen.ContainsKey(candidate))
-                candidate = $"{title} ({++seen[title]})";
+            int n = seen[Key(title)];
+            while (seen.ContainsKey(Key(candidate)))
+                candidate = $"{title} ({++n})";
+            seen[Key(title)] = n;
 
-            seen[candidate] = 1;
+            seen[Key(candidate)] = 1;
             request.Title = candidate;
         }
     }

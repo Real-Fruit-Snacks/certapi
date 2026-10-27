@@ -157,3 +157,77 @@ public class MockSweepTests
         Assert.DoesNotContain("11\\r\\n", body);
     }
 }
+
+public class ParsingSweepTests
+{
+    [Fact]
+    public void A_quoted_csv_field_may_span_lines_and_a_bom_is_not_a_header()
+    {
+        var rows = DataSet.ParseCsv("﻿id,note\r\n1,\"line one\nline two\"\r\n2,\"a,b\"\r\n");
+        Assert.Equal(2, rows.Count);
+        Assert.Equal("line one\nline two", rows[0]["note"]);
+        Assert.Equal("1", rows[0]["id"]);
+        Assert.Equal("a,b", rows[1]["note"]);
+    }
+
+    [Fact]
+    public void Json_with_a_utf8_bom_is_still_json()
+    {
+        var body = new byte[] { 0xEF, 0xBB, 0xBF }.Concat(System.Text.Encoding.UTF8.GetBytes("{\"id\":5,\"name\":\"José <b>\"}")).ToArray();
+        var formatted = new ResponseFormatter().Format(new ApiResponse { StatusCode = 200, Body = body, ContentType = "application/json" });
+        Assert.Equal(BodyKind.Json, formatted.Kind);
+        Assert.Contains("José <b>", formatted.Text);
+        var capture = ResponseCapture.Extract(new CaptureSpec("id", false, "id"), body, "application/json", Array.Empty<KeyValuePair<string, string>>());
+        Assert.Equal("5", capture.Value);
+    }
+
+    [Fact]
+    public void A_har_with_two_hosts_keeps_both_hosts_operations()
+    {
+        string Entry(string url) => $$$"""{"startedDateTime":"2026-01-01T00:00:00Z","time":1,"request":{"method":"GET","url":"{{{url}}}","httpVersion":"HTTP/1.1","headers":[],"queryString":[],"cookies":[],"headersSize":-1,"bodySize":0},"response":{"status":200,"statusText":"OK","httpVersion":"HTTP/1.1","headers":[],"cookies":[],"content":{"size":0,"mimeType":"application/json"},"redirectURL":"","headersSize":-1,"bodySize":0},"cache":{},"timings":{"send":0,"wait":1,"receive":0}}""";
+        string har = "{\"log\":{\"version\":\"1.2\",\"creator\":{\"name\":\"t\",\"version\":\"1\"},\"entries\":[" +
+                     string.Join(",", Entry("https://a.example/users/1"), Entry("https://b.example/users/2"),
+                                      Entry("https://b.example/health"), Entry("https://a.example/health")) + "]}}";
+        var collection = HarToCollection.Group(HarReader.Parse(har));
+        var urls = Flatten(collection).Select(r => (r.BaseUrl ?? "") + r.Url).ToList();
+        Assert.Contains(urls, u => u.Contains("a.example") && u.Contains("users"));
+        Assert.Contains(urls, u => u.Contains("b.example") && u.Contains("users"));
+        Assert.Contains(urls, u => u.Contains("a.example") && u.Contains("health"));
+        Assert.Contains(urls, u => u.Contains("b.example") && u.Contains("health"));
+
+        static IEnumerable<ParsedRequest> Flatten(ParsedCollection c) => c.Requests.Concat(c.Folders.SelectMany(Flatten));
+    }
+
+    [Fact]
+    public void Postman_form_bodies_keep_their_variables_resolvable()
+    {
+        string json = """{"info":{"name":"c","schema":"https://schema.getpostman.com/json/collection/v2.1.0/collection.json"},"item":[{"name":"token","request":{"method":"POST","url":"https://idp/token","body":{"mode":"urlencoded","urlencoded":[{"key":"client_secret","value":"{{clientSecret}}"},{"key":"scope","value":"a b"}]}}}]}""";
+        var result = PostmanImport.Parse(json);
+        string body = Find(result.Root).Request!.Body!;
+        Assert.Contains("client_secret={{clientSecret}}", body);
+        Assert.Contains("scope=a%20b", body);
+
+        static CollectionNode Find(CollectionNode n) => n.Request is not null ? n : n.Children.Select(Find).First(x => x is not null);
+    }
+
+    [Fact]
+    public void An_openapi_server_prefix_matches_at_a_segment_boundary()
+    {
+        var c = new ParsedCollection { Name = "c", BaseUrl = "https://a/v1" };
+        c.Requests.Add(new ParsedRequest { Method = "GET", Url = "https://a/v10/items" });
+        string json = OpenApiExporter.ToJson(c);
+        Assert.DoesNotContain("\"/0/items\"", json);
+        Assert.Contains("/v10/items", json);
+    }
+
+    [Theory]
+    [InlineData("12", "<", "1,5", false)]
+    [InlineData("1.2", "<", "1.5", true)]
+    public void Numbers_in_assertions_are_not_read_with_thousands_separators(string actual, string op, string expected, bool pass)
+    {
+        var rule = AssertionParser.Parse($"body price {op} {expected}");
+        var result = AssertionEvaluator.Evaluate(new[] { rule },
+            new ApiResponse { StatusCode = 200, Body = System.Text.Encoding.UTF8.GetBytes($"{{\"price\":{actual}}}"), ContentType = "application/json" });
+        Assert.Equal(pass, result.Single().Passed);
+    }
+}

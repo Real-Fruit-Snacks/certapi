@@ -87,7 +87,7 @@ public static class AssertionEvaluator
     {
         if (body.Length == 0) return null;
         JsonDocument doc;
-        try { doc = JsonDocument.Parse(body); }
+        try { doc = JsonDocument.Parse(Utf8Json.Body(body)); }
         catch (JsonException) { return null; }
         using (doc)
         {
@@ -124,8 +124,10 @@ public static class AssertionEvaluator
         catch (RegexMatchTimeoutException) { return false; } // a runaway pattern never matches
     }
 
+    // Float, not Any: Any accepts thousands separators, so "1,5" read as 15 and a European
+    // decimal comma silently compared against the wrong number.
     private static bool TryNum(string? s, out double n) =>
-        double.TryParse(s, System.Globalization.NumberStyles.Any,
+        double.TryParse(s?.Trim(), System.Globalization.NumberStyles.Float,
             System.Globalization.CultureInfo.InvariantCulture, out n);
 
     private static string Describe(AssertionRule rule)

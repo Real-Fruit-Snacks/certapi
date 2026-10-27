@@ -115,6 +115,10 @@ public static class InsomniaImport
                     Value = Translate(Str(p, "value") ?? "", name, warnings),
                     Enabled = !(Bool(p, "disabled") ?? false)
                 });
+        // A query typed into the URL itself, with no parameter rows, is the request's query too.
+        if (model.QueryParams.Count == 0 && q >= 0)
+            foreach (var kv in RequestUrl.SplitForEditing(url).Params)
+                model.QueryParams.Add(new ParamRow { Key = kv.Key, Value = kv.Value });
 
         if (request.TryGetProperty("headers", out var headers) && headers.ValueKind == JsonValueKind.Array)
             foreach (var h in headers.EnumerateArray())
@@ -161,8 +165,9 @@ public static class InsomniaImport
             {
                 model.Body = string.Join("&", formParams.EnumerateArray()
                     .Where(p => !(Bool(p, "disabled") ?? false))
-                    .Select(p => $"{Uri.EscapeDataString(Str(p, "name") ?? "")}=" +
-                                 $"{Uri.EscapeDataString(Translate(Str(p, "value") ?? "", name, warnings))}"));
+                    // {{variables}} stay as written so they still resolve; the text around them is encoded.
+                    .Select(p => $"{VariableResolver.EscapeOutsideTokens(Str(p, "name") ?? "", Uri.EscapeDataString)}=" +
+                                 $"{VariableResolver.EscapeOutsideTokens(Translate(Str(p, "value") ?? "", name, warnings), Uri.EscapeDataString)}"));
                 model.ContentType = "application/x-www-form-urlencoded";
             }
             return;
