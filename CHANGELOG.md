@@ -28,6 +28,101 @@ All notable changes to this project are documented here. The format follows
 - The virtual-host tests skip, with the reason, on a Windows session that cannot bind
   `http://+:<port>/` (not elevated, no URL reservation) instead of failing after a long run of
   connection retries; CI still runs them. A gateway that exits before listening now fails its test at once.
+- `serve --record` replaces the HAR file with this session (the help said "append"; it never did).
+- `trust add` refuses `--thumbprint` together with `--ca <t>`/`--spki <b64>` (one of them was
+  silently dropped), and a bare `--ca`/`--spki` without `--from-url`. `token --client-auth` refuses
+  anything but `body` or `basic`. `run <file.har>` and `--diff-har` refuse `--har`, `--md`,
+  `--cookies`, `--data`, `--env`, `--var` and the other options a replay does not use.
+- A second Ctrl+C always ends the process, so a command waiting on stdin (`mcp`, `fuzz -w -`) can be stopped.
+- The release workflow builds the tag it names on a manual run, and stops when a project's
+  `<Version>` does not match the tag.
+
+### Fixed
+- **Security.**
+  - An issuer pin (`trust add --ca`) accepted a certificate whose signature did not verify, as long
+    as it named the pinned CA, and waived a certificate issued for another name. It now needs a
+    validly signed chain up to the CA and the right name.
+  - A followed redirect to another host was judged by the first host's pins. It is now judged by
+    the pins of the host it reached.
+  - Windows credentials (`--windows-auth`) were offered to any host a redirect pointed at. A typed
+    `Cookie` or `Proxy-Authorization` header was carried there too.
+  - OAuth token requests followed a 307 and replayed the client secret or password. They now stop
+    and say where the redirect pointed.
+  - `serve --vhost --listen 127.0.0.1` answered the whole network without `--token`.
+  - A `--cookie-jar` round trip widened host-only cookies to every subdomain.
+  - Response credential headers (a login's `Set-Cookie`, token headers) were saved in the clear in
+    history and known-good snapshots. They are now encrypted, and stripped by `export workspace`.
+  - `--wire` printed secrets that arrived in a chunk shown as hex, or split across two reads.
+  - HAR files, notes, wire logs and gateway recordings now share one credential-header rule, which
+    covers `X-Api-Key`, `X-Auth-Token` and similar.
+  - OpenAPI exports wrote header and query secrets as examples. Vault notes kept credential fields
+    in bodies. A doctor note for an unparseable URL put its password in the title.
+- **Requests.**
+  - A body header given as a header (`Content-Type`, `Content-Encoding`, `Content-Language`) was
+    dropped by `bench`, MCP `send_request`, the gateway and the rendered view.
+  - A `--pac` script that could not be fetched or run sent the request DIRECT. It now fails the send.
+  - A token captured after a redirect was stored for the host the request started at.
+  - `send --diff known-good` found no saved request whose URL uses `{{variables}}`.
+  - `doctor` ignored `--connect-timeout` and `--tls-min`.
+  - `grpc` ignored the profile's proxy and revocation settings.
+- **The command line.**
+  - Global options before `mcp`, `ws` or `sse` made the command unknown, and `fuzz -w -` and `grpc`
+    lost stdin that way.
+  - Options after a bare `--` were still read.
+  - `--opt=--value` was refused.
+  - The NO_PROXY warning reached only the streaming commands.
+  - `ws` waited for end-of-input before connecting when run at a terminal. It now sends each typed
+    line. A broken connection exits 1 instead of 0.
+  - MCP ran a tool for a request sent without an id.
+  - `bench -n 5` without `-c` was refused.
+  - `--max-body` could overflow into a 413 for every request.
+  - `serve --tls` would not start after its certificate was renewed near expiry, and
+    `--tls-untrust` missed a certificate it had replaced.
+  - `doctor --md-vault` overwrote a note written in the same second.
+  - Completion did not know some options take a value.
+- **Imports and exports.**
+  - Paste as cURL:
+    - took the value of an option it does not use (`--cert`, `-o`, `-m`) as the URL;
+    - mangled backslashes inside double quotes;
+    - did not read `$'…'` or Chrome's "Copy as cURL (cmd)" format;
+    - ignored `-XPUT`-style clusters, `-G`, `--json`, `-I` and `-F`.
+  - Copy as code:
+    - wrote curl and PowerShell that broke on `\`, `$`, `'` or backticks;
+    - never set the body's content type;
+    - dropped `\r`.
+  - Postman and Insomnia form bodies percent-encoded `{{variables}}`, and an Insomnia URL's own
+    query was dropped.
+  - A HAR with two hosts lost operations of one of them.
+  - OpenAPI path-level servers were never written, and a server prefix matched mid-segment.
+  - A WSDL document/literal envelope wrapped the element in the operation again.
+  - Two vault notes could get the same file name.
+  - CSV data rows split quoted fields that contain line breaks.
+  - JSON with a UTF-8 byte-order mark was not JSON to assertions, captures, diffs or the pretty view.
+  - The pretty view escaped non-ASCII text.
+  - Assertion numbers read `1,5` as 15.
+  - Pre-release versions compared as text (`beta.10` before `beta.9`).
+- **Gateway and mock.**
+  - SSE blocks without data were reported as events.
+  - The mock echoed only the first frame of a WebSocket message sent in pieces, did not decode
+    chunked request bodies, served `bodyFile` through UTF-8, and kept every finished connection in memory.
+  - Corrupt brotli turned into a 502.
+  - A host with `--` in it (`xn--…`) could not be a virtual host.
+  - `serve --tls` stored its certificate for HTTP.sys with a key that did not outlive the process.
+  - A bench send that threw counted as 0 ms.
+- **The desktop app.**
+  - A response landed on whichever tab was open when it arrived.
+  - An unexpected error ended the app without saving. It now saves and shows the error.
+  - Session capture kept tokens after Cancel, and could crash on an address it could not open or a
+    double Finish.
+  - Opening the rendered view twice quickly fetched every page resource twice.
+  - A tab's certificate was lost when the certificate filter hid it, or when it was missing from the store.
+  - An HTTP method outside the list (PURGE, PROPFIND) became the previous tab's method.
+  - Installing an update could restart under a running request or an open window.
+  - Chain notes appeared on the previous step's row.
+  - Closing a run window let the run keep changing the workspace.
+  - A window saved on a monitor to the left of the primary one reopened in the default place.
+  - Middle-click did not close a tab.
+  - Folder defaults lost a certificate that was not in the store.
 
 ## [1.94.0] - 2026-10-27
 

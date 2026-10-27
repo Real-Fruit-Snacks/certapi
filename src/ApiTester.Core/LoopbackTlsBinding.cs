@@ -138,7 +138,20 @@ public static class LoopbackTlsBinding
         {
             store.Open(OpenFlags.ReadWrite);
             var existing = store.Certificates.Find(X509FindType.FindByThumbprint, thumbprint, validOnly: false);
-            if (existing.Count == 0) store.Add(certificate);
+            if (existing.Count == 0)
+            {
+                // HTTP.sys runs as SYSTEM and reads the key from the machine's key store. The cached
+                // certificate's key lives in a temporary per-user container that goes when this
+                // process does, so it is stored again with its key persisted for the machine.
+                X509Certificate2? persisted = null;
+                try
+                {
+                    persisted = X509CertificateLoader.LoadPkcs12(certificate.Export(X509ContentType.Pkcs12), (string?)null,
+                        X509KeyStorageFlags.MachineKeySet | X509KeyStorageFlags.PersistKeySet);
+                }
+                catch (System.Security.Cryptography.CryptographicException) { /* not exportable: add it as it is */ }
+                using (persisted) store.Add(persisted ?? certificate);
+            }
         }
 
         string command = BuildAddCommand(port, thumbprint);
