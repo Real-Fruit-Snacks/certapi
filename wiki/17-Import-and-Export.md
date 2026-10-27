@@ -1,7 +1,7 @@
 # 17. Import & Export
 
-Move requests in and out — from a cURL command, from an OpenAPI/Swagger document, and whole
-workspaces.
+Move requests in and out — from a cURL command, an OpenAPI/Swagger document, a HAR capture, and
+whole workspaces.
 
 ## Import a cURL command
 
@@ -27,6 +27,25 @@ certapi import openapi .\petstore.json --workspace .\suite.json
 ```
 
 Paths, methods, base servers, and operation names come across so you can start sending immediately.
+
+## Import a HAR file
+
+Turn a captured session — a browser's DevTools export, or a `--har` capture from `certapi` — into
+saved requests:
+
+```powershell
+certapi import har .\session.har
+certapi import har .\session.har --into "captured" --workspace .\suite.json
+```
+
+In the app: **Import ▾ › Import HAR file…** on the request-tab strip.
+
+Each entry in the archive becomes one saved request, in order, in a collection named after the
+file; each is named after its method and path. Headers come across except HTTP/2 pseudo-headers
+(`:authority`, …) and `Host`. A text request body comes across with its content type; a binary body
+has no text form for a saved request and is left empty. A value the capture redacted stays
+redacted, so put the real credential back before sending. To replay the archive as it was recorded
+instead, use [`certapi run <file.har>`](21-CLI-Reference.md#run).
 
 ## Import a Postman collection
 
@@ -81,8 +100,10 @@ Reads a WSDL 1.1 document (and the SOAP 1.2 binding variant) and turns each oper
 - the right content type — `text/xml` plus a `SOAPAction` header for SOAP 1.1, or
   `application/soap+xml;…;action="…"` for SOAP 1.2, where the action travels in the content type
   instead;
-- an **envelope skeleton** in the correct envelope namespace, with the operation element in the
-  service's target namespace and one placeholder per message part.
+- an **envelope skeleton** in the correct envelope namespace. For a document/literal operation
+  (its message parts name elements), the body holds each part's element itself, in that element's
+  own schema namespace. For an RPC operation (its parts name types), the body is an operation
+  element in the service's target namespace, wrapping one placeholder per part.
 
 **Deliberately minimal, and worth understanding before you use it.** Types are *not* expanded from
 the schema: each part becomes a commented placeholder naming its element or type
@@ -119,9 +140,11 @@ Hand it to a teammate (or check it into source control) and they import it, or p
 with `--workspace team-setup.json`.
 
 Secrets — captured tokens and cookies, a saved request's auth secret, **a saved proxy password**,
-and any variable marked **secret** — are **stripped by default**, since an exported workspace is a file people end up
-emailing to each other. The rest of the export is unaffected: a secret variable keeps its key and its
-flag, just not its value. Add `--include-secrets` to keep them instead:
+any variable marked **secret**, history response bodies, credential response headers in history,
+and known-good snapshots — are **stripped by default**, since an exported workspace is a file people
+end up emailing to each other. The rest of the export is unaffected: a secret variable keeps its key
+and its flag, just not its value, and a history entry keeps its method, URL, status and header
+names. Add `--include-secrets` to keep them instead:
 
 ```powershell
 certapi export workspace -o team-setup.json --include-secrets

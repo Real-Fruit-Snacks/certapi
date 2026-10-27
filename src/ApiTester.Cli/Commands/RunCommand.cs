@@ -42,8 +42,9 @@ public static class RunCommand
           --json                  JSON results instead of the table
           --har <file>            Capture the whole suite (every request, and every redirect hop)
                                   as one HAR file, written once when the run finishes
-          --har-include-secrets   Don't redact Authorization/Proxy-Authorization/Cookie/
-                                  Set-Cookie values in the captured HAR (redacted by default)
+          --har-include-secrets   Keep credential header values in the captured HAR (Authorization,
+                                  Cookie, Set-Cookie, token, secret and API-key headers;
+                                  redacted by default)
           --md <file>             Also write the run as a markdown note: a pass/fail table, each
                                   failed assertion with what arrived instead, per-request timing,
                                   and totals in frontmatter so a vault can chart a suite's health
@@ -493,6 +494,12 @@ public static class RunCommand
 
         string path = file ?? Path.Combine(vault!,
             RunReportMarkdown.VaultPath(report, when).Replace('/', Path.DirectorySeparatorChar));
+        // One note per run, always: two runs in the same second (a loop, a CI matrix) get -2, -3…
+        if (file is null && File.Exists(path))
+        {
+            string stem = Path.Combine(Path.GetDirectoryName(path) ?? "", Path.GetFileNameWithoutExtension(path));
+            for (int n = 2; File.Exists(path); n++) path = $"{stem}-{n}.md";
+        }
         try
         {
             if (Path.GetDirectoryName(path) is { Length: > 0 } folder) Directory.CreateDirectory(folder);

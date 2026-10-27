@@ -65,8 +65,6 @@ certapi run --all --workspace .\suite.json --no-record --json
 if ($LASTEXITCODE -ne 0) { throw "API smoke tests failed" }
 ```
 
-Next: [Capturing Values](12-Capturing-Values.md).
-
 ## Keeping a run: `--md`
 
 A run tells you what passed today. A folder of run notes tells you whether a suite is getting
@@ -90,7 +88,9 @@ Captured variables are listed **by name only**, never by value: a captured value
 credential the next step authenticates with, and these notes go into folders that sync.
 Credential-looking query values are redacted too; `--md-include-secrets` keeps them.
 
-`--md-vault` files reports as `certapi/runs/<name>-<timestamp>.md`, a new note per run — the
-history a trend needs is never overwritten. If the report cannot be written the command says so and
-still exits on the run's own verdict: a build must not turn green or red because of a folder
-permission.
+`--md-vault` files reports as `certapi/runs/<name>-<timestamp>.md`, one note per run — the
+history a trend needs is never overwritten. A second run in the same second gets `-2`, `-3`, … on its
+name. If the report cannot be written the command says so and still exits on the run's own verdict:
+a build must not turn green or red because of a folder permission.
+
+Next: [Capturing Values](12-Capturing-Values.md).

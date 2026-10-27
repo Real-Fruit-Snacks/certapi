@@ -15,6 +15,7 @@ ApiTester.sln
 ├─ src/
 │  ├─ ApiTester.Core/   # the engine: HTTP/mTLS, model, state, parsing, streaming, OAuth, mock…
 │  ├─ ApiTester.Cli/    # certapi — the command-line client (Commands/*)
+│  ├─ ApiTester.Grpc/   # gRPC calls: reflection, descriptor sets, Protobuf JSON
 │  └─ ApiTester.App/    # the WPF desktop app
 ├─ tests/
 │  └─ ApiTester.Tests/  # xUnit tests (Core + CLI + a few WPF load smokes)
@@ -31,8 +32,11 @@ behavior is testable without the GUI (graphical user interface).
 
 ```powershell
 dotnet build   -c Release
-dotnet test    -c Release
+dotnet test    -c Release --filter "Category!=StoreRoundTrip"
 ```
+
+The `StoreRoundTrip` tests write a certificate into your Windows certificate store and remove it
+again; the filter leaves them out, as CI does. Drop the filter to run them too.
 
 The test suite is fast and self-contained — it spins up loopback mTLS (mutual Transport Layer
 Security)/HTTP (Hypertext Transfer Protocol) servers in memory (no
@@ -66,6 +70,11 @@ These bundle the .NET runtime, so they run on any Windows 10/11 x64 machine with
 Releases are cut by pushing a `v*` tag; CI (continuous integration) builds the self-contained
 executables, attaches the starter
 wordlist, and bundles a **full source zip** of the repository at that tag. See `.github/workflows/`.
+
+Before tagging, set `<Version>` in `src/ApiTester.App/ApiTester.App.csproj` and
+`src/ApiTester.Cli/ApiTester.Cli.csproj` to the tag's version (`v1.95.0` → `1.95.0`); the workflow
+refuses a tag that does not match. A manual run of the release workflow builds the tag you type,
+not the branch it was started from.
 
 ## Contributing
 

@@ -9,8 +9,8 @@ like any other request, so it works against APIs protected by mTLS (mutual Trans
 
 ## In the app
 
-Open the discovery window from the collections area, pick a base website and certificate, choose (or
-accept the built-in) wordlist, and run. Results are a filterable grid of paths and outcomes; promising
+Open the discovery window with the **Discover…** button at the right of the request-tab strip, pick
+a base website and certificate, choose (or accept the built-in) wordlist, and run. Results are a filterable grid of paths and outcomes; promising
 ones can be opened as requests or saved into a collection.
 
 ## On the command line
@@ -26,8 +26,9 @@ certapi fuzz https://api.example.com -w .\paths.txt -X GET,POST --cert "CN=My Cl
 - **`-w, --wordlist <file|->`** — endpoints to probe, one per line (`-` reads stdin). **Omit it** to
   use the built-in starter list — a curated ~270 paths organized by category (operational, API roots &
   docs, authentication, common resources, debug, and commonly-exposed sensitive paths). Handy for a
-  fast first pass, but bring your own larger list for exhaustive mapping. Lines starting with `#` are
-  comments.
+  fast first pass, but bring your own larger list for exhaustive mapping. A line is `PATH` or
+  `METHOD PATH`, and a full `https://` URL on a line overrides the base URL. Lines starting with `#`
+  are comments. With `-w -`, a second Ctrl+C quits at once.
 - **`-X, --methods <list>`** — comma-separated methods per path (default `GET`).
 
 ## Reading the results

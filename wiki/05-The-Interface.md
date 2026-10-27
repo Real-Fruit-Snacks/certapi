@@ -41,9 +41,8 @@ Beneath the request line:
 | **Body** | Text body or a `multipart/form-data` form; see [Building Requests](07-Building-Requests.md) |
 | **Auth** | Auth type: Auto, None, Bearer, Basic, Windows Integrated — plus **Get OAuth 2.0 token…** |
 | **Capture** | Rules that save response values into `{{variables}}`; see [Capturing Values](12-Capturing-Values.md) |
+| **Transport** | Proxy, revocation, redirects, decompression, HTTP version and retries for this request; see [Settings & Toggles](28-Settings-and-Toggles.md#transport) |
 | **Tests** | Assertions that pass/fail the response; see [Testing & Assertions](11-Testing-and-Assertions.md) |
-
-Above the tabs sits **Copy as ▾** (turn the request into a cURL / PowerShell / Python / C# snippet).
 
 ## The response panel
 
@@ -55,18 +54,23 @@ After you send, the lower panel fills in:
 | **Raw** | The exact response bytes as text, with a **find** box |
 | **Headers** | Response headers |
 | **Diagnostics** | TLS (Transport Layer Security) version, cipher, whether your client cert was presented, the server chain |
+| **Diff** | This response compared against a baseline: the saved request's known-good response, or a HAR file |
 | **Rendered** | The URL loaded as a web page (with your certificate) |
 | **Network** | A browser-style trace of every HTTP (Hypertext Transfer Protocol) call, including resources the Rendered view fetched |
 
-Use the **pop-out** button to detach a view — or the whole panel — into its own window. See
+The response toolbar has **Copy body**, and next to it **Copy as ▾** (turn the request into a cURL /
+PowerShell / Python / C# snippet), plus **Save…**. Use the **pop-out** button to detach a view — or the whole panel — into its own window. See
 [Response Views](16-Response-Views.md).
 
 ## Tabs and the sidebar
 
 - **Request tabs** across the top let you keep several requests open at once (`Ctrl+T` new,
-  `Ctrl+W` close).
-- The **sidebar** (`Ctrl+H`) holds **Collections** (your saved library) and **History** (recent
-  requests). See [Collections & History](10-Collections-and-History.md).
+  `Ctrl+W` close). At the right of the tab strip sit **Discover…** ([endpoint
+  discovery](14-Endpoint-Discovery.md)) and **Import ▾** (cURL, OpenAPI, HAR and workspace import and
+  export, and **Trusted certificates…**).
+- The **sidebar** (`Ctrl+H`) holds **Collections** (your saved library), **History** (recent
+  requests) and **Chains** (saved request sequences). See
+  [Collections & History](10-Collections-and-History.md).
 
 ## The status bar
 

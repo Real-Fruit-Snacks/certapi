@@ -33,6 +33,16 @@ public sealed class ApiClient : IDisposable
         // ignoring whichever setting lost.
         if (ValidateTransport(transport, request.Url) is { } problem)
             return new ApiResponse { Error = new ApiError(ApiErrorKind.Unknown, problem) };
+        // A header name the HTTP stack cannot send (a space, an accent) would be dropped without a
+        // word, and the request would go out without it.
+        foreach (var header in request.Headers)
+            if (header.Key.Length == 0 || header.Key.Any(c => !IsTokenChar(c)))
+                return new ApiResponse
+                {
+                    Error = new ApiError(ApiErrorKind.Unknown,
+                        $"Invalid request: '{header.Key}' is not a valid header name (letters, digits and !#$%&'*+-.^_`|~ only).")
+                };
+
         // A URL this client cannot send (htps://, data:, a browser HAR's chrome-extension:) is one
         // failed request, not an exception that ends a whole run.
         if (!Uri.TryCreate(request.Url, UriKind.Absolute, out var target) ||
@@ -920,6 +930,10 @@ public sealed class ApiClient : IDisposable
     // (inside the ConnectCallback above) and the lookup side (BuildConnection in SendOnceAsync) so
     // the two can never disagree about which origin a connection belongs to.
     private static string OriginKey(Uri uri) => uri.Host.Trim('[', ']').ToLowerInvariant() + ":" + uri.Port;
+
+    private static bool IsTokenChar(char c) =>
+        c is >= 'a' and <= 'z' or >= 'A' and <= 'Z' or >= '0' and <= '9' ||
+        "!#$%&'*+-.^_`|~".IndexOf(c) >= 0;
 
     /// <summary>Scheme, host and port: what "the same origin" means for a credential.</summary>
     internal static string OriginKeyOf(Uri uri) => uri.Scheme.ToLowerInvariant() + "://" + OriginKey(uri);

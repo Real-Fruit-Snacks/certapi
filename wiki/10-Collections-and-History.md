@@ -54,8 +54,11 @@ Everything above lives in a **workspace**:
 Export/import whole workspaces from [Import & Export](17-Import-and-Export.md):
 
 ```powershell
-certapi export workspace -o team-setup.json   # strips secrets by default — see below
+certapi export workspace -o team-setup.json   # strips secrets by default
 ```
+
+What an export strips, and how `--include-secrets` keeps it, is in
+[Export a whole workspace](17-Import-and-Export.md#export-a-whole-workspace).
 
 > **A note on the CLI and the live workspace:** while the app is open, headless runs **skip writing
 > results** back to the live state (the app would overwrite them when it closes). Scheduled/CI runs

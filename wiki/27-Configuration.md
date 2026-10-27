@@ -16,9 +16,11 @@ certapi send https://api.internal/orders --profile corp
 ## The file
 
 The quickest start is `certapi config init`, which writes your per-user file with one profile and
-every field below present but commented out (`--local` writes `certapi.config.json` in the current
-directory instead; `--cert` and `--proxy` fill those two in). It never overwrites an existing file
-without `--force`.
+the common fields present but commented out (`keyFile`, `noProxy`, `revocationStrict`, `insecure`
+and `workspace` are left out). `--local` writes `certapi.config.json` in the current directory
+instead, and `--path <file>` (or the global `--config <file>`) writes anywhere. `--name` names the
+profile (default `default`), which is written as `defaultProfile`; `--cert` and `--proxy` fill those
+two in. It never overwrites an existing file without `--force`.
 
 `certapi.config.json` — JSON, with `//` comments and trailing commas allowed, because people edit
 these by hand:
@@ -51,7 +53,13 @@ these by hand:
 
 Every field is optional, and each command reads only the fields it understands — a profile with a
 proxy in it never breaks `certapi certs`. Profiles are read when they are used, so a mistake (or an
-unset `${env:…}`) in one profile never stops another from working.
+unset `${env:…}`) in one profile never stops another from working. Profile names are
+case-insensitive.
+
+A field's JSON type matters. At a profile's top level, numbers (`retry`, `timeout`,
+`connectTimeout`) must be JSON numbers and switches must be `true` or `false`; a quoted `"60"` or
+`"true"` is an error naming the field. Inside `serve`, a value of the wrong type is ignored, so
+check a gateway profile with `certapi config show`.
 
 | Field | The flag it stands for |
 |---|---|
@@ -65,10 +73,10 @@ unset `${env:…}`) in one profile never stops another from working.
 | `connectTimeout` | `--connect-timeout`, in seconds |
 | `revocation`, `revocationStrict` | `--revocation`, `--revocation-strict` |
 | `retry` | `--retry` |
-| `timeout` | `--timeout`, in seconds (not for `serve`, which takes `serve.timeout`) |
+| `timeout` | `--timeout`, in seconds. Read only by `send` (`serve` takes `serve.timeout`) |
 | `insecure` | `--insecure` |
-| `workspace` | `--workspace` (not for `serve`) |
-| `headers` | Standing headers added to every request `send` and `run` make (collections and HAR replay), unless the command line or the saved request sets the same name |
+| `workspace` | `--workspace`. Read only by `send` and `run` |
+| `headers` | Standing headers added to every request `send` and `run` make (collections and HAR replay), unless the command line or the saved request sets the same name. Read only by `send` and `run` |
 | `serve` | A whole gateway for `certapi serve` — [below](#a-gateway-in-a-profile) |
 
 ## Where it is found
@@ -77,13 +85,15 @@ First match wins:
 
 1. **`--config <path>`** — named explicitly. A path that does not exist is an error, not a
    fall-through to some other file.
-2. **`CERTAPI_CONFIG`** — an environment variable naming a file.
+2. **`CERTAPI_CONFIG`** — an environment variable naming a file. A file it names that does not
+   exist is an error too.
 3. **`certapi.config.json`** — found by walking **up** from the working directory, so a
    per-repository configuration works from anywhere inside it.
 4. **`%APPDATA%\certapi\config.json`** — your personal default.
 
 `--no-config` ignores all four. That is how a run is made reproducible regardless of what happens
-to sit in a parent directory — worth using in continuous integration.
+to sit in a parent directory — worth using in continuous integration. `--profile <name>` when no
+configuration file is found is an error, not a run without the profile you asked for.
 
 ## Precedence
 
@@ -153,7 +163,7 @@ list whole, and the gateway says so.
 
 ## Secrets stay out of the file
 
-Any value may contain `${env:NAME}`, read from the environment when the file is loaded:
+Any string value may contain `${env:NAME}`, read from the environment when the profile is used:
 
 ```jsonc
 { "profiles": { "corp": { "proxyUser": "svc:${env:PROXY_PASSWORD}" } } }

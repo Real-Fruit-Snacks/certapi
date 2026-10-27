@@ -19,7 +19,7 @@ certapi send https://internal.corp/api --cert 4A8823F1C0...      # thumbprint
 ```
 
 By default only your user store (`CurrentUser`) is searched. Add `--store LocalMachine` to also search
-the machine store:
+the machine store; a certificate present in both is listed once:
 
 ```powershell
 certapi certs                       # list what's available
@@ -86,8 +86,7 @@ Use it for internal/self-signed servers you already trust — not the public int
 ## Checking for revocation
 
 Trusting the server's certificate and checking whether it has been **revoked** are two more separate
-questions. By default certapi does neither kind of revocation check — `--revocation none`, matching
-every release before this one, so nothing changes unless you opt in:
+questions. `--revocation` defaults to `none` (no check), so nothing changes unless you opt in:
 
 - **`--revocation offline`** consults cached certificate revocation lists (CRLs) only, never reaching
   the network.

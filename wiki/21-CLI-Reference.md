@@ -63,7 +63,7 @@ These work on **every** command, before or after its own options.
 | `--no-config` | off | Ignore configuration files entirely. Every command then behaves exactly as it did before profiles existed, which is what makes it the right first step when a command behaves oddly. Not with `--config` or `--profile` |
 | `--trace` | off | Report what the network stack itself did — DNS, TCP, TLS handshake, connection reuse, request lifecycle. Redacted by default; see [Watching the network stack](#watching-the-network-stack) |
 | `--trace-verbose` / `--trace-file <path>` / `--trace-filter <s>` | off | More detail, a file instead of stderr, or only lines containing these substrings (repeatable). Each one turns `--trace` on by itself |
-| `--trace-include-secrets` | off | Keep credential values in the trace instead of redacting them |
+| `--trace-include-secrets` | off | Keep credential values in the trace instead of redacting them. Needs `--trace`, or an option that turns it on |
 
 Global options take the `--name=value` form too (`--profile=corp`), a single-value one given twice is
 a usage error, and nothing after `--` is read as one. `certapi --version` (or `-v`) prints the
@@ -75,7 +75,7 @@ version.
 An option whose value is a list may be given more than once, and the occurrences add up:
 `--noproxy a.corp --noproxy .lab` is `--noproxy a.corp,.lab`. That holds for `-H`, `-F`, `--var`,
 `--param`, `--assert`, `--capture`, `--ca-file`, `--resolve`, `--noproxy`, `--retry-on`,
-`--trace-filter`, `--diff-ignore`, `--diff-ignore-header`; `-d` on `grpc` (one message each);
+`--trace-filter`, `--diff-ignore`, `--diff-ignore-header`; `--query` on `send`; `-d` on `grpc` (one message each);
 `--for` on `token`; `-m`/`--message` on `ws`; `--allow` on `mcp`; and on `serve` for `--upstream`,
 `--routes`, `--allow`, `--cors <origins>` and the four header-rule options.
 
@@ -139,15 +139,20 @@ Script against these; they are stable.
 The distinction is deliberate: **1 means the command worked and the answer was no**; 2 and 3 mean
 the command never ran. A build script usually wants to treat those differently.
 
+One exception: [`connections`](#connections) exits 3 when none of its requests got through, since
+it has nothing to report.
+
 ---
 
 ## Shared option blocks
 
 ### Certificate options
 
-Accepted by [`send`](#send), [`run`](#run), [`fuzz`](#fuzz), [`bench`](#bench), [`sse`](#sse),
+Accepted by [`send`](#send), [`fuzz`](#fuzz), [`bench`](#bench), [`sse`](#sse),
 [`ws`](#ws), [`grpc`](#grpc), [`mcp`](#mcp), [`serve`](#serve), [`token`](#token),
-[`doctor`](#doctor), [`connections`](#connections) and [`trust`](#trust).
+[`doctor`](#doctor) and [`connections`](#connections). [`run`](#run) and [`trust`](#trust) accept
+every option here **except `--insecure`**: on `run` they apply only to a HAR replay, and on `trust`
+only to `--from-url`.
 
 | Option | Default | What it does |
 |---|---|---|
@@ -239,7 +244,7 @@ either way. `--insecure` overrides both, and says so when it does.
 | `--sni <name>` | the URL's host | Send a different server name in the TLS handshake. Direct connections only — a proxy tunnel's TLS is negotiated by the HTTP stack from the URL, so `--sni` with any proxy that applies (explicit, PAC, system or environment) is refused. The server's certificate is then checked against the name sent, so a certificate that names only the URL's host needs a pin or `--insecure` |
 | `--pac <url\|file>` | the machine's | Decide the proxy for each URL with this PAC script, through WinHTTP's own engine, when the machine's configured PAC is not the one the job needs. Windows only |
 | `--no-env-proxy` | off | Ignore `HTTP_PROXY`, `HTTPS_PROXY` and `NO_PROXY` from the environment and use the machine's proxy settings — for the shell whose stale variables point at a proxy that is no longer there |
-| `--offline` | off | Touch nothing on the network but the request itself: no revocation fetch, no AIA chase, no captive-portal probe, no PAC download. For the air-gapped network, and for proving a request needs nothing it should not |
+| `--offline` | off | Touch nothing on the network but the request itself: no AIA chase, no online revocation (`--revocation online` is refused), and `doctor` skips its internet probe. The proxy decision is unchanged: add `--no-proxy` or `--proxy` when WPAD or a PAC script must not be fetched either. For the air-gapped network, and for proving a request needs nothing it should not |
 | `-4` / `-6` (`--ipv4` / `--ipv6`) | both | Dial only IPv4 or only IPv6 on direct connections, for the host whose AAAA record resolves but whose IPv6 route does not |
 
 **Not supported: a proxy that requires a client certificate.** `--proxy https://…` reaches the proxy
@@ -310,8 +315,8 @@ Accepts the [certificate](#certificate-options), [transport](#transport-options)
 | `-H, --header "k: v"` | none | Add a header. Repeatable |
 | `-A, --user-agent <ua>` | .NET's | Set the `User-Agent` header |
 | `--query name=value` | none | Add a query parameter to the URL, percent-encoded, after any query the URL already has. Repeatable; `name` alone sends `name=` |
-| `-d, --data <body>` | none | Request body. Implies POST unless `-X` says otherwise. As in curl, `-d @file` reads the body from a file |
-| `--data-file <path>` | none | Read the body from a file instead, without interpreting a leading `@` — for a body too large or too awkward to quote on a command line |
+| `-d, --data <body>` | none | Request body; `-d @file` reads it from a file. Implies POST unless `-X` says otherwise (as in curl) |
+| `--data-file <path>` | none | Read the body from a file instead, without interpreting a leading `@` — for a body too large or too awkward to quote on a command line. Implies POST unless `-X` says otherwise |
 | `-F, --form name=value` | none | A `multipart/form-data` field. `name=@path` uploads a file; `name=@path;type=<ct>` sets that part's content type. Repeatable, implies POST, and mutually exclusive with `-d` |
 | `--graphql <query>` | none | Send a GraphQL query as a correctly formed `{query, variables}` POST |
 | `--gql-variables <json>` | none | A JSON object of GraphQL variables to go with it |
@@ -404,7 +409,7 @@ size and equality only.
 | Option | Default | What it does |
 |---|---|---|
 | `--har <file>` | none | Write the request and response — and every redirect hop — as an HTTP Archive file when the command finishes |
-| `--har-include-secrets` | off | Keep the credentials in that archive, which are redacted by default: `Authorization`, `Proxy-Authorization`, `Cookie` and `Set-Cookie` header values, credential-looking query parameters, and a `user:password@` prefix in any recorded URL. See the note below on what redaction does **not** cover |
+| `--har-include-secrets` | off | Keep the credentials in that archive, which are redacted by default: the values of credential headers — `Authorization`, `Proxy-Authorization`, `Cookie`, `Set-Cookie`, `X-Api-Key`, `X-Auth-Token`, and any header named like a token, secret, password, API key, session or credential (CORS `Access-Control-*` headers and `WWW-Authenticate` are never redacted) — credential-looking query parameters, and a `user:password@` prefix in any recorded URL. See the note above on what redaction does **not** cover |
 | `--wire` | off | Print the **plaintext bytes** of the exchange: the request exactly as it was framed and the response exactly as it arrived, with hex and ASCII side by side for anything that is not text |
 | `--wire-file <path>` | stdout | Write that transcript to a file instead |
 | `--wire-include-secrets` | off | Keep credential header values in it. The header *name* is kept either way |
@@ -427,7 +432,7 @@ and no administrator rights, because the tool is one end of the connection. See
 | `--trace-filter <substrings>` | none | Keep only lines containing any of these, comma-separated. It is genuinely a firehose |
 | `--trace-file <path>` | stderr | Write the trace to a file instead |
 | `--trace-verbose` | off | Add the runtime's *internal* diagnostics: far more detail, far less stable. Useful, never something to parse |
-| `--trace-include-secrets` | off | Keep credential values in event payloads, redacted by default |
+| `--trace-include-secrets` | off | Keep credential values in event payloads, redacted by default. Needs `--trace`, or one of the options above that turns it on |
 
 The trace is redacted by default: every `Authorization`, `Cookie`, `Set-Cookie` and API-key-shaped header line in an event loses its value and keeps its name, and a URL in an event loses its `user:password@` and any credential-named query value (`access_token`, `sig`, `code`, …). `WWW-Authenticate` and `Proxy-Authenticate` are kept, because a failing proxy or SSO handshake is what a trace is read for.
 
@@ -451,6 +456,9 @@ later [`send`](#send) calls attach it automatically.
 Accepts the [certificate](#certificate-options) and
 [streaming transport](#transport-options-streaming-subset) blocks — the token endpoint itself often
 requires mutual TLS, and one pinned with [`trust add`](#trust) needs no `--insecure`.
+
+A redirect from the token endpoint is never followed, because the request body carries the secret:
+the command fails and names where the redirect pointed.
 
 ### Grant type
 
@@ -502,24 +510,31 @@ Saved tokens are encrypted at rest for your Windows user — see
 certapi run <Collection[/Folder][/Request]> [options]
 certapi run --all [options]
 certapi run --chain <name> [options]
+certapi run <file.har> [--cert … | --cert-file …] [options]
 ```
 
 Runs saved requests as a **pass/fail suite**. A request passes when its assertions all pass, or —
 if it has none — on any 2xx. **Exit 1 if any request fails**, which is what makes this usable in a
 build.
 
-Accepts the [certificate](#certificate-options), [transport](#transport-options) and
-[variable](#variable-options) blocks.
+Accepts the [transport](#transport-options) and [variable](#variable-options) blocks, and the
+[certificate options](#certificate-options) without `--insecure`. The certificate options apply
+only to a `<file.har>` or `--diff-har` replay: a saved request presents its own certificate, so a
+`--cert` given for a collection, `--all` or chain run is ignored.
 
 ### What to run
 
 | Option | Default | What it does |
 |---|---|---|
-| *(positional)* | — | A collection, folder, or single request by path: `"Orders"`, `"Orders/Get orders"` |
+| *(positional)* | — | A collection, folder, or single request by path: `"Orders"`, `"Orders/Get orders"`. Or a `<file.har>`: replays the captured archive's entries in order with the certificate you name; an entry has no assertions, so any 2xx passes; nothing is saved |
 | `--all` | off | Run every saved request in the workspace |
 | `--chain <name>` | none | Run a saved chain: its requests, in the order the chain names them, as one unit — so a token captured by one step is available to the next through its `{{variable}}`. Steps report PASS/FAIL; a failing step stops the chain unless it is marked to carry on, and the steps that never ran are reported as **SKIP** rather than dropped. Captures write into the environment the chain names, created on first use; an explicit `--env` beats it |
 | `--data <file>` | none | A CSV or JSON dataset: run the request once per row, with each row's columns available as `{{variables}}`. See [Data-Driven Runs](13-Data-Driven-Runs.md) |
 | `--diff-har <file.har>` | none | Replay a captured session and compare each response against the one it recorded, which turns a capture into a regression test. An entry passes only when its diff is identical — the status is part of the diff — and any difference exits 1. There is deliberately no `--diff-fail` here, because diffing the capture *is* the flag |
+
+A replay (a `<file.har>` positional or `--diff-har`) sends the archive's own requests as recorded,
+so it refuses `--har`, `--md`, `--md-vault`, `--cookies`, `--cookie-jar`, `--data`, `--env`,
+`--var`, `--strict-vars`, `--no-auto-token`, `--record` and `--no-record` (exit 2).
 
 ### Behaviour
 
@@ -538,9 +553,9 @@ Accepts the [certificate](#certificate-options), [transport](#transport-options)
 |---|---|---|
 | `--json` | off | A JSON envelope of results instead of the table |
 | `--har <file>` | none | Capture the whole suite — every request and every redirect hop — as one HTTP Archive |
-| `--har-include-secrets` | off | Keep credential header values in that archive |
+| `--har-include-secrets` | off | Keep credential header values in that archive (the same credential headers [`send --har`](#capturing-the-exchange) redacts) |
 | `--md <file>` | none | Write the run as a markdown note: a pass/fail table with per-request timings, each failed assertion **and what arrived instead**, and `total`/`passed`/`failed` in frontmatter so a vault can chart a suite's health over time. A chain's report is numbered in step order, shows skipped steps, and links each step back to its request note from [`export markdown`](#export). Captured variables are listed **by name only** — a captured value is usually the credential the next step authenticates with |
-| `--md-vault <folder>` | none | File that report as `certapi/runs/<name>-<timestamp>.md` instead: a new note per run, so the history a trend needs is never overwritten |
+| `--md-vault <folder>` | none | File that report as `certapi/runs/<name>-<timestamp>.md` instead: a new note per run, so the history a trend needs is never overwritten. A second run in the same second gets `-2`, `-3`, … |
 | `--md-include-secrets` | off | Keep credential-looking query values in the report |
 
 A report that cannot be written warns without changing the exit code: a build must not turn green
@@ -567,7 +582,7 @@ Accepts the [certificate](#certificate-options), [transport](#transport-options)
 
 | Option | Default | What it does |
 |---|---|---|
-| `-w, --wordlist <file>` | built-in | Paths to probe, one per line. `-` reads from stdin, so it composes with any tool that produces a list. Omit it entirely for the built-in starter list |
+| `-w, --wordlist <file>` | built-in | Paths to probe, one per line: `PATH`, or `METHOD PATH`; a full `https://` URL on a line overrides the base URL; blank lines and `#` comments are ignored. `-` reads from stdin, so it composes with any tool that produces a list (a second Ctrl+C then quits at once). Omit it entirely for the built-in starter list |
 | `-X, --methods <list>` | `GET` | Comma-separated methods to try against each path. `GET,POST,OPTIONS` finds endpoints that exist but reject a GET |
 
 ### Request
@@ -592,6 +607,9 @@ Accepts the [certificate](#certificate-options), [transport](#transport-options)
 With none of `--all`, `--match` or `--hide`, the table hides 404s and connection errors — the same
 noise the desktop app hides, because a wordlist run is mostly misses by design.
 
+Probes never follow redirects: a 3xx is itself a discovery signal, so the redirect options have no
+effect here.
+
 ### Output
 
 | Option | Default | What it does |
@@ -602,7 +620,7 @@ noise the desktop app hides, because a wordlist run is mostly misses by design.
 | `--workspace <file>` | live state | Use a workspace file instead of the live state |
 | `-q, --quiet` | off | No progress counter on stderr |
 | `--har <file>` | none | Capture every probe as one HTTP Archive |
-| `--har-include-secrets` | off | Keep credential header values in it |
+| `--har-include-secrets` | off | Keep credential header values in it (the same credential headers [`send --har`](#capturing-the-exchange) redacts) |
 
 ---
 
@@ -705,10 +723,15 @@ present a client certificate like any other TLS connection.
 |---|---|---|
 | `-H, --header "k: v"` | none | Add a header to the handshake. Repeatable — this is where a subprotocol or an auth header goes |
 | `-m, --message <text>` | none | Send this text after connecting. Repeatable, in order |
-| `--expect <n>` | unlimited | Stop after receiving *n* messages. Makes a request/response exchange scriptable |
+| `--expect <n>` | unlimited | Stop after receiving *n* messages. Makes a request/response exchange scriptable. `--expect 0` means send only: nothing is waited for |
 | `-q, --quiet` | off | No connect/send/close notices on stderr |
 | `--workspace <file>` | live state | Read trust pins and captured tokens from a workspace file |
 | `--no-auto-token` | off | Do not attach a captured bearer token to the handshake |
+
+Lines piped on stdin are sent as text messages after the `-m` values. At a terminal, each line you
+type is sent as it is entered. Received text messages print to stdout as they arrive, and a binary
+frame prints as `[binary N bytes]`. Runs until the server closes, `--expect` is reached, or Ctrl+C.
+Exit 0 on a clean close; exit 1 when the connection fails or breaks, including under `--expect`.
 
 ---
 
@@ -765,7 +788,7 @@ A local test server to fire requests at. Runs until Ctrl+C. See [Mock Server](18
 |---|---|---|
 | `--port <n>` | `8770` | Port to listen on. `0` picks a free one |
 | `--http` | **default** | Plain HTTP — hit it with anything, no certificates involved |
-| `--tls` | off | HTTPS with a generated self-signed server certificate |
+| `--tls` | off | HTTPS with a generated server certificate for `localhost`, issued by the mock's own certificate authority (`mock-ca.cer`) |
 | `--mtls` | off | HTTPS that **also requires** a client certificate. Any certificate is accepted; the point is to exercise the presenting side |
 | `--cert-dir <dir>` | `./certapi-mock-certs` | Where generated certificates are written |
 | `-q, --quiet` | off | Do not log each request |
@@ -786,9 +809,9 @@ expire, or talking a colleague into breaking a staging server.
 
 | Option | Default | What it does |
 |---|---|---|
-| `--routes <file>` | built-in | Serve the routes declared in a JSON scenario file instead of the built-in echo routes. Each route says what it **matches** (method, path glob or regular expression, required query and headers) and what it **answers** (status, headers, an inline body or a `bodyFile`). Matched top to bottom, first match winning |
+| `--routes <file>` | built-in | Serve the routes declared in a JSON scenario file instead of the built-in routes (a miss gets the scenario's fallback, or 404). Each route says what it **matches** (method, path glob or regular expression, required query and headers) and what it **answers** (status, headers, an inline body or a `bodyFile`). Matched top to bottom, first match winning |
 | `--har <file>` | none | Replay a captured HTTP Archive instead: each request is answered with the recorded response for that method and path — query included when it disambiguates — in recorded order |
-| `--no-match-status <code>` | `404` | The status for a request that matches nothing in the archive |
+| `--no-match-status <code>` | `404` | The status for a request that matches nothing in the archive. Only with `--har` |
 
 With both `--routes` and `--har`, a request the routes miss **falls through to the recording**, so a
 scenario can override a few endpoints of a captured session and leave the rest as recorded.
@@ -809,8 +832,8 @@ Bring requests in from somewhere else. See [Import & Export](17-Import-and-Expor
 
 | Kind | Source | Notes |
 |---|---|---|
-| `curl` | a quoted cURL command | Understands `-X`, `-H`, `-d`, `-u`, `-k`, bearer headers, quoting and line continuations |
-| `openapi` | a `.json`/`.yaml` document | One saved request per operation, organised by tag |
+| `curl` | a quoted cURL command | Understands `-X`, `-H`, `-d`, `-u`, `-k`, `-G`, `--json`, `-I`, `-F`, clusters such as `-XPUT`, bearer headers, quoting (including bash `$'…'`) and line continuations, and Chrome's "Copy as cURL (cmd)" `^"` format. The values of options it does not use (`--cert`, `-o`, `-m`, …) are skipped |
+| `openapi` | a `.json` document (YAML is refused with a message: convert it to JSON first) | One saved request per operation, organised by tag |
 | `har` | a `.har` archive | A captured session becomes saved requests |
 | `postman` | a Collection v2.0/v2.1 export | Folders, both URL forms, query rows, headers (disabled stays disabled), raw/urlencoded/formdata bodies, bearer/basic/apikey auth with request-level beating folder and collection level, and collection variables as an environment (Postman's "secret" type stays secret here) |
 | `insomnia` | a v4 export | Folders rebuilt from the flat resource list, disabled rows preserved, text and form bodies, bearer and basic auth, environments. `{{ _.name }}` is translated to `{{name}}` |
@@ -857,7 +880,7 @@ a security scheme description only, never the secrets.**
 
 Writes the whole workspace as a portable JSON file, with window geometry stripped. Secrets —
 captured tokens and cookies, saved auth values, saved proxy passwords, secret environment variables,
-and stored response bodies — are **stripped by default**, since an exported workspace is a file people email to each
+history response bodies and credential response headers, and known-good snapshots — are **stripped by default**, since an exported workspace is a file people email to each
 other. `--include-secrets` keeps them, written **encrypted for the current Windows user**, so even
 then a recipient on another machine cannot read them. The command reports on stderr what was
 stripped or kept.
@@ -883,7 +906,7 @@ catalogue should record.
 
 ```
 certapi trust list   [--workspace <file>] [--json]
-certapi trust add    <host> (--thumbprint <t> | --ca <t> | --spki [<sha256>] | --from-url <https-url>) [--workspace <file>]
+certapi trust add    <host> (--thumbprint <t> | --ca <t> | --spki <b64> | --from-url <https-url> [--ca | --spki]) [--workspace <file>]
 certapi trust remove <host> [--thumbprint <t>] [--workspace <file>]
 ```
 
@@ -894,15 +917,22 @@ verification off everywhere.
 | Option | Applies to | Default | What it does |
 |---|---|---|---|
 | `--thumbprint <t>` | `add` | — | Pin this exact SHA-1 thumbprint for the host. Colons, spaces and lower case are fine; it is stored as the 40 upper-case hex digits a certificate reports. Anything that is not a SHA-1 thumbprint (a SHA-256 fingerprint, say) is refused rather than stored as a pin that can never match |
-| `--ca <thumbprint>` | `add` | — | Pin the **issuer** instead of the leaf: any certificate for the host that chains to this CA is accepted. The certificate must still name the host, and every link up to the CA must be validly signed. Survives the routine renewal that keeps the issuer |
-| `--spki [<sha256>]` | `add` | — | Pin the **public key** (SPKI SHA-256, base64 or hex) instead of the leaf: survives a renewal that keeps the key. With `--from-url` and no value, the key the server presented is pinned |
-| `--from-url <https-url>` | `add` | — | Connect once, capture what the server actually presented, and pin its thumbprint — so you do not transcribe forty hex characters by hand. Exactly one of these two is required. The URL's host must be the host being pinned. Takes the [streaming transport subset](#transport-options-streaming-subset); through a proxy the TLS session is tunnelled and the certificate cannot be observed, which the command says plainly |
+| `--ca <thumbprint>` | `add` | — | Pin the **issuer** instead of the leaf: any certificate for the host that chains to this CA is accepted. The certificate must still name the host, and every link up to the CA must be validly signed. Survives the routine renewal that keeps the issuer. With `--from-url` and no value, the issuer the server presented is pinned |
+| `--spki <b64>` | `add` | — | Pin the **public key** instead of the leaf: base64 of the SHA-256 of its SubjectPublicKeyInfo (44 characters; hex is refused). Survives a renewal that keeps the key. With `--from-url` and no value, the key the server presented is pinned |
+| `--from-url <https-url>` | `add` | — | Connect once, capture what the server actually presented, and pin its thumbprint — so you do not transcribe forty hex characters by hand. The URL's host must be the host being pinned. Takes the [streaming transport subset](#transport-options-streaming-subset); through a proxy the TLS session is tunnelled and the certificate cannot be observed, which the command says plainly |
 | `--thumbprint <t>` | `remove` | all | Remove only this pin; omit it to remove every pin for the host |
 | `--workspace <file>` | all | live state | Read and write a workspace file instead of the live state |
 | `--json` | `list` | off | Machine-readable output |
 
-Also accepts the [certificate options](#certificate-options), because `--from-url` may need a client
-certificate to complete the handshake it is inspecting.
+`add` takes exactly one pin: a thumbprint, `--ca <t>`, `--spki <b64>`, or `--from-url` (optionally
+with a bare `--ca` or `--spki`). `--thumbprint` or `--from-url` together with `--ca <t>` or
+`--spki <b64>` is refused, `--ca` with `--spki` is refused, and a bare `--ca` or `--spki` without
+`--from-url` is refused (exit 2).
+
+Also accepts the [certificate options](#certificate-options) except `--insecure`, because
+`--from-url` may need a client certificate to complete the handshake it is inspecting. `--insecure`
+is not needed: `--from-url` always completes the handshake to observe the certificate, and what it
+observed is only stored as the pin you asked for.
 
 `<host>` is a bare host name. A URL, a port or a path typed there is reduced to the host with a
 note, because that is what pins are looked up by.
@@ -917,6 +947,7 @@ pin — pinning says "I know this certificate", not "ignore its issuer".
 ```
 certapi serve <upstream> --port <n> [options]
 certapi serve --port <n> --upstream <name>=<url> [--upstream …] [options]
+certapi serve --port <n> --allow <hosts> [options]
 certapi serve --profile <name>
 ```
 
@@ -949,7 +980,7 @@ Accepts the [certificate](#certificate-options) and [transport](#transport-optio
 | `--forwarded` | off | Add `X-Forwarded-For`, `X-Forwarded-Proto`, `X-Forwarded-Host` and `Via: 1.1 certapi` to forwarded requests, for an upstream that builds links from them |
 | `--routes <file>` | none | Sites from a JSON file, repeatable: `[{ "name": "hr", "upstream": "https://hr.corp:8443", "cert": "CN=svc-hr", "windowsAuth": true }, …]` or `{ "routes": […] }` (or `"sites"`). Each site can set `cert` (or `certFile`/`certPassword`/`keyFile`), `insecure`, `caFile`, `revocation`, `windowsAuth`/`windowsUser`/`windowsPassword`, `headers` and `sni`, each overriding the gateway's flag for that site only; `prefix` mounts at a path instead of `/name`. Paths are relative to the file; values may be `${env:NAME}`. A missing certificate or file is a startup error naming the site. Full field list in [Local Gateway](19-Local-Gateway.md#sites-with-their-own-certificate-and-settings---routes) |
 | `--vhost [<suffix>]` | off | **One origin per site** instead of one path each. Site `api` answers at `http://api.gw.localhost:<port>/`, the site at `/` at `http://gw.localhost:<port>/`, and an allowed dynamic host at `http://<host>.gw.localhost:<port>/` (`hr.corp--8443` for a port, `http--pub.corp` for plain http). Paths, cookies and origins reach the browser as the upstream wrote them; a cross-site redirect lands on the other host. Browsers resolve `*.localhost` to loopback by themselves; another suffix needs a hosts-file entry. Binds every interface (Windows needs a one-time URL reservation; the `netsh` command is printed) but answers **only loopback callers** unless `--listen` is also given. `127.0.0.1` keeps working in path form beside it. With `--tls` the gateway certificate also names the suffix, every site under it, and each `--allow` host on its default https port; an allowed host on another port or over http (or under `--allow *`) warns once in the browser |
-| `--listen <address>` | loopback | Also answer on this address — a LAN address, `0.0.0.0` or `+` for every interface — so a VM, a container or a teammate can use the gateway. **Requires `--token`**, because anything that reaches the port then reaches your client certificate. Not with `--tls`. On Windows a non-loopback prefix needs a one-time URL reservation; the exact `netsh http add urlacl` command is printed when it is missing |
+| `--listen <address>` | loopback | Also answer on this address — an IP address, `0.0.0.0`, `::`, `+`, `*` or `localhost` — so a VM, a container or a teammate can use the gateway. A loopback address (`127.0.0.1`, `::1`, `localhost`) needs no token and stays loopback-only, even under `--vhost`. Any other address **requires `--token`**, because anything that reaches the port then reaches your client certificate. With `--tls` only `127.0.0.1` or `::1` is accepted. On Windows a non-loopback prefix needs a one-time URL reservation; the exact `netsh http add urlacl` command is printed when it is missing |
 | `--workspace <file>` | live state | Resolve a saved-website upstream from a workspace file |
 | `-q, --quiet` | off | No startup table and no per-request log |
 
@@ -959,7 +990,7 @@ list). Both honour `--token`.
 
 **From a profile.** A profile's `serve` section has `port`, `vhost`, `browser`, `cors`, `token`,
 `allow`, `listen`, `cookieJar`, `autoToken`, `windowsAuth`, `windowsUser`, `windowsPassword`,
-`forwarded`, `maxBody`, `timeout`, `tls`, and `sites` in the `--routes` format. The other options
+`forwarded`, `maxBody`, `timeout`, `tls`, `rewriteBody`, and `sites` in the `--routes` format. The other options
 (`--check`, `--workspace`, `--quiet`, the individual browser flags, header rules, `--record`/`--replay`)
 are command-line only. The certificate, `insecure`, proxy, CA files, revocation, `tlsMin` and
 `connectTimeout` come from the profile's top-level fields; the top-level `timeout`, `workspace`,
@@ -982,7 +1013,7 @@ profile's as a pair, and sites typed on the command line replace the profile's l
 |---|---|---|
 | `--tls` | off | Serve HTTPS on 127.0.0.1 with a generated gateway certificate. Needed when the page calling it is itself HTTPS, since a secure page cannot call a plain-HTTP origin |
 | `--tls-trust` | off | Also install that certificate into `CurrentUser\Root`, so the browser accepts it without a warning. Only with `--tls` |
-| `--tls-untrust` | — | Remove a previously trusted gateway certificate and exit |
+| `--tls-untrust` | — | Remove the current gateway certificate and every earlier one this tool generated from `CurrentUser\Root`, and exit. The HTTP.sys port binding is left in place |
 
 ### Record and replay
 
@@ -990,8 +1021,8 @@ Two ends of one HAR format: capture a session live, replay it offline.
 
 | Option | Default | What it does |
 |---|---|---|
-| `--record <file.har>` | none | Append every forwarded exchange to an archive, written on Ctrl+C |
-| `--record-include-secrets` | off | Keep credential values in that recording. Only valid with `--record` |
+| `--record <file.har>` | none | Write every forwarded exchange of this session to the archive on Ctrl+C, replacing the file. It is written beside the old one and moved into place, so an interrupted save never leaves half a file. Not with `--replay` |
+| `--record-include-secrets` | off | Keep credential values in that recording; by default the same credential headers [`send --har`](#capturing-the-exchange) redacts are redacted. Only valid with `--record` |
 | `--replay <file.har>` | none | Answer from a recorded archive **without ever contacting the upstream** — a whole backend, offline, for a demo, a flight, or a test suite that must not touch production |
 
 ### Browser accommodations
@@ -1012,7 +1043,7 @@ So a page on another origin can call the upstream through the gateway.
 | `--rewrite-location` | off | A 3xx `Location` (and a `Refresh` header's URL) pointing at the upstream comes back pointing at the gateway, so a redirect does not walk the browser out of the tunnel |
 | `--rewrite-origin` | off | `Origin` and `Referer` on a forwarded request point at the upstream instead of at the gateway, so a login form's CSRF check sees the host it expects. In the `--browser` bundle |
 | `--strip-csp` | off | Drop `Content-Security-Policy` (and `-Report-Only`) from responses: a policy written for the upstream's own origin blocks every fetch a page makes through the gateway. In the `--browser` bundle |
-| `--rewrite-body` | off | Upstream URLs written into HTML, CSS, JavaScript, JSON and XML bodies point back through the gateway, mapped as a `Location` is (JSON's escaped slashes stay escaped). Compressed bodies are decompressed and sent plain; over 32 MB or not UTF-8, untouched. Not in `--browser`; profile field `rewriteBody` |
+| `--rewrite-body` | off | Upstream URLs written into HTML, CSS, JavaScript, JSON and XML bodies point back through the gateway, mapped as a `Location` is (JSON's escaped slashes stay escaped). JSON and XML only with a `Content-Length` (streamed ones are relayed as they arrive). Only `gzip`, `deflate` and `br` are decoded, and a rewritten body is sent decompressed; a body that is unchanged, over 32 MB, not UTF-8, corrupt, or in another or stacked encoding passes untouched. Not in `--browser`; profile field `rewriteBody` |
 | `--referer-fallback` | off | A path nothing owns, from a page the gateway served (`/static/app.js` requested by a page under `/app`), is sent with a 307 to the same path under that page's mount, read from the `Referer`. For the application that writes absolute paths; `--vhost` makes it unnecessary. In the bundle |
 | `--cookie-jar [<file>]` | off | Keep upstream cookies **on the gateway**, stored against the real upstream URL with `Domain` intact, and send them on every forwarded request (HTTP and WebSocket) to a matching host, alongside what the browser sent (the browser's value wins for a name both have). A browser stores every cookie against the gateway's one origin, so a `Domain=.corp` session set by `login.corp` never reaches `app.corp` on its own; this is how a multi-step login across hosts completes. Memory only unless a file is named: then the jar is loaded at start and written at shutdown, **encrypted for your Windows user (DPAPI)** and never in the clear, so a session survives a restart without sitting readable on disk. Where the machine cannot encrypt, the file form is refused up front. Not in the bundle |
 | `--auto-token` | off | Attach `Authorization: Bearer …` from a token captured earlier for the upstream's origin (`send --capture`, the app's Capture tab, a session capture) when the request carries none of its own. Not in the bundle |
@@ -1042,11 +1073,13 @@ certapi grpc call <address> <Service/Method> [options]
 Discover and call a gRPC service — unary, server-streaming, client-streaming, or bidirectional —
 with the same client-certificate handling as everything else here.
 
-Accepts the [certificate](#certificate-options) and [transport](#transport-options) blocks.
+Accepts the [certificate](#certificate-options) block and the gRPC transport subset listed under
+[Transport options](#transport-options): `--proxy`, `--no-proxy`, `--proxy-user`, `--noproxy`,
+`--revocation` and `--revocation-strict`.
 
 | Option | Default | What it does |
 |---|---|---|
-| `-d, --data <json>` | `{}` | The request message as JSON. Each `-d` is **one message**, in order, so several of them make a client-streaming call. `-d @file` reads one message from a file. Repeatable |
+| `-d, --data <json>` | `{}` | The request message as JSON. Each `-d` is **one message**, in order, for a client-streaming or bidirectional call. Several `-d` against a unary or server-streaming method, which takes a single request message, is a usage error (exit 2). `-d @file` reads one message from a file. Repeatable |
 | `--data-file <path>` | none | Read the request JSON from a file instead, supplying one message |
 | `-H, --header "k: v"` | none | Add gRPC metadata. Repeatable |
 | `--max-messages <n>` | unlimited | Stop a server-streaming or bidirectional call after *n* messages |
@@ -1056,6 +1089,13 @@ Accepts the [certificate](#certificate-options) and [transport](#transport-optio
 | `--no-auto-token` | off | Do not attach a captured bearer token for this call |
 | `--json` | off | A JSON envelope instead of the plain rendering |
 | `-q, --quiet` | off | No metadata line on stderr |
+
+For a client-streaming or bidirectional call, each line of **piped** standard input is also sent as
+one message (one JSON object per line), after the `-d` values and any `--data-file` message. Standard
+input is read only for those two kinds, and only when it is redirected: at a terminal there is
+nothing to read to the end of, so give the messages with `-d` (a streaming call with none at a
+terminal is a usage error). With piped input, sending no messages at all is an empty stream, not an
+error.
 
 `list` with no service name lists the services; with one, it lists that service's methods and their
 message shapes. Well-known Protobuf types are rendered and accepted in their canonical JSON forms,
@@ -1077,7 +1117,7 @@ Accepts the [certificate](#certificate-options) and [transport](#transport-optio
 | Option | Default | What it does |
 |---|---|---|
 | `--cert <thumbprint or subject>` | none | The certificate every tool uses. **Pinned at startup — the agent cannot change it**, which is the security model: the agent chooses requests, you choose the identity |
-| `--allow <host>` | none | An allowed upstream host. **Repeatable, and the allowlist is the boundary**: a URL must match one of these or be a subdomain of it, so an agent cannot be talked into calling somewhere else |
+| `--allow <host>` | any host, with a warning | An allowed upstream host. **Repeatable, and the allowlist is the boundary**: a URL must match one of these or be a subdomain of it, so an agent cannot be talked into calling somewhere else. Without `--allow` every host is allowed and the startup line says so |
 | `--timeout <seconds>` | `100` | Upstream timeout for `send_request`; a saved request may carry its own |
 | `--workspace <file>` | live state | Load saved requests, environments and chains from a workspace file, so the agent can run things you prepared |
 | `--no-auto-token` | off | Do not capture or reuse bearer tokens across the session's calls |
@@ -1086,6 +1126,11 @@ Accepts the [certificate](#certificate-options) and [transport](#transport-optio
 
 The retry options `--retry`, `--retry-on` and `--retry-delay` work here with the same rules as
 [`send`](#send).
+
+MCP tools never follow a redirect: a 3xx comes back as itself, and each hop would be a separate
+call checked against the allowlist.
+
+The server runs until stdin closes or Ctrl+C; a second Ctrl+C quits at once.
 
 Secrets are never handed to the agent: a captured token's *value* is withheld and only its
 existence reported — the same stance [`export workspace`](#export) takes.
@@ -1125,6 +1170,11 @@ Accepts the [certificate](#certificate-options) and
   proxy said if it refused — including the authentication schemes offered on a 407.
 - On a DNS or TCP failure, **whether the internet is reachable at all**, distinguishing a captive
   portal from a host that needs the VPN.
+
+**Every stage is bounded.** TCP and the TLS handshake get `--connect-timeout` (the handshake 30 s
+when it is not given), the HTTP answer 100 s: a port that accepts the connection and never speaks
+TLS is reported as such rather than waited on. `--tls-min` and `--sni` apply to the handshake as
+they would to a send.
 
 A note that cannot be written warns without changing the exit code. Exit 0 when every stage passed,
 1 when one failed.
@@ -1204,16 +1254,16 @@ What configuration is actually in effect. See [Configuration](27-Configuration.m
 
 | Subcommand | What it does |
 |---|---|
-| `path` | The configuration file this invocation resolved, **and by which discovery rule** — so you can see whether it came from `--config`, the working directory, a parent directory, or your per-user path |
+| `path` | The configuration file this invocation resolved, **and by which discovery rule** — so you can see whether it came from `--config`, the `CERTAPI_CONFIG` environment variable, the working directory, a parent directory, or your per-user path |
 | `profiles` | The profiles the file defines, and which one is the default |
 | `show` | The profile in effect, field by field, including its `serve` settings and one line per site. Passwords, tokens, proxy credentials and secret headers print as `(set)` |
-| `init` | Write a starter file: one profile, made the default, with every other field present but commented out and a link to [Configuration](27-Configuration.md). It changes nothing until you uncomment something |
+| `init` | Write a starter file: one profile, made the default, with the common fields present but commented out and a link to [Configuration](27-Configuration.md). It changes nothing until you uncomment something |
 
 | `init` option | Default | What it does |
 |---|---|---|
 | `--local` | off | Write `certapi.config.json` in the current directory instead of your per-user file |
-| `--path <file>` | per-user file | Write here instead |
-| `--name <profile>` | `default` | The profile's name |
+| `--path <file>` | per-user file | Write here instead. The global `--config <file>` does the same |
+| `--name <profile>` | `default` | The profile's name, written as `defaultProfile` |
 | `--cert <thumb\|subject>` | commented out | Fill in the profile's certificate |
 | `--proxy <url>` | commented out | Fill in the profile's proxy |
 | `--force` | off | Replace an existing file. Without it an existing file is never touched (exit 3) |

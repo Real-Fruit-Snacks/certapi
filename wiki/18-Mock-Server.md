@@ -17,11 +17,11 @@ port, press **Start**, and watch a live request log. **Copy URL** drops the addr
 
 ```powershell
 certapi mock                       # plain HTTP on 8770
-certapi mock --port 9000 --tls     # HTTPS with a generated self-signed cert
+certapi mock --port 9000 --tls     # HTTPS with a generated server cert for localhost
 certapi mock --mtls --cert-dir .\c # mutual TLS; writes certs to .\c
 ```
 
-It runs until `Ctrl+C` and logs each request.
+It runs until `Ctrl+C` and logs each request (`-q` turns the log off). `--port 0` picks a free port.
 
 ## Routes
 
@@ -34,6 +34,9 @@ It runs until `Ctrl+C` and logs each request.
 | `/windows-auth` | Challenges with `401 WWW-Authenticate: NTLM`, then accepts the handshake — try it with `--windows-auth` |
 | `/cookie-auth` | Sets a session cookie, then reports authenticated once you send it back — try it with [Session Capture](26-Session-Capture.md) |
 | *Upgrade: websocket* (any path) | A WebSocket echo — try it with `certapi ws` |
+
+A WebSocket upgrade is echoed on any path, also under `--routes` and `--har`, unless the scenario's
+[`require`](#requiring-authentication) block refuses it.
 
 ## Declaring your own routes
 
@@ -72,16 +75,33 @@ Rules worth knowing:
   deliberately.
 - **A route says what it *requires*.** Extra query parameters and headers on the request do not
   prevent a match.
+- **How values compare.** Paths match case-insensitively; a header value matches when it contains
+  the declared text, ignoring case; a query value must be exactly the declared value.
 - **`bodyFile` is resolved against the scenario file's own folder**, so a scenario and its bodies
-  move together.
-- **Declared routes beat the built-in ones**, and a request matching none gets your `fallback`
-  (or a 404 saying no route matched).
+  move together, and it is served byte for byte. A `bodyFile` that cannot be read is named in a
+  warning; the route is kept and answers with an empty body.
+- **With `--routes` the built-in routes are not served.** A request matching no route gets your
+  `fallback`, or a 404 with `{"scenario":"no route"}`.
 - **A route that cannot be used is dropped and named** — an uncompilable `pathRegex`, a missing
   `respond`, a status outside 100–599 — rather than silently ignored. Comments and trailing
   commas are allowed, because these files are written by hand.
 
 Combine it with `--har` when you want both: the declared routes cover what you care about, and a
-request they miss falls through to the recorded session.
+request they miss falls through to the recorded session. The `fallback` is then unused.
+
+## Replaying a capture
+
+`--har <file>` answers from a captured HTTP Archive instead of the built-in routes: each request
+gets the recorded response for its method and path (query included when it disambiguates), in
+recorded order for a repeated call.
+
+```powershell
+certapi mock --har session.har --port 8770
+certapi mock --har session.har --no-match-status 501
+```
+
+`--no-match-status <code>` (default `404`, only with `--har`) is the status for a request that
+matches nothing in the archive.
 
 ## Making it misbehave
 
@@ -96,6 +116,8 @@ A test server earns its keep by behaving *badly* on demand. Any `respond` block 
   "then": "abort"           // "abort" closes after the headers; "reset" sends a TCP reset
 }
 ```
+
+An unknown `then` value is named in a warning and ignored.
 
 And a route can answer **differently on each call**:
 
@@ -142,8 +164,9 @@ rather than an echo:
 }
 ```
 
-- **Checked before routes**, so a scenario is both "requires a bearer" *and* "answers these paths",
-  and a refusal can never leak a route's body.
+- **Checked before routes, and before a WebSocket upgrade**, so a scenario is both "requires a
+  bearer" *and* "answers these paths", a refusal can never leak a route's body, and a protected
+  mock refuses an unauthenticated socket.
 - **The refusal carries a challenge** — `WWW-Authenticate`, or `Proxy-Authenticate` for 407 — so
   the client sees the shape a real endpoint would send, not a bare status.
 - **`clientCert: true`** means a certificate is required but whose does not matter; add `issuer` or
@@ -159,9 +182,9 @@ hard to *reproduce*. `--tls-mode` makes each one happen on demand:
 
 ```powershell
 certapi mock --tls --tls-mode expired --port 8443
-certapi send https://127.0.0.1:8443/api/x          # refuses, as it should
-certapi doctor https://127.0.0.1:8443/api/x        # and doctor explains why
-certapi send https://127.0.0.1:8443/api/x --insecure   # the escape hatch still works
+certapi send https://localhost:8443/api/x          # refuses, as it should
+certapi doctor https://localhost:8443/api/x        # and doctor explains why
+certapi send https://localhost:8443/api/x --insecure   # the escape hatch still works
 ```
 
 | Mode | The certificate is… |
@@ -183,7 +206,9 @@ broken endpoint to point at.
 
 - **`--http`** (default) — plain HTTP; hit it with anything (curl, a browser, the app), no
   certificates.
-- **`--tls`** — HTTPS with a generated self-signed server certificate.
+- **`--tls`** — HTTPS with a generated server certificate for `localhost`, issued by the mock's own
+  certificate authority (`mock-ca.cer`), not self-signed. Use `https://localhost:<port>`: the
+  certificate does not name `127.0.0.1`.
 - **`--mtls`** — HTTPS that **requires** a client certificate (any presented cert is accepted, and its
   subject is echoed back).
 

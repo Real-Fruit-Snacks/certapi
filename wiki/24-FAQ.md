@@ -17,8 +17,9 @@ macOS/Linux build.
 
 **Does it store my private keys?**
 No. Certificates in the Windows store are used in place — the private key never leaves the store. For
-file certificates, the key is loaded into a temporary in-memory container for the handshake and
-discarded; nothing is written back out.
+file certificates, the app loads the key through a temporary, exportable PKCS#12 container (a
+temporary per-user key container) so the handshake works, then discards it; nothing is written back
+to the file or imported into the store.
 
 **Can I use it without any certificates?**
 Yes. Leave the certificate on *— no certificate —* and it's an ordinary API (application programming
@@ -32,9 +33,11 @@ reverse. See [Core Concepts](04-Concepts.md).
 
 **Where are secrets stored, and are they encrypted?**
 In the same workspace file as everything else, but a captured token/cookie, a saved request's auth
-secret, and any variable marked **secret** are encrypted with the Windows Data Protection API (DPAPI),
-scoped to the Windows user who saved them — never in plain text, and never readable by a different
-Windows user or a different machine. Everything else in the file (requests, headers, URLs, names) is
+secret, a saved proxy password, any variable marked **secret**, and stored response bodies and
+credential response headers (in history and known-good snapshots) are encrypted with the Windows
+Data Protection API (DPAPI), scoped to the Windows user who saved them — never readable by a
+different Windows user or a different machine. They stay in clear text only when per-user
+encryption is unavailable on the system, and the app reports that when it happens. Everything else in the file (requests, headers, URLs, names) is
 plain JSON so it stays diffable. See [Troubleshooting](23-Troubleshooting.md) for what happens when a
 secret can't be decrypted.
 
@@ -44,8 +47,9 @@ check it in. By default secrets are stripped from an export (`--include-secrets`
 for you), so a checked-in workspace doesn't hand out credentials.
 
 **Does it do OAuth?**
-Yes — client-credentials, password, refresh, device code, and interactive authorization-code with
-PKCE (Proof Key for Code Exchange), in the app and (except the interactive flow) via `certapi token`. See [Authentication](08-Authentication.md).
+Yes — client-credentials, password, refresh, and interactive authorization-code with PKCE (Proof
+Key for Code Exchange) in the app; client-credentials, password, refresh and device code via
+`certapi token` (device code is CLI-only). See [Authentication](08-Authentication.md).
 
 **Does it do Windows Integrated Auth (NTLM (NT LAN Manager) / Kerberos)?**
 Yes — a *Windows (integrated)* auth type with SSO (single sign-on) or explicit credentials, and
@@ -92,7 +96,7 @@ It skips **server** certificate validation, so only use it for internal/self-sig
 It has nothing to do with your client certificate, which is still presented.
 
 **Does it check certificate revocation?**
-Only if you ask: `--revocation none|offline|online` defaults to `none`, exactly the previous behavior.
+Only if you ask: `--revocation none|offline|online` defaults to `none` (no check).
 `offline` checks cached certificate revocation lists (CRLs) only; `online` may also query an Online
 Certificate Status Protocol (OCSP) responder. A revoked certificate is refused even past a pinned
 thumbprint; an unreachable or blocked check (common on a corporate network) is reported but not fatal

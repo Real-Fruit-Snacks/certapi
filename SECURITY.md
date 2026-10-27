@@ -15,8 +15,8 @@ I read reports within a week. If it's real, the fix and the changelog entry name
 ## What this tool handles
 
 - Client certificates are used in place; the private key is never read or exported. Windows CNG signs the handshake.
-- Secrets at rest (captured tokens, cookies, saved passwords, secret variables, stored response bodies) are DPAPI-encrypted for the Windows user in `%APPDATA%\CertApiTester\state.json`.
+- Secrets at rest (captured tokens, cookies, saved passwords, saved proxy passwords, secret variables, stored response bodies, credential response headers) are DPAPI-encrypted for the Windows user in `%APPDATA%\CertApiTester\state.json`.
 - Exports (`export workspace`, `--har`, `export markdown`, `serve --record`) strip or redact credentials by default, including ones in a URL. `--include-secrets` variants keep them.
 - The MCP server never follows redirects, checks a host allowlist on every call and never writes the workspace back.
 - *Ignore server certificate errors* is off by default and labelled insecure. Prefer `certapi trust add <host>`.
-- No telemetry. The only network calls are the ones you send.
+- No telemetry. The network calls are the requests you send and, when you ask (`certapi update`, *Check for updates*, or the opt-in daily startup check), one call to GitHub's releases API. `doctor` also probes `www.msftconnecttest.com` after a DNS or TCP failure, unless `--offline`.

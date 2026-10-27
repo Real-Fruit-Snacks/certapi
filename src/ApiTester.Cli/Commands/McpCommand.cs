@@ -36,8 +36,8 @@ public static class McpCommand
                                   Enforced per request — a chain step whose URL comes from an
                                   earlier capture is still checked.
           --insecure              Ignore upstream server-certificate errors (internal CAs)
-          --timeout <seconds>     send_request upstream timeout (default 100; a saved request
-                                  keeps its own saved timeout)
+          --timeout <seconds>     send_request and gRPC call deadline (default 100; a saved
+                                  request keeps its own saved timeout)
           --workspace <file>      Load saved requests / environments / chains from a workspace
                                   file. The workspace is read once at launch; captures and tokens
                                   live in memory for the session and are never written back.
@@ -47,18 +47,9 @@ public static class McpCommand
                                   descriptor_set_out and include_imports options). Pinned at
                                   launch; the agent cannot name files.
 
-        Transport (applies to every call the tools make):
-          --proxy <url>           Route through this proxy (e.g. http://proxy.corp:8080)
-          --no-proxy              Ignore the system/PAC proxy
-          --proxy-user <u:pass>   Proxy credentials
-          --noproxy <list>        Hosts that bypass the proxy, comma-separated, NO_PROXY-style
-          --revocation <mode>     Check whether the server's certificate has been revoked:
-                                  none (default), offline, or online — same rules as `send`
-          --revocation-strict     Make an undeterminable revocation status fatal
-          --retry <n> / --retry-on <codes> / --retry-delay <ms>   Same retry rules as `send`
-          --ca-file <pem>, --tls-min, --connect-timeout, --sni, --resolve, --pac, --no-env-proxy,
-          --offline, -4 / -6      Trust and network options, same rules as `send`
-        Redirects are never followed: a 3xx comes back as itself, so every hop an agent takes is
+        Transport (applies to every call the tools make; same rules as `send`):
+        """ + "\n" + TransportFlags.Help + "\n" + """
+        Redirects are never followed (the redirect options above are accepted and change nothing): a 3xx comes back as itself, so every hop an agent takes is
         an explicit call checked against the allowlist. A host pinned with `certapi trust add`
         is reachable without --insecure, exactly as it is for send/run.
 
@@ -415,7 +406,11 @@ public static class McpCommand
                         if (Gate(address!) is { } refused) return Err(refused);
                         var caller = new GrpcCaller(new Uri(address!), cert, McpTransport(new TransportOptions()),
                             predicates.For(new Uri(address!).Host), protoset);
-                        try { discovered = caller.DiscoverAsync(services.Cancel).GetAwaiter().GetResult(); }
+                        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(services.Cancel);
+                        deadline.CancelAfter(TimeSpan.FromSeconds(timeout));
+                        try { discovered = caller.DiscoverAsync(deadline.Token).GetAwaiter().GetResult(); }
+                        catch (OperationCanceledException) when (deadline.IsCancellationRequested && !services.Cancel.IsCancellationRequested)
+                        { return Err($"the server did not answer within {timeout} s (--timeout)"); }
                         finally { caller.DisposeAsync().AsTask().GetAwaiter().GetResult(); }
                     }
                     var payload = new
@@ -457,7 +452,7 @@ public static class McpCommand
                   "metadata":{"type":"object","additionalProperties":{"type":"string"}},
                   "maxMessages":{"type":"integer","description":"Stop a streaming response after this many messages (default 100)"}}}
                 """)!,
-            a => GrpcCallTool(a, cert, protoset, predicates, Gate, McpTransport, services))
+            a => GrpcCallTool(a, cert, protoset, predicates, Gate, McpTransport, services, timeout))
         { Annotations = new ToolAnnotations(ReadOnlyHint: false, DestructiveHint: true, IdempotentHint: false, OpenWorldHint: true) };
 
         // ---- self_test ----
@@ -510,7 +505,7 @@ public static class McpCommand
 
     private static ToolResult GrpcCallTool(
         JsonElement a, X509Certificate2? cert, GrpcDescriptorSet? protoset, TrustPredicates predicates,
-        Func<string, string?> gate, Func<TransportOptions, TransportOptions> transport, CliServices services)
+        Func<string, string?> gate, Func<TransportOptions, TransportOptions> transport, CliServices services, int timeout)
     {
         string? address = Str(a, "address");
         string? methodSpec = Str(a, "method");
@@ -545,13 +540,17 @@ public static class McpCommand
         }
         var metadata = ObjPairs(a, "metadata");
 
+        // The MCP server answers one call at a time: a gRPC server that accepts and never answers
+        // would freeze every later call too, so each call has the --timeout deadline.
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(services.Cancel);
+        deadline.CancelAfter(TimeSpan.FromSeconds(timeout));
         try
         {
             var caller = new GrpcCaller(new Uri(address!), cert, transport(new TransportOptions()),
                 predicates.For(new Uri(address!).Host), protoset);
             try
             {
-                var discovered = caller.DiscoverAsync(services.Cancel).GetAwaiter().GetResult();
+                var discovered = caller.DiscoverAsync(deadline.Token).GetAwaiter().GetResult();
                 string sourceLabel = protoset is not null ? "the descriptor set declares" : "the server advertises";
                 string service = GrpcCommand.ResolveServiceName(discovered, servicePart, sourceLabel);
                 var svc = discovered.First(s => s.Name == service);
@@ -563,7 +562,7 @@ public static class McpCommand
                 if (!methodInfo.ClientStreaming && messages.Count > 1)
                     return Err($"{service}/{methodPart} is {GrpcCommand.KindName(false, methodInfo.ServerStreaming)} — it takes a single request message, but data carried {messages.Count}.");
 
-                var ct = services.Cancel;
+                var ct = deadline.Token;
                 if (!methodInfo.ClientStreaming && !methodInfo.ServerStreaming)
                 {
                     var result = caller.InvokeAsync(service, methodPart, messages.Count == 1 ? messages[0] : "{}", metadata, ct)
@@ -604,6 +603,8 @@ public static class McpCommand
             }
             finally { caller.DisposeAsync().AsTask().GetAwaiter().GetResult(); }
         }
+        catch (OperationCanceledException) when (deadline.IsCancellationRequested && !services.Cancel.IsCancellationRequested)
+        { return Err($"the gRPC call did not finish within {timeout} s (--timeout)"); }
         catch (CliDataException ex) { return Err(ex.Message); }
         catch (GrpcReflectionUnavailableException ex) { return Err(ex.Message); }
         catch (GrpcMethodNotFoundException ex) { return Err(ex.Message); }
@@ -684,7 +685,7 @@ public static class McpCommand
         {
             var m = node.Request!;
             string uri = "certapi://requests/" + string.Join("/", path.Split('/').Select(Uri.EscapeDataString));
-            resources.Add(new ResourceDef(uri, path, $"Saved request: {m.Method} {m.EffectiveUrl()}",
+            resources.Add(new ResourceDef(uri, path, $"Saved request: {m.Method} {MarkdownSecrets.RedactUrl(m.EffectiveUrl())}",
                 "application/json", () =>
                 {
                     var request = new JsonObject

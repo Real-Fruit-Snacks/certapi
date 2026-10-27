@@ -66,8 +66,9 @@ public static class FuzzCommand
           -q, --quiet              No progress counter on stderr
           --har <file>             Capture every probe as a HAR file, written once when the run
                                    finishes
-          --har-include-secrets    Don't redact Authorization/Proxy-Authorization/Cookie/
-                                   Set-Cookie values in the captured HAR (redacted by default)
+          --har-include-secrets    Keep credential header values in the captured HAR (Authorization,
+                                   Cookie, Set-Cookie, token, secret and API-key headers;
+                                   redacted by default)
 
         Global: --debug (verbose diagnostics) and --log-file <path> work here too.
 
@@ -222,7 +223,7 @@ public static class FuzzCommand
 
         int lastReported = 0;
         var progressLock = new object();
-        var progress = quiet ? null : new Progress<FuzzProgress>(p =>
+        var progress = quiet ? null : new InlineProgress<FuzzProgress>(p =>
         {
             // Workers report from concurrent threads with no SynchronizationContext on a console,
             // so serialize the counter update and the \r write to stop them interleaving.

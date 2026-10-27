@@ -174,7 +174,11 @@ public sealed class MockServer : IAsyncDisposable
         {
             while (!_cts.IsCancellationRequested)
             {
-                var client = await _listener.AcceptTcpClientAsync(_cts.Token);
+                TcpClient client;
+                // A connection reset while it waited in the backlog (a scanner, a client that gave
+                // up) is that connection's problem; the server keeps accepting.
+                try { client = await _listener.AcceptTcpClientAsync(_cts.Token); }
+                catch (SocketException) when (!_cts.IsCancellationRequested) { continue; }
                 var handler = Task.Run(async () =>
                 {
                     try { await HandleAsync(client, _cts.Token); }

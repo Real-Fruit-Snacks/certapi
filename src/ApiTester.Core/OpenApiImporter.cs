@@ -12,6 +12,11 @@ public static class OpenApiImporter
 
     public static ParsedCollection Parse(string json)
     {
+        // YAML is the other common way an OpenAPI document is written; this importer reads JSON,
+        // and says so rather than reporting "'o' is an invalid start of a value".
+        string start = json.TrimStart('\uFEFF', ' ', '\t', '\r', '\n');
+        if (start.Length > 0 && start[0] is not ('{' or '['))
+            throw new FormatException("this looks like YAML; certapi imports OpenAPI documents in JSON. Convert it first (for example with a YAML-to-JSON converter, or your API tool's \"export as JSON\").");
         using var doc = JsonDocument.Parse(json);
         var root = doc.RootElement;
 

@@ -334,3 +334,27 @@ public class Round2InputTests
         Assert.Contains("api.example/users/1", Find(result.Root));
     }
 }
+
+public class SseRedirectTests
+{
+    [Fact]
+    public async Task A_stream_follows_a_redirect_on_its_own_origin_and_refuses_one_to_another()
+    {
+        await using var other = new RawHttpServer(_ => RawHttpServer.Response(200, "OK", "data: stolen\n\n", "Content-Type: text/event-stream"));
+        await using var home = new RawHttpServer(r => r.Path switch
+        {
+            "/start" => RawHttpServer.Response(302, "Found", "", "Location: /stream"),
+            "/stream" => RawHttpServer.Response(200, "OK", "data: hello\n\n", "Content-Type: text/event-stream"),
+            _ => RawHttpServer.Response(302, "Found", "", $"Location: {other.BaseUrl}/x"),
+        });
+        var events = new List<SseEvent>();
+        await foreach (var e in SseClient.StreamAsync(home.BaseUrl + "/start", headers: new KeyValuePair<string, string>[] { new("X-Api-Key", "s3cret") })) events.Add(e);
+        Assert.Equal("hello", Assert.Single(events).Data);
+
+        await Assert.ThrowsAsync<HttpRequestException>(async () =>
+        {
+            await foreach (var _ in SseClient.StreamAsync(home.BaseUrl + "/away", headers: new KeyValuePair<string, string>[] { new("X-Api-Key", "s3cret") })) { }
+        });
+        Assert.Empty(other.Requests);
+    }
+}

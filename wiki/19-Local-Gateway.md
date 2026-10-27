@@ -160,8 +160,8 @@ certapi serve --profile corp
 
 `serve` takes `port`, `vhost` (`true` or a suffix), `browser`, `cors` (`true`, an origin or a list),
 `token`, `allow` (a host or a list), `listen`, `cookieJar` (`true` or a file), `autoToken`,
-`windowsAuth`, `windowsUser`, `windowsPassword`, `forwarded`, `maxBody`, `timeout`, `tls` and
-`sites` (exactly the `--routes` format). The certificate, `insecure`, proxy, CA files, revocation,
+`windowsAuth`, `windowsUser`, `windowsPassword`, `forwarded`, `maxBody`, `timeout`, `tls`,
+`rewriteBody` and `sites` (exactly the `--routes` format). The certificate, `insecure`, proxy, CA files, revocation,
 `tlsMin` and `connectTimeout` come from the profile's top-level fields, as for every command; the
 top-level `timeout`, `workspace`, `retry` and `headers` do not apply to `serve`. Options with no field
 (`--check`, `--quiet`, the individual browser flags, header rules, `--record`/`--replay`) are typed on
@@ -198,15 +198,15 @@ secret masked.
 | `--windows-auth` | Answer the upstream's Negotiate/NTLM challenge as you. Aliases `--ntlm`, `--negotiate` |
 | `--windows-user` + `--windows-password` | Answer it as this account instead |
 | `--token <value>` | Require callers to send `Authorization: Bearer <value>` or `X-Certapi-Token: <value>` |
-| `--listen <address>` | Also answer on a LAN address, `0.0.0.0` or `+`. Needs `--token`; not with `--tls` |
+| `--listen <address>` | Also answer on this address: an IP address, `0.0.0.0`, `::`, `+`, `*` or `localhost`. A loopback address (`127.0.0.1`, `::1`, `localhost`) needs no token and stays loopback-only, even under `--vhost`. Any other address needs `--token`. With `--tls` only `127.0.0.1` or `::1` is accepted |
 | `--timeout <seconds>` | How long to wait for the upstream's **response headers** (default 100). A body that streams longer is not cut off |
 | `--max-body <bytes>` | Refuse a request body over the limit with 413 (`k`/`m`/`g` suffixes) |
 | `--forwarded` | Add `X-Forwarded-For/Proto/Host` and `Via: 1.1 certapi` to forwarded requests |
 | `--workspace <file>` | Resolve a saved-website `<upstream>` from a workspace file |
 | `-q, --quiet` | No startup table or per-request log |
-| `--tls` | Serve the gateway itself over HTTPS on 127.0.0.1 with a generated gateway certificate, so `Secure` and `__Host-`/`__Secure-` cookies work. Binding the port needs an elevated prompt the first time; the exact `netsh` command is printed if it isn't available. With `--vhost` the certificate also names the suffix, every site under it and each `--allow` host on its default https port (the first such run regenerates it and moves the binding; add `--tls-trust` once) |
+| `--tls` | Serve the gateway itself over HTTPS on 127.0.0.1 with a generated gateway certificate, so `Secure` and `__Host-`/`__Secure-` cookies work. The certificate is cached in `%AppData%\CertApiTester\gateway-tls` and reused. Binding the port needs an elevated prompt the first time; the exact `netsh` command is printed if it isn't available. With `--vhost` the certificate also names the suffix, every site under it and each `--allow` host on its default https port. It is regenerated within 7 days of expiry, or when it lacks a name the run needs; that run moves the `127.0.0.1:<port>` binding to the new certificate (from an elevated prompt; otherwise it prints the `netsh` commands and stops). With `--tls-trust` the new root is installed and then the old one removed; without it, a note says to add `--tls-trust` once |
 | `--tls-trust` | Also install that certificate into `CurrentUser\Root` so the browser accepts it silently — explicit, logged, and reversible. Only with `--tls` |
-| `--tls-untrust` | Remove a previously trusted gateway certificate and exit; a standalone action |
+| `--tls-untrust` | Remove the current gateway certificate, and every earlier one this tool generated, from `CurrentUser\Root`, then exit; a standalone action. It does not remove the HTTP.sys port binding |
 | `--browser` | The bundle: the seven browser accommodations below at once |
 | `--cors [<origins>]` | Answer CORS (Cross-Origin Resource Sharing) preflights and add the headers a script needs; echoes the caller's `Origin` with no value, or takes an allowlist. Repeatable |
 | `--cors-max-age <seconds>` | How long a browser may cache a preflight answer (default 600). Only with `--cors` (or `--browser`) |
@@ -214,7 +214,7 @@ secret masked.
 | `--rewrite-location` | Bring a 3xx `Location` (and a `Refresh` header's URL) aimed at the upstream, another site or an allowed host back through the gateway |
 | `--rewrite-origin` | `Origin` and `Referer` on a forwarded request point at the upstream |
 | `--strip-csp` | Drop `Content-Security-Policy` from responses |
-| `--rewrite-body` | Upstream URLs written into HTML, CSS, JavaScript, JSON and XML bodies — links, script sources, a meta refresh, an API base in a config file — point back through the gateway, mapped exactly as a `Location` is. JSON's escaped `https:\/\/` form is kept escaped. A compressed body is decompressed and sent plain; a body over 32 MB, or not UTF-8, passes untouched. Not part of `--browser`: it buffers bodies the relay otherwise streams |
+| `--rewrite-body` | Upstream URLs written into HTML, CSS, JavaScript, JSON and XML bodies — links, script sources, a meta refresh, an API base in a config file — point back through the gateway, mapped exactly as a `Location` is. JSON's escaped `https:\/\/` form is kept escaped. JSON and XML are rewritten only when the response has a `Content-Length`; streamed JSON or XML is relayed as it arrives. Only `gzip`, `deflate` and `br` are decoded, and a body with a rewritten URL is sent decompressed. A body that is unchanged, over 32 MB, not UTF-8, corrupt, or in another or stacked encoding passes untouched. Not part of `--browser`: it buffers bodies the relay otherwise streams |
 | `--referer-fallback` | A path no site owns, from a page the gateway served, is sent (307) to the same path under that page's site |
 | `--allow-upgrade` | Relay WebSocket connections through your certificate |
 | `--cookie-jar [<file>]` | Keep upstream cookies on the gateway and send them to matching hosts; with a file, kept across restarts encrypted (DPAPI) |
@@ -326,9 +326,10 @@ certapi serve https://api.internal --port 8443 --cert "CN=My Client" --record se
 certapi serve https://api.internal --port 8443 --replay session.har
 ```
 
-`--record` redacts credential headers (`Authorization`, `Cookie`, `Set-Cookie`, token and API-key
-headers) by default, since a recording is a file people
-share; `--record-include-secrets` keeps them. `--replay` matches a request the way `mock --har`
+`--record` redacts credential headers by default — `Authorization`, `Proxy-Authorization`,
+`Cookie`, `Set-Cookie`, `X-Api-Key`, `X-Auth-Token`, and any header named like a token, secret,
+password, API key, session or credential (CORS `Access-Control-*` headers and `WWW-Authenticate`
+are never redacted) — since a recording is a file people share; `--record-include-secrets` keeps them. `--replay` matches a request the way `mock --har`
 does — method and path, query included when it disambiguates, in recorded order for a repeated
 call — and answers a path the session never saw with 404. The two flags are mutually exclusive:
 you cannot record a session you are inventing. Because the format is the same one `mock --har`

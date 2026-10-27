@@ -36,3 +36,11 @@ public static class OutputText
     /// matter for a client certificate called out. Empty when nothing was followed.</summary>
     public static string RedirectLines(IReadOnlyList<RedirectHop> hops) => RedirectReport.Lines(hops);
 }
+
+/// <summary>An <see cref="IProgress{T}"/> that reports on the caller's thread, at once. A console has
+/// no SynchronizationContext, so <see cref="Progress{T}"/> queues each report to the thread pool,
+/// and the last "\r probing N/N…" could land after the command's closing line.</summary>
+internal sealed class InlineProgress<T>(Action<T> report) : IProgress<T>
+{
+    public void Report(T value) => report(value);
+}

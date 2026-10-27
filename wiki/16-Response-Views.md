@@ -75,7 +75,8 @@ the full main window. Everything stays live; closing a popped-out window returns
 ## Copying and saving
 
 - **Copy body** — copy the response body to the clipboard.
-- **Copy as ▾** (on the request side) — the *request* as cURL / PowerShell / Python / C#.
+- **Copy as ▾** (in the response toolbar, next to **Copy body**) — the *request* as cURL /
+  PowerShell / Python / C#.
 - **Save** (`Ctrl+S`) — save any response to a file, including binary, with a sensible extension for
   the content type. On the CLI (command-line interface), `certapi send -o file` writes the body to a
   file.

@@ -357,7 +357,7 @@ public static class BenchCommand
         var gate = new object();
         var lastWrite = System.Diagnostics.Stopwatch.StartNew();
         bool written = false;
-        return new Progress<BenchProgress>(p =>
+        return new InlineProgress<BenchProgress>(p =>
         {
             lock (gate)
             {

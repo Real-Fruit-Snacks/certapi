@@ -303,9 +303,22 @@ public static class ConnectionDoctor
                 // TLS 1.2 under --tls-min 1.3 would report a success the send never has.
                 TlsPolicy.Apply(sslOptions, options);
 
+                // A listener that accepts TCP and never speaks TLS (a wrong port, a middlebox) must
+                // be reported, not waited on forever: the handshake gets --connect-timeout, or 30 s.
+                var tlsBudget = options.ConnectTimeout ?? TimeSpan.FromSeconds(30);
+                using var tlsDeadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                tlsDeadline.CancelAfter(tlsBudget);
                 try
                 {
-                    await ssl.AuthenticateAsClientAsync(sslOptions, ct);
+                    try { await ssl.AuthenticateAsClientAsync(sslOptions, tlsDeadline.Token); }
+                    catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+                    {
+                        stages.Add(DoctorStage.Fail("tls", $"no TLS answer within {tlsBudget.TotalSeconds:0.#} s — the port accepted the connection but never completed a handshake",
+                            clock.Elapsed - start, detail,
+                            "Something is listening that does not speak TLS here (a plain-HTTP port, the wrong service, or a device holding the connection). Check the port and scheme."));
+                        ssl.Dispose();
+                        return new DoctorReport(url, stages);
+                    }
                     presented = ssl.RemoteCertificate is { } rc ? new X509Certificate2(rc) : null;
                     detail.Add($"protocol: {ssl.SslProtocol}");
                     detail.Add($"cipher: {ssl.NegotiatedCipherSuite}");
@@ -343,7 +356,17 @@ public static class ConnectionDoctor
             start = clock.Elapsed;
             try
             {
-                var (status, line, serverDate) = await GetAsync(stream, uri, viaProxy: proxyUri is not null && uri.Scheme == Uri.UriSchemeHttp, ct);
+                // The answer gets a bound too (100 s, a send's default): a server that takes the
+                // request and never replies is the finding, not a hang.
+                using var httpDeadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                httpDeadline.CancelAfter(TimeSpan.FromSeconds(100));
+                (int status, string line, DateTimeOffset? serverDate) answer;
+                try { answer = await GetAsync(stream, uri, viaProxy: proxyUri is not null && uri.Scheme == Uri.UriSchemeHttp, httpDeadline.Token); }
+                catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+                {
+                    throw new TimeoutException("no HTTP answer within 100 s");
+                }
+                var (status, line, serverDate) = answer;
                 // The server's own clock, read from the response: the one way to tell a skewed
                 // local clock from a genuinely expired certificate.
                 string? skewNote = serverDate is { } date ? DoctorReport.ClockSkewNote(DateTimeOffset.UtcNow, date, seenChainNotTimeValid) : null;

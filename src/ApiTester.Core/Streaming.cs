@@ -34,14 +34,36 @@ public static class SseClient
             Uri.TryCreate(url, UriKind.Absolute, out var destination) ? destination : null);
         handler.PooledConnectionIdleTimeout = Timeout.InfiniteTimeSpan;
 
+        // Redirects are followed here, by hand, and only within the origin asked for: the handler's
+        // own following would carry every typed header (an X-Api-Key, a Cookie) and present the
+        // client certificate to whatever host a 302 names.
+        handler.AllowAutoRedirect = false;
         using var http = new HttpClient(handler, disposeHandler: true) { Timeout = Timeout.InfiniteTimeSpan };
-        using var message = new HttpRequestMessage(HttpMethod.Get, url);
-        message.Headers.TryAddWithoutValidation("Accept", EventStream);
-        message.Headers.TryAddWithoutValidation("Cache-Control", "no-cache");
-        if (headers is not null)
-            foreach (var h in headers) message.Headers.TryAddWithoutValidation(h.Key, h.Value);
+        var origin = new Uri(url);
+        var current = origin;
+        HttpResponseMessage response;
+        for (int hops = 0; ; hops++)
+        {
+            using var message = new HttpRequestMessage(HttpMethod.Get, current);
+            message.Headers.TryAddWithoutValidation("Accept", EventStream);
+            message.Headers.TryAddWithoutValidation("Cache-Control", "no-cache");
+            if (headers is not null)
+                foreach (var h in headers) message.Headers.TryAddWithoutValidation(h.Key, h.Value);
 
-        using var response = await http.SendAsync(message, HttpCompletionOption.ResponseHeadersRead, ct);
+            response = await http.SendAsync(message, HttpCompletionOption.ResponseHeadersRead, ct);
+            if ((int)response.StatusCode is not (301 or 302 or 303 or 307 or 308) || response.Headers.Location is not { } location)
+                break;
+            var next = location.IsAbsoluteUri ? location : new Uri(current, location);
+            response.Dispose();
+            if (!string.Equals(next.Scheme, origin.Scheme, StringComparison.OrdinalIgnoreCase) ||
+                !string.Equals(next.Host, origin.Host, StringComparison.OrdinalIgnoreCase) || next.Port != origin.Port)
+                throw new HttpRequestException(
+                    $"The stream redirected to another origin ({next.GetLeftPart(UriPartial.Authority)}); it is not followed, because " +
+                    "the request's headers and client certificate would go with it. Connect to that URL directly if it is the right one.");
+            if (hops >= 10) throw new HttpRequestException("The stream redirected more than 10 times.");
+            current = next;
+        }
+        using var _response = response;
         response.EnsureSuccessStatusCode();
 
         await using var stream = await response.Content.ReadAsStreamAsync(ct);
@@ -125,6 +147,9 @@ public sealed class WebSocketSession : IAsyncDisposable
             Uri.TryCreate(url, UriKind.Absolute, out var destination) ? destination : null);
         // Kept for the session's lifetime, not a using: the upgraded connection still belongs to
         // the invoker's handler, so disposing it here would tear down the socket under the session.
+        // A WebSocket handshake answered with a redirect is a failed handshake, never a hop to
+        // wherever the Location names with this request's headers and certificate.
+        handler.AllowAutoRedirect = false;
         _invoker = new HttpMessageInvoker(handler, disposeHandler: true);
         await _ws.ConnectAsync(new Uri(url), _invoker, ct);
     }

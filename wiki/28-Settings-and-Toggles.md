@@ -19,7 +19,7 @@ layout rather than an exhaustive list, read [The Interface](05-The-Interface.md)
 | **ENV** selector | none | The active environment. Its `{{variables}}` are substituted into the URL, query, headers, body and auth when you send. Application-wide, and remembered |
 | **Edit** (beside ENV) | — | Opens [Environments](#environments-window) |
 | **Theme toggle** | dark | Switches between the dark and light themes. Application-wide, and remembered |
-| **Update to x.y.z** | hidden | Appears when a newer release is found (Help › About › Check for updates, or the startup check). Installs it after checking each file's SHA-256, then restarts the app |
+| **Update to x.y.z** | hidden | Appears when a newer release is found (Help › About › Check for updates, or the startup check). Refuses while a request is running, and asks you to confirm. Installs it after checking each file's SHA-256, then restarts the app; if a chain-run or Discover window is open, it installs and the app reopens as the new version when you close it |
 | **Help** | — | Opens the built-in handbook. **About** has **Check for updates** and **Check for a new release when certapi starts** (off by default; at most once a day; remembered) |
 | Minimise / Maximise / Close | — | Window controls. Position, size and maximised state are remembered |
 
@@ -29,10 +29,12 @@ layout rather than an exhaustive list, read [The Interface](05-The-Interface.md)
 
 | Control | Default | What it does |
 |---|---|---|
-| **Method** | `GET` | The HTTP method: `GET`, `POST`, `PUT`, `PATCH`, `DELETE`, `HEAD`, `OPTIONS`. The command line accepts any method string with `-X`, including one this list does not offer |
+| **Method** | `GET` | The HTTP method: `GET`, `POST`, `PUT`, `PATCH`, `DELETE`, `HEAD`, `OPTIONS`. A method outside the list (`PURGE`, `PROPFIND`, from an import or a saved request) is added to the list and kept. The command line accepts any method string with `-X` |
 | **URL** | empty | The address. Paste one containing a `?query` and it splits into the Params grid automatically |
 | **Saved websites** | none | Base URLs you have kept, so a host is chosen rather than retyped. **Forget** removes the selected one |
+| **TIMEOUT** | `100` s | How long to wait for this request, in seconds. Per request |
 | **Certificate** | — no certificate — | The client certificate this request presents. **The default is no certificate**, which is a valid choice: the app is a general API client that happens to be very good at mutual TLS |
+| Certificate filter box | empty | Narrows the certificate list to entries containing the text you type |
 | **Refresh** | — | Re-read the Windows certificate store, for a certificate installed while the app was open |
 | **From file…** | — | Load a certificate from a `.pfx`/`.p12` or `.pem`/`.crt` instead of the store, for one handed to you but never imported |
 | **Ignore server cert errors (insecure)** | off | Accept any server certificate: expired, self-signed, wrong hostname. **This turns off the check that makes TLS meaningful** — prefer [Trusted certificates](#trusted-certificates-window), which pins one host and leaves every other host verified |
@@ -69,8 +71,8 @@ The same shape for request headers.
 
 | Control | Default | What it does |
 |---|---|---|
-| **Body mode** | raw | Raw text, or **Form data (multipart)** |
-| **Content type** | `application/json` | The body's content type, chosen from the list |
+| **Body mode** | Text | **Text**, or **Form data (multipart)** |
+| **Content type** | `application/json` | The body's content type, chosen from the list. A type outside the list (from an import or a saved request) is added to the list and kept |
 | **+ Add field** | — | *(multipart)* Add a form field |
 | **File** checkbox | off | *(multipart, per field)* Upload the value as a **file path** rather than as text |
 
@@ -140,6 +142,7 @@ How the request reaches the server — the app's equivalent of the CLI's
 |---|---|
 | **Pretty** | The body, formatted — JSON and XML reindented |
 | **Raw** | The body exactly as it arrived |
+| **Headers** | The response headers, one per line |
 | **Diagnostics** | The negotiated TLS version and cipher, **whether your client certificate was actually presented**, and the server's certificate and chain |
 | **Rendered** | HTML responses rendered as a page |
 | **Network** | Every call this session made, as a list |
@@ -148,7 +151,7 @@ How the request reaches the server — the app's equivalent of the CLI's
 | Control | Default | What it does |
 |---|---|---|
 | **Copy body** | — | The response body to the clipboard |
-| **Copy as ▾** | — | The *request* as a runnable command: cURL, PowerShell, Python (requests), or C# (HttpClient) |
+| **Copy as ▾** | — | Next to **Copy body**: the *request* as a runnable command: cURL, PowerShell, Python (requests), or C# (HttpClient) |
 | **Save…** | — | Write the body to a file |
 | **Find** / **Find next** | — | Search within the body |
 | **Pop out** | — | Open this view, or the whole panel, in its own window — for a second monitor, or to keep a response while you edit the request |
@@ -163,7 +166,11 @@ How the request reaches the server — the app's equivalent of the CLI's
 | **All / 2xx / 3xx / 4xx / 5xx / ERR** | All | Show only calls with that outcome |
 | **cert only** | off | Show only calls made **with your client certificate** — the quickest way to confirm the certificate is actually being used where you think |
 | **Clear** | — | Empty the list |
-| **Export Network trace as HAR…** | — | *(File menu)* Save the session as an archive |
+
+**Export Network trace as HAR…** is in the **Import ▾** menu on the request-tab strip, which holds:
+**Paste cURL command…**, **Import OpenAPI file…**, **Import workspace…**, **Export workspace…**,
+**Import HAR file…**, **Export Network trace as HAR…**, **Export OpenAPI from HAR file…** and
+**Trusted certificates…**.
 
 ---
 
@@ -188,6 +195,8 @@ it inherits, so an endpoint is immediately sendable. The nearest ancestor with a
 | Status text | — | What the last action did, including a count of unresolved `{{tokens}}` |
 | **Token chip** | — | Appears when a session token has been captured. Click it for its menu |
 | **Automatically use captured tokens** | on | *(token chip menu)* Attach captured tokens to later requests for the same host. Application-wide, and remembered |
+| **Automatically use captured cookies** | on | *(token chip menu)* Attach captured session cookies to later requests for the same host. Application-wide, and remembered |
+| **Clear token for *host*** / **Clear all captured tokens** / **Clear captured cookie(s) for *host*** | — | *(token chip menu)* Forget the captured token or cookies |
 | **Run Self-Test** | — | Prove the mutual-TLS path end to end against a loopback server. **If it fails, the problem is local**, not the API |
 | **Mock server…** | — | Opens the [mock server window](#mock-server-window) |
 | **Capture session…** | — | Opens [Session Capture](26-Session-Capture.md) |
@@ -203,7 +212,7 @@ it inherits, so an endpoint is immediately sendable. The nearest ancestor with a
 | **GET / HEAD / POST / PUT / DELETE** | GET only | Which methods to try against each path. `POST` finds endpoints that exist but reject a GET |
 | **Hide 404s / errors** | on | Hide the noise a wordlist run is mostly made of. Untick to see every probe |
 | Wordlist | built-in | The paths to probe |
-| Concurrency, delay | 8, 0 ms | Parallel probes, and a pause between them — be polite to somebody else's server |
+| **Concurrency** | 8 | Parallel probes. There is no delay control here; `certapi fuzz --delay` has one |
 
 Results open as tabs or save as a collection.
 
@@ -256,9 +265,10 @@ Between sessions, the app keeps: your open request tabs and which was active, th
 position and maximised state, the theme, the active environment, saved websites, the last
 certificate used, collections and chains, history, captured tokens and cookies, and trust pins.
 
-Secrets — captured tokens and cookies, saved auth values, and variables marked **secret** — are
-**encrypted at rest for your Windows user**, so another account on the same machine cannot read
-them. See [Marking a variable secret](09-Environments-and-Variables.md#marking-a-variable-secret)
+Secrets — captured tokens and cookies, saved auth values, saved proxy passwords, variables marked
+**secret**, and stored response bodies and credential response headers in history and known-good
+snapshots — are **encrypted at rest for your Windows user**, so another account on the same machine
+cannot read them. See [Marking a variable secret](09-Environments-and-Variables.md#marking-a-variable-secret)
 and [Import & Export](17-Import-and-Export.md) for what leaves the machine and what does not.
 
 ## Where the same setting lives on the command line

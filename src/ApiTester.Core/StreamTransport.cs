@@ -39,8 +39,8 @@ public static class StreamTransport
             // Always installed, not only under --insecure: with RevocationMode.None, no strict
             // flag, and no pin, Decide accepts exactly when the ordinary rules would have, so the
             // default path is behaviorally the platform's own validation.
-            RemoteCertificateValidationCallback = (_, cert, chain, errors) =>
-                Judge(options, cert, chain, errors, trustServerCertificate)
+            RemoteCertificateValidationCallback = (sender, cert, chain, errors) =>
+                Judge(options, TrustContext.HostOf(sender, options.Sni), cert, chain, errors, trustServerCertificate)
         };
         RevocationCheck.Apply(ssl, options);
         TlsPolicy.Apply(ssl, options with { Sni = null });
@@ -53,7 +53,7 @@ public static class StreamTransport
 
     /// <summary>One validation for every stream: the user's extra roots (--ca-file) reconsidered
     /// first, then the shared revocation/pin table.</summary>
-    private static bool Judge(TransportOptions options, X509Certificate? cert, X509Chain? chain,
+    private static bool Judge(TransportOptions options, string? host, X509Certificate? cert, X509Chain? chain,
         SslPolicyErrors errors, Func<X509Certificate2?, bool>? trustServerCertificate)
     {
         var (judgedErrors, judgedFlags) = ExtraRoots.Reconsider(
@@ -63,6 +63,6 @@ public static class StreamTransport
             judgedErrors, judgedFlags,
             trustServerCertificate is null
                 ? null
-                : () => TrustContext.Run(chain, judgedErrors, () => trustServerCertificate(cert as X509Certificate2))).Accepted;
+                : () => TrustContext.Run(chain, judgedErrors, host, () => trustServerCertificate(cert as X509Certificate2))).Accepted;
     }
 }

@@ -55,7 +55,7 @@ You can, and for public APIs they're fine. Where this app pulls ahead:
 
 Request builder · collections & history · environments & `{{variables}}` · response assertions ·
 value capture & automatic bearer tokens · **OAuth 2.0** (client-credentials, password, refresh,
-authorization-code + PKCE — Proof Key for Code Exchange) · **Windows Integrated Auth** · multipart
+authorization-code + PKCE — Proof Key for Code Exchange — and device code on the CLI) · **Windows Integrated Auth** · multipart
 uploads · GraphQL · endpoint discovery (fuzzing) · **WebSocket & SSE (Server-Sent Events)**
 streaming · a local **mock server** · a local **mTLS
 gateway** · an **MCP server** · cURL / OpenAPI import & export · rendered-website view · network

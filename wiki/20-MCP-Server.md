@@ -32,6 +32,18 @@ stdio server. The agent then has a small, safe toolset for talking to your API.
 | `grpc_call` | Invoke a gRPC method — unary, server-streaming, client-streaming, or bidirectional — with the pinned certificate |
 | `self_test` | Prove the mTLS path end-to-end |
 
+### Tool arguments
+
+| Tool | Arguments |
+|---|---|
+| `send_request` | `url` (required); `method` (default `GET`); `headers` (an object); `body`; `contentType` (default `application/json` when there is a body; a `Content-Type` in `headers` sets it) |
+| `run_saved` | `path` (required); `env`; `vars` (an object) |
+| `run_chain` | `name` (required); `env`; `vars` (an object) |
+| `list_certificates` | `filter` (matches subject, issuer or thumbprint) |
+| `grpc_list` | `address` — optional when `--protoset` was given at launch |
+| `grpc_call` | `address` and `method` (`Service/Method`) required; `data` (one message, or an array of messages for a streaming request); `metadata` (an object); `maxMessages` (default 100) |
+| `list_saved`, `list_environments`, `self_test` | none |
+
 Bearer tokens seen in responses are captured in memory for the session and attached to later calls to
 the same host (like the app's automatic tokens), unless you pass `--no-auto-token`. Values captured
 by `run_saved` and `run_chain` resolve `{{variables}}` in later calls the same way. **Nothing is ever
@@ -41,9 +53,12 @@ the process.
 ## Resources and protocol features
 
 Saved requests, environments, and chains are also published as **read-only MCP resources**
-(`certapi://requests/…`, `certapi://environments/…`, `certapi://chains`), so a host can show them to
-the agent without a tool call. A request's auth secret reads as `(redacted)` and a secret variable's
-value is withheld — the same stance `certapi export workspace` takes.
+(`certapi://requests/…`, `certapi://environments/…`, and `certapi://chains` when the workspace has
+chains), so a host can show them to the agent without a tool call. A resource withholds a request's
+auth secret, secret variable values, and credential values typed into the request itself: a
+secret-named header (`X-Api-Key`, `X-Auth-Token`, …), a credential query value (`?api_key=…`), and a
+password or secret field in the body. A header or body value that is only a `{{variable}}` reference
+is shown as written. `list_saved` redacts each URL the same way.
 
 Tools carry the protocol's **behavioral annotations** (read-only, destructive, idempotent,
 open-world hints) so a host's permission model has something structured to act on, results include
@@ -60,7 +75,8 @@ The point of `mcp` is to give an agent **capability without keys**:
   A saved request that names its own certificate uses that one (an operator's earlier choice); one
   that names none uses the pinned certificate.
 - **Host allowlist** — `--allow <host>` (repeatable). A request URL must match, or be a subdomain of,
-  an allowed host. **Omit `--allow` and any host is permitted — with a printed warning.** Always set
+  an allowed host. Ports are ignored, and a URL that is not `http://` or `https://` is always
+  refused. **Omit `--allow` and any host is permitted — with a printed warning.** Always set
   an allowlist for anything but local experimentation. Enforced per request, including every chain
   step and every gRPC call.
 - **Pinned trust, not blanket trust** — a host pinned with `certapi trust add` is reachable without
@@ -68,7 +84,8 @@ The point of `mcp` is to give an agent **capability without keys**:
 - **No redirects** — a 3xx is returned as data, never followed, so the allowlist cannot be escaped
   by a server-controlled hop.
 - **No secrets in the transcript** — the agent asks the server to authenticate; the certificate and
-  captured tokens stay on your side. Resources redact auth secrets and secret variable values.
+  captured tokens stay on your side. Resources and `list_saved` withhold auth secrets, secret
+  variable values, and credentials typed into headers, query strings and bodies.
 - **Read-only against your files** — the workspace is never written back; captures and tokens live
   in memory for the session only.
 
@@ -78,16 +95,20 @@ The point of `mcp` is to give an agent **capability without keys**:
 |---|---|
 | `--cert <thumb\|subject>` | The certificate all tools use (pinned) |
 | `--cert-file` / `--cert-password` / `--key-file` | Pin a certificate from a file instead |
-| `--store <location>` | `CurrentUser` (default) or `LocalMachine` |
+| `--store <location>` | `CurrentUser` (default) or `LocalMachine`, which searches both stores |
+| `--cert-issuer <name>` / `--cert-serial <hex>` | Pick the store certificate by issuer or serial number, as on [`send`](21-CLI-Reference.md#certificate-options) |
+| `--cert-pin <pin>` | Smart-card or HSM PIN, supplied ahead of the prompt (or `CERTAPI_CERT_PIN`) |
 | `--allow <host>` | Allowed upstream host (repeatable) |
 | `--insecure` | Ignore upstream server-certificate errors (internal CAs — certificate authorities) |
-| `--timeout <seconds>` | `send_request` upstream timeout (default 100; a saved request keeps its own saved timeout) |
-| `--workspace <file>` | Load saved requests / environments / chains from a workspace file (read once at launch) |
+| `--timeout <seconds>` | Deadline for `send_request`, `grpc_list` and `grpc_call` (default 100; a saved request keeps its own saved timeout). A gRPC call past it returns a tool error instead of holding up later calls |
+| `--workspace <file>` | Load saved requests / environments / chains from a workspace file (read once at launch). Without it, the app's live `state.json` is read |
 | `--no-auto-token` | Don't capture/reuse bearer tokens across the session |
 | `--protoset <file>` | Compiled descriptor set for `grpc_list`/`grpc_call` against a server without reflection — pinned at launch; the agent cannot name files |
 | `--proxy` / `--proxy-user` / `--no-proxy` / `--noproxy` | The same proxy control as [`send`](21-CLI-Reference.md#send), applied to every call the tools make |
 | `--revocation <mode>` / `--revocation-strict` | The same [revocation checking](06-Certificates-and-mTLS.md) as `send`, applied to every call |
 | `--retry <n>` / `--retry-on` / `--retry-delay` | The same retry rules as `send` |
+| `--ca-file` / `--tls-min` / `--connect-timeout` / `--sni` / `--resolve` | The same [trust and TLS options](21-CLI-Reference.md#trust-and-tls) as `send`, applied to every call |
+| `--pac` / `--no-env-proxy` / `--offline` / `-4` / `-6` | The same network options as `send` |
 
 ## Examples
 
@@ -99,6 +120,8 @@ certapi mcp --cert "CN=Agent Client" --allow grpc.internal --protoset .\contract
 certapi mcp --cert "CN=Agent Client" --allow api.example.com --revocation online
 ```
 
-The server runs until stdin closes. Exit 0 on a clean shutdown, 2 usage, 3 data error.
+The server runs until stdin closes or Ctrl+C (a second Ctrl+C quits at once). A message without an
+`id` is a notification: nothing runs and nothing is answered. Exit 0 on a clean shutdown, 2 usage,
+3 data error.
 
 Next: [CLI Reference](21-CLI-Reference.md).

@@ -57,7 +57,8 @@ intranet services). Pick **Windows (integrated)**:
 
 The handler negotiates **Kerberos** (if the target has an SPN — service principal name — and you're
 domain-joined) or falls back
-to **NTLM** (NT LAN Manager) automatically. CLI:
+to **NTLM** (NT LAN Manager) automatically. These credentials answer only a Negotiate or NTLM
+challenge, never Basic or Digest. CLI:
 
 ```powershell
 # single sign-on with your account

@@ -23,16 +23,18 @@ public static class ConnectionsCommand
         way, or each request is built with a fresh client.
 
         Options:
-          -n <count>              How many requests to send (default 4)
+          -n, --count <count>     How many requests to send (default 4)
           --parallel <count>      Send this many at a time (default 1, one after another).
                                   Parallel requests need one connection each, so a pool that is
                                   working still shows several — the useful number is connections
                                   compared with requests, not connections alone
           --json                  Print the report as JSON instead of text
 
-        Certificate and transport options work here exactly as for `certapi send`, including
-        --cert, --cert-file, --insecure, --proxy, --http1.1 and --http2.
+        Certificate and transport options work here exactly as for `certapi send`:
 
+          --insecure              Ignore server certificate errors (a host pinned with
+                                  `certapi trust add` needs no --insecure)
+        """ + "\n" + CliCert.HelpLines + "\n" + TransportFlags.Help + "\n" + """
         Global: --debug (verbose diagnostics) and --log-file <path> work here too.
 
         Examples:

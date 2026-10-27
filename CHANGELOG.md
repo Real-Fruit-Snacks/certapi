@@ -38,27 +38,50 @@ All notable changes to this project are documented here. The format follows
   file beside the old one and moves it into place, so an interrupted save never leaves half a file.
 - The release workflow builds the tag it names on a manual run, and stops when a project's
   `<Version>` does not match the tag.
+- `send -d` and `--data-file` imply POST unless `-X` is given, as in curl (a GET with a body was sent).
+- A configuration field of the wrong JSON type (`"timeout": "60"`, `"insecure": "true"`) is an error
+  naming the field; it used to be ignored without a word, leaving the default in force.
+- On Windows the command line reads and writes UTF-8 at the console (an MCP client's non-ASCII
+  input arrived mangled, and `send --pretty > file` wrote the OEM code page); the console's own
+  code pages are put back on exit.
+- A header name the HTTP stack cannot send (a space, an accent) fails the request with a message
+  instead of being dropped. A URL that is not http(s) fails that one request instead of ending the
+  whole run. `import openapi` says plainly that YAML must be converted to JSON first.
+- `grpc call` on a streaming method reads piped stdin only; at a terminal give the messages with
+  `-d`. MCP's `grpc_list` and `grpc_call` have the `--timeout` deadline. `doctor` bounds the TLS
+  handshake (`--connect-timeout`, else 30 s) and the HTTP answer (100 s).
+- `connections`, `update` and `mcp --help` list every certificate and transport option they take,
+  so completion offers them.
+
+### Security
+- An issuer pin (`trust add --ca`) accepted a certificate whose signature did not verify, as long
+  as it named the pinned CA, and waived a certificate issued for another name. It now needs a
+  validly signed chain up to the CA and the right name.
+- A followed redirect to another host was judged by the first host's pins. It is now judged by
+  the pins of the host it reached.
+- Windows credentials (`--windows-auth`) were offered to any host a redirect pointed at. A typed
+  `Cookie` or `Proxy-Authorization` header was carried there too.
+- OAuth token requests followed a 307 and replayed the client secret or password. They now stop
+  and say where the redirect pointed.
+- `serve --vhost --listen 127.0.0.1` answered the whole network without `--token`.
+- A `--cookie-jar` round trip widened host-only cookies to every subdomain.
+- Response credential headers (a login's `Set-Cookie`, token headers) were saved in the clear in
+  history and known-good snapshots. They are now encrypted, and stripped by `export workspace`.
+- `--wire` printed secrets that arrived in a chunk shown as hex, or split across two reads.
+- HAR files, notes, wire logs and gateway recordings now share one credential-header rule, which
+  covers `X-Api-Key`, `X-Auth-Token` and similar.
+- OpenAPI exports wrote header and query secrets as examples. Vault notes kept credential fields
+  in bodies. A doctor note for an unparseable URL put its password in the title.
+- Windows integrated credentials answered a Basic or Digest challenge, sending the domain password
+  base64-encoded. They now answer only Negotiate and NTLM.
+- `sse` followed a redirect to another host with every typed header (`X-Api-Key`, `Cookie`) and the
+  client certificate. It now follows only same-origin redirects and refuses the rest, naming them;
+  a WebSocket handshake answered with a redirect fails instead of following it.
+- MCP resources and `list_saved` published credentials typed into headers, query strings and
+  request bodies. They are now withheld like the auth secret (`{{variable}}` references are kept).
+- A mock scenario's `require` was not checked for a WebSocket upgrade.
 
 ### Fixed
-- **Security.**
-  - An issuer pin (`trust add --ca`) accepted a certificate whose signature did not verify, as long
-    as it named the pinned CA, and waived a certificate issued for another name. It now needs a
-    validly signed chain up to the CA and the right name.
-  - A followed redirect to another host was judged by the first host's pins. It is now judged by
-    the pins of the host it reached.
-  - Windows credentials (`--windows-auth`) were offered to any host a redirect pointed at. A typed
-    `Cookie` or `Proxy-Authorization` header was carried there too.
-  - OAuth token requests followed a 307 and replayed the client secret or password. They now stop
-    and say where the redirect pointed.
-  - `serve --vhost --listen 127.0.0.1` answered the whole network without `--token`.
-  - A `--cookie-jar` round trip widened host-only cookies to every subdomain.
-  - Response credential headers (a login's `Set-Cookie`, token headers) were saved in the clear in
-    history and known-good snapshots. They are now encrypted, and stripped by `export workspace`.
-  - `--wire` printed secrets that arrived in a chunk shown as hex, or split across two reads.
-  - HAR files, notes, wire logs and gateway recordings now share one credential-header rule, which
-    covers `X-Api-Key`, `X-Auth-Token` and similar.
-  - OpenAPI exports wrote header and query secrets as examples. Vault notes kept credential fields
-    in bodies. A doctor note for an unparseable URL put its password in the title.
 - **Requests.**
   - A body header given as a header (`Content-Type`, `Content-Encoding`, `Content-Language`) was
     dropped by `bench`, MCP `send_request`, the gateway and the rendered view.
@@ -111,9 +134,53 @@ All notable changes to this project are documented here. The format follows
   - A host with `--` in it (`xn--…`) could not be a virtual host.
   - `serve --tls` stored its certificate for HTTP.sys with a key that did not outlive the process.
   - A bench send that threw counted as 0 ms.
+- **Data that could be lost.**
+  - When the live workspace could not be read, `send` (and the app) started with an empty one, and
+    the next save replaced the file with it. The unreadable file is now kept as
+    `state.json.unreadable-<time>.bak` first, and you are told.
+  - Cookie jars held only 20 cookies per domain (.NET's default), so a jar file was cut down on its
+    next save; they now hold 180 per domain. A jar is written beside the old one and moved into
+    place, a read-only one is a warning rather than an error after the request was sent, and a
+    hand-edited bad one is a data error (exit 3).
+  - `run --md-vault` overwrote a note written in the same second.
+- **Robustness.**
+  - A `"` inside an unquoted CSV field swallowed the rest of the file into it; a non-UTF-8 data file
+    is now refused with a message instead of being read with replacement characters.
+  - A HAR with `null` entries, requests or headers crashed every reader; it is now read or refused
+    with a message (exit 3). A HAR entry whose method is not a method fails that entry only.
+  - Postman path segments written as objects (allowed by the v2.0 schema) failed the import.
+  - A mock scenario's `status` written as text, a JSON `body`, and numeric header values were
+    dropped silently; they are now read (and a text status is warned about).
+  - `--log-file` interleaved characters from several threads into garbage.
+  - A mock server stopped accepting after one connection was reset in its backlog.
+  - Progress counters on `bench` and `fuzz` could print after the final line.
+- **Windows.**
+  - `--pac` passed WinHTTP two wrong flag values (they meant "keep host case" and "lowercase host").
+  - `certapi proxy <url>` said DIRECT for a manual (static) system proxy, and then that the two
+    engines disagreed.
+  - `doctor` called any root in the machine's Trusted Root store "not a public certificate
+    authority" — public roots are there too — and suggested SSL inspection for ordinary sites.
+  - `serve --tls` read `netsh` output by its English labels only; on a localized Windows a
+    binding already in place looked absent.
+  - A certificate in both CurrentUser and LocalMachine was listed twice, making
+    `--cert <thumbprint> --store LocalMachine` ambiguous.
+  - An update failed while a process from the previous update (a long-running `mcp`) still ran from
+    the `.old` file; leftovers are cleaned up on the next start.
+  - The printed `netsh http add urlacl` command broke for a user name with a space.
 - **The desktop app.**
   - A response landed on whichever tab was open when it arrived.
-  - An unexpected error ended the app without saving. It now saves and shows the error.
+  - Windows authentication became "Auto" when a request was saved, copied or opened from history.
+  - A body content type outside the list (`application/json;charset=UTF-8` from a browser or cURL)
+    became the previous tab's type. Refresh dropped the active tab's certificate.
+  - Right-clicking a nested folder opened the menu for its top-level folder, so subfolder defaults
+    could not be set.
+  - Switching theme showed the previous response in an empty tab or under "Waiting for response…".
+  - "Remember website & certificate" learned from a failed (non-2xx) send, or from a tab pointed at
+    another endpoint; the Diff tab compared a retargeted tab with its old endpoint's baseline.
+  - A chain capture that created a variable could fail with a cross-thread error while the
+    Environments list was bound to it.
+  - An error in a window's event handler ended the app without saving. Once the main window is up,
+    it now saves the workspace and shows the error instead.
   - Session capture kept tokens after Cancel, and could crash on an address it could not open or a
     double Finish.
   - Opening the rendered view twice quickly fetched every page resource twice.

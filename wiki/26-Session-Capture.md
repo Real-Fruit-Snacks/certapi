@@ -23,6 +23,9 @@ to the login page and sign in normally. As you do, the app:
 Captured cookies and tokens are stored per origin (scheme + host + port) and **attached automatically**
 to later requests to that origin — no copy-paste.
 
+Nothing is kept until you press **Finish & save**. **Cancel**, or closing the window, discards the
+tokens and cookies seen during the capture.
+
 ## Your password is never captured
 
 You type your password into the **site's own login form** inside the browser. The app only ever sees

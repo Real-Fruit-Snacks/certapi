@@ -19,9 +19,15 @@ saw at each. Every stage is timed, so "slow" is diagnosable too.
 Four things it can tell you that an ordinary request never will:
 
 - **Which certificate authorities the server accepts client certificates from**, matched against
-  the certificates you actually have. "The server accepts certificates from `CN=Corp Issuing CA 2`
-  — none of your 3 certificates are issued by any of those" answers the most common mTLS mystery
-  in one line, and it is information only visible during a handshake.
+  the certificates you actually have. Lines like these answer the most common mTLS mystery, and
+  they are information only visible during a handshake:
+
+  ```
+  the server accepts client certificates from 1 authority/authorities:
+    CN=Corp Issuing CA 2
+  NONE of your 3 certificate(s) are issued by any of those authorities
+  the certificate you chose is NOT — it is issued by CN=Old Issuing CA
+  ```
 - **Whether this network is decrypting TLS in the middle.** If the chain's root is an inspection
   appliance (or a private root this machine happens to trust), doctor says so — and says why it
   matters: a client certificate cannot survive an intercepting proxy.
@@ -384,7 +390,9 @@ says the same.
 - **401 from the gateway** — it runs with `--token` and the request did not send it
   (`Authorization: Bearer <token>` or `X-Certapi-Token`).
 - **403 from the gateway** — the host is not on `--allow`, or the caller is not on loopback and
-  `--listen` was not given.
+  no non-loopback `--listen` was given. A loopback `--listen` (`127.0.0.1`, `::1`, `localhost`)
+  stays loopback-only, even under `--vhost`; another address needs `--token`, and `--tls` accepts
+  only `127.0.0.1` or `::1`.
 - **404 for `/_/https://…`** — the gateway was started without `--allow`, so dynamic hosts are off.
 - **400** — the request target walks off the site's host (`//other.host/…`); the gateway refuses it
   before the certificate can reach that host.
@@ -408,8 +416,9 @@ The request took longer than the timeout. Raise it on the request line or with `
 
 ## No certificates in the dropdown
 
-The list shows only certificates with **client-auth** capability and a private key in your store.
-Press **F5** to refresh after importing one. Add the machine store with `--store LocalMachine`
+The list shows every certificate in your store that has a private key. Ones without the
+**client-auth** capability are listed last, marked `(no client-auth EKU)`. Check that the filter box
+beside the list is not hiding the one you want, and press **F5** to refresh after importing one. Add the machine store with `--store LocalMachine`
 (CLI) if your certificate lives there. You can always load one from a file with **From file…** /
 `--cert-file`.
 
@@ -436,8 +445,11 @@ app, for headless runs that persist.
 
 ## Where's my data?
 
-Everything is in `%AppData%\CertApiTester\state.json`. Back it up before experimenting; delete it to
-start fresh (the app recreates it).
+The workspace — requests, collections, history, environments, tokens, settings — is in
+`%AppData%\CertApiTester\state.json`. Back it up before experimenting; delete it to start fresh (the
+app recreates it). Two things live elsewhere: the per-user configuration file,
+`%APPDATA%\certapi\config.json` (see [Configuration](27-Configuration.md)), and the gateway's
+certificate, cached in `%AppData%\CertApiTester\gateway-tls`.
 
 ## My tokens disappeared after I copied state.json to another machine / logged in as another user
 

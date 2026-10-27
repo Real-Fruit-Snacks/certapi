@@ -37,7 +37,7 @@ know what you want to do but not what it is called.
 | 13 | [Data-Driven Runs](13-Data-Driven-Runs.md) | Repeating a request once per row of a CSV or JSON dataset |
 | 14 | [Endpoint Discovery](14-Endpoint-Discovery.md) | Probing a wordlist to map an undocumented API |
 | 15 | [Live Streaming](15-Live-Streaming.md) | WebSocket and Server-Sent Events |
-| 16 | [Response Views](16-Response-Views.md) | Pretty, Raw, Diagnostics, Rendered, Network |
+| 16 | [Response Views](16-Response-Views.md) | Pretty, Raw, Headers, Diagnostics, Diff, Rendered, Network |
 | 26 | [Session Capture](26-Session-Capture.md) | Log in once in a browser, reuse that session here |
 | 27 | [Configuration](27-Configuration.md) | Profiles that carry the tedious half of every command line — and whole gateways |
 
@@ -59,7 +59,7 @@ know what you want to do but not what it is called.
 | 22 | [Keyboard Shortcuts](22-Keyboard-Shortcuts.md) | Every shortcut in the app |
 | 23 | [Troubleshooting](23-Troubleshooting.md) | Why can't I reach this? — and the tools that answer it |
 | 24 | [FAQ](24-FAQ.md) | Short answers to the questions that come up most |
-| 25 | [Building from Source](25-Building-from-Source.md) | Cloning, building, and running the tests |
+| 25 | [Building from Source](25-Building-from-Source.md) | Building, running the tests, and cutting a release |
 
 ---
 

@@ -54,6 +54,18 @@ certapi send https://api.example.com/x -X POST -d 'raw text' --content-type text
 
 `(Examples use PowerShell quoting; in cmd.exe write JSON as `"{\"name\":\"Ada\"}"`.)`
 
+On the CLI, `-d` (or `--data-file`) implies POST unless `-X` names another method, as in curl, so
+the `-X POST` above is optional. `-d @file` reads the body from a file. A file that is text — UTF-8,
+or UTF-16/32 with a byte-order mark — is sent as text, with `{{variables}}` resolved; any other file
+is sent byte for byte as `application/octet-stream` unless `--content-type` says otherwise. A
+`-H "Content-Type: …"` sets the body's type too, as in curl (`--content-type` wins if both are
+given):
+
+```powershell
+certapi send https://api.example.com/upload -d "@.\logo.png" --content-type image/png
+certapi send https://api.example.com/x -d '<a/>' -H "Content-Type: application/xml"
+```
+
 ### Multipart form (file uploads)
 
 Switch the Body tab to **Form** to build a `multipart/form-data` body: a grid of parts, each a text

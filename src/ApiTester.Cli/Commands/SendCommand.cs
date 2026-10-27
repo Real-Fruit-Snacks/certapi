@@ -105,8 +105,9 @@ public static class SendCommand
                                   first byte, download, total (stderr; in the envelope with --json)
           --har <file>            Capture the request/response (and every redirect hop) as a
                                   HAR file, written once when the command finishes
-          --har-include-secrets   Don't redact Authorization/Proxy-Authorization/Cookie/
-                                  Set-Cookie values in the captured HAR (redacted by default)
+          --har-include-secrets   Keep credential header values in the captured HAR (Authorization,
+                                  Cookie, Set-Cookie, token, secret and API-key headers;
+                                  redacted by default)
           --wire                  Print the plaintext bytes of the exchange: the request as it was
                                   actually framed and the response as it actually arrived, hex and
                                   ASCII for anything that isn't text. Direct connections only —
