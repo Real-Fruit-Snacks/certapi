@@ -1194,6 +1194,7 @@ Exit 0 when the requests were made, 3 when none could be sent.
 certapi config path
 certapi config profiles
 certapi config show [--profile <name>]
+certapi config init [--local | --path <file>] [--name <profile>] [--cert <thumb|subject>] [--proxy <url>] [--force]
 ```
 
 What configuration is actually in effect. See [Configuration](27-Configuration.md).
@@ -1203,6 +1204,18 @@ What configuration is actually in effect. See [Configuration](27-Configuration.m
 | `path` | The configuration file this invocation resolved, **and by which discovery rule** — so you can see whether it came from `--config`, the working directory, a parent directory, or your per-user path |
 | `profiles` | The profiles the file defines, and which one is the default |
 | `show` | The profile in effect, field by field, including its `serve` settings and one line per site. Passwords, tokens, proxy credentials and secret headers print as `(set)` |
+| `init` | Write a starter file: one profile, made the default, with every other field present but commented out and a link to [Configuration](27-Configuration.md). It changes nothing until you uncomment something |
+
+| `init` option | Default | What it does |
+|---|---|---|
+| `--local` | off | Write `certapi.config.json` in the current directory instead of your per-user file |
+| `--path <file>` | per-user file | Write here instead |
+| `--name <profile>` | `default` | The profile's name |
+| `--cert <thumb\|subject>` | commented out | Fill in the profile's certificate |
+| `--proxy <url>` | commented out | Fill in the profile's proxy |
+| `--force` | off | Replace an existing file. Without it an existing file is never touched (exit 3) |
+
+`init` works even while the configuration it would replace cannot be read.
 
 Both honour the [global options](#global-options) `--config`, `--profile` and `--no-config`. When a
 command behaves in a way you did not expect, `certapi config path` and then `--no-config` are the

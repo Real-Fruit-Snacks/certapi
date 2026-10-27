@@ -8,6 +8,8 @@ public static class ConfigCommand
         Usage: certapi config path
                certapi config show [--profile <name>]
                certapi config profiles
+               certapi config init [--local | --path <file>] [--name <profile>] [--cert <thumb|subject>]
+                                   [--proxy <url>] [--force]
 
         Says what configuration is actually in effect, in the same spirit as `doctor` and `proxy`:
         a default that surprises you should be traceable to the file that set it.
@@ -15,6 +17,11 @@ public static class ConfigCommand
           path       Which configuration file was found, and by which rule
           show       The resolved profile, exactly as a command would see it
           profiles   The profile names the file defines
+          init       Write a starter configuration file: one profile, every other field present
+                     but commented out, with a link to the reference. Your per-user file by
+                     default; --local writes certapi.config.json here, --path anywhere. --name
+                     names the profile (default "default"), --cert and --proxy fill those in.
+                     An existing file is never overwritten without --force
 
         Configuration is looked for in this order, first match winning:
           1. --config <path>            named explicitly
@@ -44,6 +51,8 @@ public static class ConfigCommand
         Global: --debug (verbose diagnostics) and --log-file <path> work here too.
 
         Examples:
+          certapi config init --cert "CN=My Client"
+          certapi config init --local --name corp --proxy http://proxy.corp:8080
           certapi config path
           certapi config show --profile corp
           certapi send https://api.internal/orders --profile corp
@@ -58,8 +67,19 @@ public static class ConfigCommand
         // file it found and the profile it resolved. This command reports THAT, rather than
         // re-running discovery — which could disagree with what the invocation actually used, and
         // would ignore an explicit --config into the bargain.
+        // init's options are read before Positionals() so they are never "unknown" elsewhere.
+        bool local = args.Flag("--local");
+        string? initPath = args.Value("--path");
+        string? initName = args.Value("--name");
+        string? initCert = args.Value("--cert");
+        string? initProxy = args.Value("--proxy");
+        bool force = args.Flag("--force");
         var positionals = args.Positionals();
         if (positionals.Count != 1) throw new CliUsageException(Help);
+        bool isInit = positionals[0].Equals("init", StringComparison.OrdinalIgnoreCase);
+        if (!isInit && (local || initPath is not null || initName is not null || initCert is not null || initProxy is not null || force))
+            throw new CliUsageException("--local, --path, --name, --cert, --proxy and --force belong to 'config init'.");
+        if (isInit) return Init(local, initPath, initName, initCert, initProxy, force, stdout, services);
 
         var source = services.ProfileSource;
 
@@ -104,6 +124,72 @@ public static class ConfigCommand
             default:
                 throw new CliUsageException(Help);
         }
+    }
+
+    private static int Init(bool local, string? path, string? name, string? cert, string? proxy, bool force,
+                            TextWriter stdout, CliServices services)
+    {
+        if (local && path is not null) throw new CliUsageException("--local and --path both say where to write; give one.");
+        string target = path is not null ? Path.GetFullPath(path)
+            : local ? Path.Combine(services.WorkingDirectory, ConfigLoader.FileName)
+            : services.UserConfigPath ?? throw new CliUsageException("There is no per-user configuration path here; use --local or --path <file>.");
+        name ??= "default";
+        if (name.Length == 0 || name.Any(c => char.IsWhiteSpace(c) || c == '"'))
+            throw new CliUsageException($"--name '{name}' is not a usable profile name (no spaces or quotes).");
+        if (File.Exists(target) && !force)
+            throw new CliDataException($"{target} already exists. Add --force to replace it, or edit it directly.");
+
+        string text = StarterConfig(name, cert, proxy);
+        // Proved before it is written: the starter must load with the same reader every command uses.
+        ConfigLoader.Parse(text).Resolve(name);
+        Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+        File.WriteAllText(target, text);
+        stdout.WriteLine($"wrote {target}");
+        stdout.WriteLine($"  profile '{name}' is the default, so every command uses it without --profile.");
+        stdout.WriteLine("  Uncomment what you need, then check it with: certapi config show");
+        return ExitCodes.Ok;
+    }
+
+    /// <summary>The starter file: one profile, the fields worth knowing about present but commented
+    /// out, so it changes nothing until something is uncommented. JSON with comments, which the
+    /// loader accepts.</summary>
+    internal static string StarterConfig(string name, string? cert, string? proxy)
+    {
+        static string Json(string s) => System.Text.Json.JsonSerializer.Serialize(s);
+        string Line(string field, string? value, string example, string note) =>
+            value is not null ? $"      \"{field}\": {Json(value)},{note}"
+                              : $"      // \"{field}\": {example},{note}";
+        return $$"""
+            {
+              // certapi configuration. Every field is optional, and a flag typed on the command line
+              // always wins over what is here. Reference:
+              // https://github.com/Real-Fruit-Snacks/certapi/blob/main/wiki/27-Configuration.md
+              "defaultProfile": {{Json(name)}},
+              "profiles": {
+                {{Json(name)}}: {
+            {{Line("cert", cert, "\"CN=My Client\"", "            // a subject or thumbprint from `certapi certs`")}}
+                  // "store": "CurrentUser",           // LocalMachine also searches the machine store
+                  // "certFile": "client.pfx",         // a file instead of the store
+                  // "certPassword": "${env:CERT_PASSWORD}",
+            {{Line("proxy", proxy, "\"http://proxy.corp:8080\"", " // http(s) or socks5://")}}
+                  // "proxyUser": "${env:PROXY_USER}",
+                  // "noProxyList": "internal.corp,.lab,10.0.0.0/8",
+                  // "caFile": "corp-root.pem",         // a private root, relative to this file
+                  // "tlsMin": "1.2",
+                  // "revocation": "offline",            // none, offline or online
+                  // "retry": 2,
+                  // "timeout": 60,
+                  // "connectTimeout": 10,
+                  // "headers": { "X-Team": "payments" },
+                  // "serve": {
+                  //   "port": 8819,
+                  //   "browser": true,
+                  //   "sites": [ { "name": "api", "upstream": "https://api.internal" } ]
+                  // }
+                }
+              }
+            }
+            """;
     }
 
     private static CertapiConfig Load(ConfigSource? source)

@@ -83,7 +83,7 @@ public class CompletionTests
     public void Subcommands_complete_after_their_command()
     {
         Assert.Equal(new[] { "list", "add", "remove" }, Complete("trust", ""));
-        Assert.Equal(new[] { "path", "show", "profiles" }, Complete("config", ""));
+        Assert.Equal(new[] { "path", "show", "profiles", "init" }, Complete("config", ""));
         Assert.Contains("curl", Complete("import", ""));
         Assert.Equal(new[] { "powershell" }, Complete("completion", ""));
         Assert.Empty(Complete("mock", ""));

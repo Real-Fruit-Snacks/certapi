@@ -209,7 +209,9 @@ public static class CliApp
             var rest = g.Remaining.Skip(1).ToArray();
             // Before the profile is resolved: help must work even when the configuration is broken.
             if (PrintedHelp(command, rest, stdout)) return ExitCodes.Ok;
-            services.Profile = ResolveProfile(g.Config, g.Profile, g.NoConfig, services, log);
+            // `config init` writes a configuration, so it must work when the current one is broken.
+            bool writesConfig = command == "config" && rest.FirstOrDefault()?.Equals("init", StringComparison.OrdinalIgnoreCase) == true;
+            if (!writesConfig) services.Profile = ResolveProfile(g.Config, g.Profile, g.NoConfig, services, log);
             return command switch
             {
                 "--version" or "-v" => Version(stdout),

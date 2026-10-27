@@ -15,6 +15,11 @@ certapi send https://api.internal/orders --profile corp
 
 ## The file
 
+The quickest start is `certapi config init`, which writes your per-user file with one profile and
+every field below present but commented out (`--local` writes `certapi.config.json` in the current
+directory instead; `--cert` and `--proxy` fill those two in). It never overwrites an existing file
+without `--force`.
+
 `certapi.config.json` — JSON, with `//` comments and trailing commas allowed, because people edit
 these by hand:
 

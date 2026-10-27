@@ -33,6 +33,10 @@ All notable changes to this project are documented here. The format follows
   `--no-forwarded`, `--no-auto-token`, `--no-windows-auth`, `--no-cors`, `--no-cookie-jar`. A
   profile's switch no longer needs `--no-config` to undo for one run.
 
+- **`certapi config init`** writes a starter configuration: one default profile, every other field
+  commented out, `--cert`/`--proxy` filled in when given, `--local` for the current directory,
+  `--force` to replace a file.
+
 ### Changed
 - Single-letter options are now case-sensitive (`-x` is no longer read as `-X`). Long options are
   still case-insensitive.
