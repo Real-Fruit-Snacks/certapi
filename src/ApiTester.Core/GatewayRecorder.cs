@@ -77,12 +77,11 @@ public sealed class GatewayRecorder
             // secrets, stripped by default and kept only under --record-include-secrets. Framing
             // headers a replay must not carry are dropped either way, matching HarReplaySource.
             .Where(h => !FramingHeaders.Contains(h.Key, StringComparer.OrdinalIgnoreCase))
-            .Select(h => _includeSecrets || !SecretHeaders.Contains(h.Key, StringComparer.OrdinalIgnoreCase)
+            .Select(h => _includeSecrets || !SecretHeaders.IsSecret(h.Key)
                 ? new HarNameValue(h.Key, h.Value)
                 : new HarNameValue(h.Key, "REDACTED"))
             .ToList();
 
-    private static readonly string[] SecretHeaders = { "Authorization", "Cookie", "Set-Cookie", "Proxy-Authorization", "X-Certapi-Token" };
     private static readonly string[] FramingHeaders = { "Transfer-Encoding", "Connection", "Content-Length" };
 
     private static string? ContentTypeOf(IReadOnlyList<KeyValuePair<string, string>> headers) =>

@@ -51,7 +51,8 @@ public sealed class WireLog
     public string Render(bool includeSecrets = false)
     {
         var sb = new StringBuilder();
-        foreach (var chunk in Chunks)
+        var chunks = includeSecrets ? Chunks : MaskSecretHeaderValues(Chunks);
+        foreach (var chunk in chunks)
         {
             string arrow = chunk.Direction == WireDirection.Sent ? ">>" : "<<";
             sb.Append(arrow).Append(' ')
@@ -132,6 +133,54 @@ public sealed class WireLog
         return (buffer.ToArray(), offsets);
     }
 
+    /// <summary>Copies of the chunks with every credential header's value overwritten by
+    /// <c>*</c>, found by reading each direction end to end: a header line split across two reads
+    /// (a big cookie, a long token) is masked in both halves, and a chunk that is shown as hex
+    /// — headers and a binary body arriving together — shows no secret in its ASCII column.
+    /// Length-preserving, so every chunk keeps its size and place.</summary>
+    internal static IReadOnlyList<WireChunk> MaskSecretHeaderValues(IReadOnlyList<WireChunk> chunks)
+    {
+        var copies = chunks.Select(c => c with { Bytes = (byte[])c.Bytes.Clone() }).ToList();
+        foreach (var direction in new[] { WireDirection.Sent, WireDirection.Received })
+        {
+            var mine = copies.Where(c => c.Direction == direction).ToList();
+            int total = mine.Sum(c => c.Bytes.Length);
+            if (total == 0) continue;
+            var all = new byte[total];
+            var starts = new int[mine.Count];
+            for (int i = 0, at = 0; i < mine.Count; at += mine[i].Bytes.Length, i++)
+            {
+                starts[i] = at;
+                mine[i].Bytes.CopyTo(all, at);
+            }
+
+            for (int lineStart = 0; lineStart < total;)
+            {
+                int lineEnd = Array.IndexOf(all, (byte)'\n', lineStart);
+                if (lineEnd < 0) lineEnd = total;
+                int colon = -1;
+                for (int i = lineStart; i < lineEnd && i - lineStart < 128; i++)
+                {
+                    byte b = all[i];
+                    if (b == ':') { colon = i; break; }
+                    if (!(b is >= (byte)'a' and <= (byte)'z' or >= (byte)'A' and <= (byte)'Z' or >= (byte)'0' and <= (byte)'9' or (byte)'-' or (byte)'_')) break;
+                }
+                if (colon > lineStart && SecretHeaders.IsSecret(Encoding.ASCII.GetString(all, lineStart, colon - lineStart)))
+                {
+                    int v = colon + 1;
+                    while (v < lineEnd && all[v] is (byte)' ' or (byte)'\t') v++;
+                    int end = lineEnd > v && all[lineEnd - 1] == '\r' ? lineEnd - 1 : lineEnd;
+                    for (int i = v; i < end; i++) all[i] = (byte)'*';
+                }
+                lineStart = lineEnd + 1;
+            }
+
+            for (int i = 0; i < mine.Count; i++)
+                Array.Copy(all, starts[i], mine[i].Bytes, 0, mine[i].Bytes.Length);
+        }
+        return copies;
+    }
+
     /// <summary>Whether a chunk is worth showing as text: mostly printable, no NUL bytes. A
     /// heuristic, deliberately — HTTP/1.1 headers are text, an HTTP/2 frame is not, and a body may
     /// be either.</summary>
@@ -190,11 +239,7 @@ public sealed class WireLog
         return sb.ToString().TrimEnd('\n');
     }
 
-    private static readonly string[] SecretHeaders =
-        { "Authorization", "Proxy-Authorization", "Cookie", "Set-Cookie" };
-
-    private static bool IsSecretHeader(string name) =>
-        SecretHeaders.Contains(name, StringComparer.OrdinalIgnoreCase);
+    private static bool IsSecretHeader(string name) => SecretHeaders.IsSecret(name);
 }
 
 /// <summary>An <see cref="System.Net.Security.SslStream"/> that also copies the plaintext crossing

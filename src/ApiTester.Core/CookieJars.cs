@@ -107,7 +107,20 @@ public static class CookieJarFile
     private sealed record StoredCookie(
         string Name, string Value, string Domain, string Path,
         [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] DateTime? Expires,
-        bool Secure, bool HttpOnly);
+        bool Secure, bool HttpOnly,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? HostOnly = null);
+
+    // Cookie.Domain reads the same for "Set-Cookie: a=1" from api.example.com (host-only) and
+    // "Domain=api.example.com" (that host and its subdomains); only this internal flag knows which.
+    private static readonly System.Reflection.PropertyInfo? DomainImplicit =
+        typeof(Cookie).GetProperty("DomainImplicit", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+
+    private static bool IsHostOnly(Cookie c)
+    {
+        if (c.Domain.StartsWith('.')) return false;
+        try { return DomainImplicit?.GetValue(c) is not false; }   // unknown: the narrower reading
+        catch { return true; }
+    }
 
     private static readonly JsonSerializerOptions Options = new() { WriteIndented = true };
 
@@ -127,12 +140,28 @@ public static class CookieJarFile
         foreach (var c in cookies ?? new())
         {
             if (c.Expires is { } exp && exp <= DateTime.UtcNow) continue;
-            var cookie = new Cookie(c.Name, c.Value, c.Path, c.Domain) { Secure = c.Secure, HttpOnly = c.HttpOnly };
+            // A domain with a leading dot came from a Domain= attribute and covers subdomains; one
+            // without is host-only, and must come back host-only — a Cookie built with a Domain is
+            // always a domain cookie, so it is added for its host's URL with no Domain at all.
+            // (A file written before HostOnly was recorded: no leading dot reads as host-only.)
+            bool hostOnly = c.HostOnly ?? !c.Domain.StartsWith('.');
+            var cookie = hostOnly
+                ? new Cookie(c.Name, c.Value, c.Path) { Secure = c.Secure, HttpOnly = c.HttpOnly }
+                : new Cookie(c.Name, c.Value, c.Path, c.Domain) { Secure = c.Secure, HttpOnly = c.HttpOnly };
             if (c.Expires is { } e) cookie.Expires = e;
-            try { container.Add(cookie); loaded++; } catch (CookieException) { }
+            try
+            {
+                if (hostOnly) container.Add(new Uri((c.Secure ? "https://" : "http://") + HostForUri(c.Domain) + "/"), cookie);
+                else container.Add(cookie);
+                loaded++;
+            }
+            catch (Exception ex) when (ex is CookieException or UriFormatException) { }
         }
         return loaded;
     }
+
+    private static string HostForUri(string domain) =>
+        domain.Contains(':') && !domain.StartsWith('[') ? "[" + domain + "]" : domain;
 
     /// <summary>Write every live cookie in <paramref name="container"/> to <paramref name="path"/>.</summary>
     public static int Save(string path, CookieContainer container)
@@ -153,7 +182,7 @@ public static class CookieJarFile
         {
             if (c.Expired) continue;
             all.Add(new StoredCookie(c.Name, c.Value, c.Domain, c.Path,
-                c.Expires == DateTime.MinValue ? null : c.Expires.ToUniversalTime(), c.Secure, c.HttpOnly));
+                c.Expires == DateTime.MinValue ? null : c.Expires.ToUniversalTime(), c.Secure, c.HttpOnly, IsHostOnly(c)));
         }
         count = all.Count;
         return JsonSerializer.Serialize(all, Options);

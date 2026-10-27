@@ -8,11 +8,6 @@ namespace ApiTester.Core;
 /// document. Pure — no I/O, no sockets.</summary>
 public static class HarWriter
 {
-    private static readonly string[] SecretHeaderNames =
-    {
-        "Authorization", "Proxy-Authorization", "Cookie", "Set-Cookie"
-    };
-
     private static JsonSerializerOptions? _options;
 
     /// <summary>The shared <see cref="JsonSerializerOptions"/> used for both writing and reading HAR
@@ -27,9 +22,8 @@ public static class HarWriter
     };
 
     /// <summary>Is this header name one of the sensitive ones redacted when
-    /// <c>includeSecrets</c> is false: Authorization, Proxy-Authorization, Cookie, Set-Cookie.</summary>
-    public static bool IsSecretHeader(string name)
-        => SecretHeaderNames.Any(n => string.Equals(n, name, StringComparison.OrdinalIgnoreCase));
+    /// <c>includeSecrets</c> is false (see <see cref="SecretHeaders.IsSecret"/>).</summary>
+    public static bool IsSecretHeader(string name) => SecretHeaders.IsSecret(name);
 
     /// <summary>Redact the values of secret headers (see <see cref="IsSecretHeader"/>) to
     /// <c>[redacted]</c>, keeping the header name — or return the headers unchanged when

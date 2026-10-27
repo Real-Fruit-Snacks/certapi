@@ -47,7 +47,12 @@ public static class StateSecrets
             h.AuthSecret = ProtectValueOptional(h.AuthSecret, protector, ref allEncrypted);
             h.Transport.ProxyPassword =
                 ProtectValueOptional(h.Transport.ProxyPassword, protector, ref allEncrypted);
-            if (h.Response is { } resp) resp.Body = ProtectBody(resp.Body, protector, ref allEncrypted);
+            if (h.Response is { } resp)
+            {
+                resp.Body = ProtectBody(resp.Body, protector, ref allEncrypted);
+                foreach (var row in resp.Headers)
+                    if (SecretHeaders.IsSecret(row.Name)) row.Value = ProtectValue(row.Value, protector, ref allEncrypted);
+            }
         }
 
         foreach (var root in state.Collections)
@@ -68,7 +73,15 @@ public static class StateSecrets
                 r.Transport.ProxyPassword =
                     ProtectValueOptional(r.Transport.ProxyPassword, p, ref allEncrypted);
             }
-            if (node.KnownGood is { } kg) node.KnownGood = kg with { Body = ProtectBody(kg.Body, p, ref allEncrypted) };
+            if (node.KnownGood is { } kg)
+            {
+                bool all = allEncrypted;
+                var headers = kg.Headers.Select(hv => SecretHeaders.IsSecret(hv.Key)
+                    ? new KeyValuePair<string, string>(hv.Key, ProtectValue(hv.Value, p, ref all))
+                    : hv).ToList();
+                allEncrypted = all;
+                node.KnownGood = kg with { Body = ProtectBody(kg.Body, p, ref allEncrypted), Headers = headers };
+            }
             foreach (var child in node.Children) ProtectNode(child, p, ref allEncrypted);
         }
     }
@@ -239,6 +252,18 @@ public static class StateSecrets
 
             if (h.Response is { } resp)
             {
+                foreach (var row in resp.Headers)
+                {
+                    if (!SecretProtection.LooksProtected(row.Value)) continue;
+                    var plainHeader = protector.Unprotect(row.Value);
+                    if (plainHeader is null)
+                    {
+                        row.Value = "";
+                        warnings.Add($"Could not decrypt the stored {row.Name} header on history entry {i + 1} ({h.Method} {h.EffectiveUrl}) — it was left empty.");
+                        anyDropped = true;
+                    }
+                    else row.Value = plainHeader;
+                }
                 bool bodyOk = TryUnprotectBody(resp.Body, protector, out var newBody);
                 resp.Body = newBody;
                 if (!bodyOk)
@@ -328,8 +353,20 @@ public static class StateSecrets
             }
             if (node.KnownGood is { } kg)
             {
+                var headers = new List<KeyValuePair<string, string>>(kg.Headers.Count);
+                foreach (var hv in kg.Headers)
+                {
+                    if (!SecretProtection.LooksProtected(hv.Value)) { headers.Add(hv); continue; }
+                    var plainHeader = p.Unprotect(hv.Value);
+                    if (plainHeader is null)
+                    {
+                        warnings.Add($"Could not decrypt the stored {hv.Key} header of the known-good response on saved request \"{path}\" — it was left empty.");
+                        anyDropped = true;
+                    }
+                    headers.Add(new(hv.Key, plainHeader ?? ""));
+                }
                 bool bodyOk = TryUnprotectBody(kg.Body, p, out var newBody);
-                node.KnownGood = kg with { Body = newBody };
+                node.KnownGood = kg with { Body = newBody, Headers = headers };
                 if (!bodyOk)
                 {
                     warnings.Add($"Could not decrypt the stored known-good response on saved request \"{path}\" — it was left empty.");
@@ -363,7 +400,7 @@ public static class StateSecrets
             { tab.Transport.ProxyPassword = null; proxyPasswords++; }
         }
 
-        int bodies = 0;
+        int bodies = 0, headers = 0;
         foreach (var h in state.History)
         {
             if (!string.IsNullOrEmpty(h.AuthSecret)) { h.AuthSecret = null; authSecrets++; }
@@ -377,6 +414,10 @@ public static class StateSecrets
                 resp.Body = Array.Empty<byte>();
                 bodies++;
             }
+            // A login's Set-Cookie or a token header is the session itself; the name stays.
+            if (h.Response is { } r2)
+                foreach (var row in r2.Headers)
+                    if (SecretHeaders.IsSecret(row.Name) && row.Value.Length > 0) { row.Value = ""; headers++; }
         }
 
         foreach (var root in state.Collections)
@@ -387,7 +428,7 @@ public static class StateSecrets
             foreach (var v in env.Variables)
                 if (v.Secret && !string.IsNullOrEmpty(v.Value)) { v.Value = ""; variables++; }
 
-        return new SecretStripSummary(tokens, cookies, authSecrets, variables, bodies, proxyPasswords);
+        return new SecretStripSummary(tokens, cookies, authSecrets, variables, bodies, proxyPasswords, headers);
 
         static int StripNode(CollectionNode node, ref int bodies, ref int proxyPasswords)
         {
@@ -414,11 +455,11 @@ public static class StateSecrets
 /// <summary>How many secrets and stored response bodies a strip removed, so the caller can say what
 /// left the building.</summary>
 public sealed record SecretStripSummary(int Tokens, int Cookies, int AuthSecrets, int Variables,
-                                       int ResponseBodies, int ProxyPasswords = 0)
+                                       int ResponseBodies, int ProxyPasswords = 0, int ResponseHeaders = 0)
 {
     /// <summary>True when anything at all was stripped.</summary>
     public bool Any => Tokens > 0 || Cookies > 0 || AuthSecrets > 0 || Variables > 0
-                    || ResponseBodies > 0 || ProxyPasswords > 0;
+                    || ResponseBodies > 0 || ProxyPasswords > 0 || ResponseHeaders > 0;
 
     /// <summary>A human list of what went, e.g. "2 captured tokens, 1 saved auth secret".
     /// Empty string when nothing was stripped.</summary>
@@ -431,6 +472,7 @@ public sealed record SecretStripSummary(int Tokens, int Cookies, int AuthSecrets
         if (Variables > 0) parts.Add(Pluralize(Variables, "secret variable"));
         if (ResponseBodies > 0) parts.Add(Pluralize(ResponseBodies, "stored response body", "stored response bodies"));
         if (ProxyPasswords > 0) parts.Add(Pluralize(ProxyPasswords, "saved proxy password"));
+        if (ResponseHeaders > 0) parts.Add(Pluralize(ResponseHeaders, "stored credential header"));
         return string.Join(", ", parts);
 
         static string Pluralize(int count, string noun, string? plural = null) =>

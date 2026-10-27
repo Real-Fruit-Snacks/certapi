@@ -98,10 +98,5 @@ public static class MarkdownSecrets
 
     /// <summary>Whether a header's value is a credential. The name always survives — that a request
     /// sends an <c>Authorization</c> header is exactly what a catalogue should record.</summary>
-    public static bool IsSecretHeader(string name) =>
-        name.Trim() is var trimmed &&
-        (trimmed.Equals("Authorization", StringComparison.OrdinalIgnoreCase)
-      || trimmed.Equals("Proxy-Authorization", StringComparison.OrdinalIgnoreCase)
-      || trimmed.Equals("Cookie", StringComparison.OrdinalIgnoreCase)
-      || trimmed.Equals("Set-Cookie", StringComparison.OrdinalIgnoreCase));
+    public static bool IsSecretHeader(string name) => SecretHeaders.IsSecret(name);
 }

@@ -377,9 +377,9 @@ public static class ServeCommand
         {
             listen = listen.Trim();
             if (listen.Length == 0) throw new CliUsageException("--listen needs an address, 0.0.0.0, or +.");
-            if (listen is not ("+" or "*" or "0.0.0.0" or "::") && !System.Net.IPAddress.TryParse(listen, out _))
+            if (listen is not ("+" or "*" or "0.0.0.0" or "::" or "localhost") && !System.Net.IPAddress.TryParse(listen, out _))
                 throw new CliUsageException($"--listen expects an IP address, 0.0.0.0, or +, got '{listen}'.");
-            if (listen is not ("127.0.0.1" or "::1" or "localhost") && token is null)
+            if (!IsLoopbackListen(listen) && token is null)
                 throw new CliUsageException("--listen beyond loopback needs --token: anything that reaches the port reaches your client certificate.");
             if (tls && listen is not ("127.0.0.1" or "::1"))
                 throw new CliUsageException("--listen cannot be combined with --tls: the gateway certificate is bound to 127.0.0.1 only.");
@@ -532,7 +532,9 @@ public static class ServeCommand
         var policy = new ServePolicy(token, forwarded, maxBody, $"127.0.0.1:{port}", scheme)
         {
             VirtualHosts = vhosts,
-            LoopbackOnly = listen is null,
+            // A loopback --listen is still loopback-only: --vhost binds the wildcard, and without
+            // this a --listen 127.0.0.1 (which needs no --token) would answer the whole network.
+            LoopbackOnly = IsLoopbackListen(listen),
             CookieJar = cookieJar ? LoadGatewayJar(cookieJarFile, stderr) : null,
             TokenState = autoToken ? trustState : null,
             RefererFallback = refererFallback
@@ -1465,6 +1467,10 @@ public static class ServeCommand
         catch (InvalidDataException ex) { throw new CliDataException(ex.Message); }
         return jar;
     }
+
+    /// <summary>No --listen, or one naming this machine's loopback: only local callers are answered.</summary>
+    internal static bool IsLoopbackListen(string? listen) =>
+        listen is null || listen.Trim() is "127.0.0.1" or "::1" or "[::1]" or "localhost";
 
     /// <summary>The HttpListener prefix for --listen: "+" and 0.0.0.0 become the wildcard prefix,
     /// an IPv6 literal gets its brackets, and loopback spellings collapse to the one already added.</summary>
