@@ -114,7 +114,7 @@ curl options with the same meaning are accepted wherever the option they stand f
 The ones whose meaning differs are refused with what to use instead: `-L` and `--compressed` (both
 already the default), `-b`/`-c`/`--cookie` (`--cookie-jar`), `-G`/`--get`/`--data-urlencode`
 (`--query`), `-v`/`--verbose` (`--include`, `--debug`, `--trace`), `-O` (`-o <file>`), `-e`/`--referer`
-(`-H "Referer: …"`), `-E` (`--cert-file`), `--tlsv1.2`/`--tlsv1.3` (`--tls-min`), `-T` (`--data-file`
+(`-H "Referer: …"`), `-w`/`--write-out` (`--timing` or `--json`), `-E` (`--cert-file`), `--tlsv1.2`/`--tlsv1.3` (`--tls-min`), `-T` (`--data-file`
 with `-X PUT`) and `--data-raw` (`-d`).
 
 ## Exit codes
@@ -379,6 +379,7 @@ size and equality only.
 | `--json` | off | Print a JSON result envelope — status, headers, timing, body — instead of the raw body |
 | `-f, --fail` | off | Exit 1 when the HTTP status is 400 or higher |
 | `-q, -s, --quiet` | off | No metadata line on stderr |
+| `--timing` | off | Where the time went, on stderr: `timing: dns 2.1 ms · connect 1.4 ms · tls 14 ms · wait 31 ms · first byte 52 ms · download 1.0 ms · total 54 ms`. A phase that did not happen is left out (`tls` on plain HTTP, `dns` for an IP address, all three on a reused connection, which says `connection reused`). Through a proxy, `connect` is to the proxy and `tls` is the handshake with the site inside the tunnel. After redirects or retries the phases describe the last request. With `--json` the same numbers are a `timing` object in the envelope (`dnsMs`, `connectMs`, `tlsMs`, `waitMs`, `firstByteMs`, `downloadMs`, `totalMs`, `reused`, `requests`). Printed even with `--quiet`. Not with `--all-ips` |
 
 ### Capturing the exchange
 

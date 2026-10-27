@@ -99,6 +99,8 @@ public static class SendCommand
           --json                  Print a JSON result envelope instead of the raw body
           -f, --fail              Exit 1 when the HTTP status is 400 or higher
           -q, -s, --quiet         No metadata line on stderr
+          --timing                Where the time went: DNS, connect, TLS, wait for the server,
+                                  first byte, download, total (stderr; in the envelope with --json)
           --har <file>            Capture the request/response (and every redirect hop) as a
                                   HAR file, written once when the command finishes
           --har-include-secrets   Don't redact Authorization/Proxy-Authorization/Cookie/
@@ -226,6 +228,7 @@ public static class SendCommand
         string? wireFile = args.Value("--wire-file");
         bool wireIncludeSecrets = args.Flag("--wire-include-secrets");
         bool frames = args.Flag("--frames");
+        bool timing = args.Flag("--timing");
         if (wireFile is not null) wire = true;
         if (frames) wire = true;                 // the frame view is a reading of the same capture
         if (wireIncludeSecrets && !wire)
@@ -273,6 +276,8 @@ public static class SendCommand
             throw new CliUsageException("--bearer and --basic are mutually exclusive.");
         // --all-ips produces one response per address; every option below describes a single one,
         // and there is no honest way to pick which response it should apply to.
+        if (allIps && timing)
+            throw new CliUsageException("--all-ips already prints a time per address; --timing describes a single request.");
         if (allIps && (json || outFile is not null || captureRules.Count > 0 || assertRules.Count > 0 ||
                        diffBaseline is not null))
             throw new CliUsageException(
@@ -490,10 +495,16 @@ public static class SendCommand
             stderr.WriteLine("note: --frames reads HTTP/2 framing, but this request is pinned to " +
                              $"{transport.Version.ToString().ToUpperInvariant()}. Add --http2 to get frames.");
 
-        var response = services.Client.SendAsync(request, cert,
-            transport: transport,
-            trustServerCertificate: trustCert,
-            cookies: cookieJar, wireLog: wireLog, cancellationToken: services.Cancel).GetAwaiter().GetResult();
+        PhaseTimings? phases;
+        ApiResponse response;
+        using (var timer = timing ? new PhaseTimer() : null)
+        {
+            response = services.Client.SendAsync(request, cert,
+                transport: transport,
+                trustServerCertificate: trustCert,
+                cookies: cookieJar, wireLog: wireLog, cancellationToken: services.Cancel).GetAwaiter().GetResult();
+            phases = timer?.Result();
+        }
 
         if (wireLog is not null) WriteWire(wireLog, wireFile, wireIncludeSecrets, frames, stdout, stderr);
         if (cookieJarPath is not null)
@@ -538,6 +549,9 @@ public static class SendCommand
         if (showRedirects && response.Redirects.Count > 0)
             stderr.WriteLine(OutputText.RedirectLines(response.Redirects));
         if (!quiet) stderr.WriteLine(OutputText.MetaLine(response));
+        // Asked for by name, so printed even with --quiet; with --json it is in the envelope instead.
+        if (timing && !json)
+            stderr.WriteLine("timing: " + (phases?.Render() ?? "no request reached the network"));
         if (!quiet && response.Error is null && response.Connection?.ServerCertificateThumbprint is { } thumb &&
             TrustService.IsTrusted(state, host, thumb))
             stderr.WriteLine($"note: trusting pinned certificate for {host}");
@@ -598,7 +612,7 @@ public static class SendCommand
         if (json)
         {
             if (outFile is not null && response.Error is null) File.WriteAllBytes(outFile, response.Body);
-            stdout.WriteLine(BuildEnvelope(response, includeBody: outFile is null, diff: diff));
+            stdout.WriteLine(BuildEnvelope(response, includeBody: outFile is null, diff: diff, timing: timing ? phases : null));
         }
         else if (response.Error is null)
         {
@@ -808,7 +822,7 @@ public static class SendCommand
     }
 
     internal static string BuildEnvelope(ApiResponse r, bool includeBody, IReadOnlyList<string>? notes = null,
-                                         DiffResult? diff = null)
+                                         DiffResult? diff = null, PhaseTimings? timing = null)
     {
         bool binary = false;
         string? text = null;
@@ -865,6 +879,17 @@ public static class SendCommand
         // Only when a retry actually happened, for the same reason redirects is conditional: an
         // "attempts": 1 on every envelope would churn every existing consumer's output for nothing.
         if (r.Attempts > 1) obj["attempts"] = r.Attempts;
+        // Only with --timing: milliseconds per phase, null for a phase that did not happen.
+        if (timing is not null)
+        {
+            static double? Ms(TimeSpan? t) => t is { } v ? Math.Round(v.TotalMilliseconds, 1) : null;
+            obj["timing"] = new
+            {
+                dnsMs = Ms(timing.Dns), connectMs = Ms(timing.Connect), tlsMs = Ms(timing.Tls),
+                waitMs = Ms(timing.Wait), firstByteMs = Ms(timing.FirstByte), downloadMs = Ms(timing.Download),
+                totalMs = Ms(timing.Total), reused = timing.Reused, requests = timing.Requests
+            };
+        }
         if (diff is not null)
             obj["diff"] = new
             {

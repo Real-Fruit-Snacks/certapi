@@ -66,10 +66,10 @@ afternoon:
 - **`certapi bench`** measures a *warm* endpoint under load, which is the number to quote for
   throughput — it deliberately reuses connections.
 
-`certapi send` reports one total elapsed time and no phase breakdown, on purpose: connections are
-pooled, so a second request to the same host has no DNS lookup, no TCP connect, and no handshake
-to measure. Printing zeros for those would suggest they were instant rather than absent. Use
-`doctor` when you want the breakdown.
+- **`certapi send --timing`** breaks down the request you actually sent: DNS, connect, TLS, the
+  wait for the server, first byte, download. A phase that did not happen is left out rather than
+  shown as zero — on a reused connection there is no DNS, connect or handshake, and the line says
+  `connection reused` instead. A large `wait` with small everything else is the server's own time.
 
 ## Watching what the network stack actually did: `--trace`
 

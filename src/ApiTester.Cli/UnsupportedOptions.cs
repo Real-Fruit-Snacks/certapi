@@ -47,6 +47,8 @@ public static class UnsupportedOptions
         ["--tlsv1.3"] = "Use --tls-min 1.3.",
         ["-T"] = "Use --data-file <path> with -X PUT.",
         ["--upload-file"] = "Use --data-file <path> with -X PUT.",
+        ["-w"] = "Use --timing for where the time went (DNS, connect, TLS, wait, download), or --json for status, headers, size and timing as one JSON object.",
+        ["--write-out"] = "Use --timing for where the time went (DNS, connect, TLS, wait, download), or --json for status, headers, size and timing as one JSON object.",
         ["--data-raw"] = "Use -d/--data. As in curl, -d @file reads the body from a file; a body that really starts with @ goes in a file passed to --data-file.",
     };
 
