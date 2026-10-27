@@ -9,6 +9,10 @@ public sealed record ApiRequest
     public IReadOnlyList<KeyValuePair<string, string>> Headers { get; init; }
         = Array.Empty<KeyValuePair<string, string>>();
     public string? Body { get; init; }
+
+    /// <summary>A body sent as these exact bytes — a file that is not text. Takes the place of
+    /// <see cref="Body"/> when set; <see cref="Parts"/> still wins over both.</summary>
+    public byte[]? BodyBytes { get; init; }
     public string? ContentType { get; init; }
 
     /// <summary>When set (and non-empty), the request is sent as multipart/form-data built from

@@ -50,7 +50,7 @@ public static class HarReader
             .Select(h => new KeyValuePair<string, string>(h.Name, h.Value))
             .ToList();
 
-        string? body = entry.Request.PostData is { Text.Length: > 0 } postData ? postData.Text : null;
+        string? body = entry.Request.PostData?.TextOrNull();
         string? contentType = entry.Request.PostData is { MimeType.Length: > 0 } pd ? pd.MimeType : null;
 
         return new ParsedRequest

@@ -42,7 +42,8 @@ public static class GrpcCommand
                                     Repeatable: for a client-streaming or bidirectional method, each
                                     -d value is sent as one message, in order; several -d values
                                     against a unary or server-streaming method (which take a single
-                                    request message) is a usage error.
+                                    request message) is a usage error. -d @file reads one
+                                    message from a file.
           --data-file <path>      Read the request JSON from a file instead of -d; supplies one
                                     message, the same as a single -d
           -H, --header "k: v"     Request metadata (repeatable)
@@ -255,9 +256,11 @@ public static class GrpcCommand
         // user must see before any connection is even attempted. What this content means (the whole
         // request, or one message among several) depends on the discovered method's kind, resolved
         // later in RunCallAsync once methodInfo is known.
-        string? dataFileContent = dataFile is not null
-            ? (File.Exists(dataFile) ? File.ReadAllText(dataFile) : throw new CliDataException($"Body file not found: {dataFile}"))
-            : null;
+        string? dataFileContent = dataFile is null ? null : GrpcText(BodyFile.Read(dataFile, "--data-file"), dataFile);
+        // -d @file reads one message from a file, as -d does on send.
+        for (int i = 0; i < dataValues.Count; i++)
+            if (dataValues[i] is { Length: > 1 } v && v[0] == '@')
+                dataValues[i] = GrpcText(BodyFile.Read(v[1..], "-d " + v), v[1..]);
 
         // ---- workspace, per-site trust, and the automatic session token (mirrors SendCommand) ----
         var state = LoadWorkspaceOrEmpty(workspace, services, stderr);
@@ -748,4 +751,8 @@ public static class GrpcCommand
         }
         return CliWorkspace.Load(workspace, services.LiveStatePath, stderr);
     }
+
+    /// <summary>A gRPC message is JSON, so a body file must be text.</summary>
+    private static string GrpcText(BodyFile file, string path) =>
+        file.Text ?? throw new CliDataException($"{path} is not UTF-8 text; a gRPC message is given as JSON.");
 }

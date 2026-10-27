@@ -64,6 +64,37 @@ public sealed class HarPostData
 {
     public string MimeType = "";
     public string Text = "";
+    /// <summary>"base64" when <see cref="Text"/> holds a binary body, else null (as on a response's
+    /// content, the same widely read extension to HAR 1.2).</summary>
+    public string? Encoding;
+
+    /// <summary>A recorded request body: text when it is UTF-8, base64 otherwise, so a binary
+    /// upload survives the archive instead of turning into replacement characters.</summary>
+    public static HarPostData From(byte[] body, string? contentType)
+    {
+        try
+        {
+            return new HarPostData
+            {
+                MimeType = contentType ?? "",
+                Text = new System.Text.UTF8Encoding(false, throwOnInvalidBytes: true).GetString(body)
+            };
+        }
+        catch (System.Text.DecoderFallbackException)
+        {
+            return new HarPostData { MimeType = contentType ?? "", Text = Convert.ToBase64String(body), Encoding = "base64" };
+        }
+    }
+
+    /// <summary>The body as text for a text-only consumer (a saved request): decoded from base64
+    /// when that gives UTF-8, and null for a binary body that has no faithful text form.</summary>
+    public string? TextOrNull()
+    {
+        if (Text.Length == 0) return null;
+        if (!string.Equals(Encoding, "base64", StringComparison.OrdinalIgnoreCase)) return Text;
+        try { return new System.Text.UTF8Encoding(false, throwOnInvalidBytes: true).GetString(Convert.FromBase64String(Text)); }
+        catch (Exception ex) when (ex is FormatException or System.Text.DecoderFallbackException) { return null; }
+    }
 }
 
 public sealed class HarContent

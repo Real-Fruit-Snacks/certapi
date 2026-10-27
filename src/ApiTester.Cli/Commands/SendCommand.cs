@@ -19,7 +19,9 @@ public static class SendCommand
           -A, --user-agent <ua>   Set the User-Agent header
           --query name=value      Add a query parameter to the URL, percent-encoded (repeatable)
           -d, --data <body>       Request body; -d @file reads it from a file, as in curl
-                                  ( --data-file <file> reads a file without interpreting @ )
+                                  ( --data-file <file> reads a file without interpreting @ ).
+                                  A file that is not UTF-8 text is sent byte for byte, with
+                                  Content-Type application/octet-stream unless --content-type
           -F, --form name=value   multipart/form-data field; name=@path uploads a file
                                   (name=@path;type=<ct> sets its content type). Repeatable;
                                   implies POST. Mutually exclusive with -d.
@@ -323,14 +325,12 @@ public static class SendCommand
         }
         // As in curl, -d @file reads the body from a file. A body that genuinely starts with '@'
         // goes in a file and is passed with --data-file, which never interprets its contents.
-        if (data is { Length: > 1 } && data[0] == '@')
-        {
-            string from = data[1..];
-            data = File.Exists(from) ? File.ReadAllText(from) : throw new CliDataException($"Body file not found: {from} (from -d @{from})");
-        }
-        string? body = data ?? (dataFile is not null
-            ? File.Exists(dataFile) ? File.ReadAllText(dataFile) : throw new CliDataException($"Body file not found: {dataFile}")
-            : null);
+        // A file that is not UTF-8 text goes out as its exact bytes.
+        var bodySource = BodyFile.FromDataOption(data) ?? (dataFile is null ? null : BodyFile.Read(dataFile, "--data-file"));
+        string? body = bodySource?.Text;
+        byte[]? bodyBytes = bodySource?.Bytes;
+        if (bodyBytes is not null)
+            services.Log.Debug($"body: {bodyBytes.Length} bytes of binary data, sent as they are ({{{{variables}}}} are not resolved in it)");
 
         // An explicit --workspace file that doesn't exist is an error — unless --capture is
         // creating it (a capture write starts from an empty workspace).
@@ -437,10 +437,12 @@ public static class SendCommand
             Url = url,
             Headers = headerPairs,
             Body = body,
+            BodyBytes = bodyBytes,
             Parts = parts.Count > 0
                 ? parts.Select(p => p with { Name = R(p.Name), Value = p.Value is null ? null : R(p.Value) }).ToList()
                 : null,
-            ContentType = body is not null ? (contentType ?? "application/json") : null,
+            ContentType = body is not null ? (contentType ?? "application/json")
+                        : bodyBytes is not null ? (contentType ?? "application/octet-stream") : null,
             WindowsAuth = winUser is not null ? WindowsAuthOptions.FromCredentials(winUser, winPass)
                        : windowsAuth ? new WindowsAuthOptions(true)
                        : null,

@@ -35,7 +35,8 @@ public static class BenchCommand
         Request:
           -X, --method <m>        HTTP method (default GET)
           -H, --header "k: v"     Add a header (repeatable)
-          -d, --data <body>       Request body
+          -d, --data <body>       Request body; -d @file reads it from a file (sent byte for byte
+                                  when it is not UTF-8 text)
           --content-type <ct>     Body content type (default application/json)
           --bearer <token>        Authorization: Bearer …
           --timeout <seconds>     Per-request timeout (default 100)
@@ -132,6 +133,8 @@ public static class BenchCommand
         MethodOption.Require(methodOpt, "-X/--method");
         var headers = args.Values("-H", "--header");
         string? data = args.Value("-d", "--data");
+        // -d @file reads a file, as on send; a file that is not text goes out byte for byte.
+        var dataSource = BodyFile.FromDataOption(data);
         string? contentType = args.Value("--content-type");
         string? bearer = args.Value("--bearer");
         string? timeoutRaw = args.Value("--timeout");
@@ -193,14 +196,16 @@ public static class BenchCommand
 
         if (Uri.TryCreate(target, UriKind.Absolute, out var uri) && uri.Scheme is "http" or "https")
         {
-            string? body = data is null ? null : R(data);
+            string? body = dataSource?.Text is { } text ? R(text) : null;
             request = new ApiRequest
             {
                 Method = new HttpMethod((methodOpt ?? "GET").ToUpperInvariant()),
                 Url = target,
                 Headers = headerPairs,
                 Body = body,
-                ContentType = body is not null ? (contentType ?? "application/json") : null,
+                BodyBytes = dataSource?.Bytes,
+                ContentType = body is not null ? (contentType ?? "application/json")
+                            : dataSource?.Bytes is not null ? (contentType ?? "application/octet-stream") : null,
                 Timeout = TimeSpan.FromSeconds(timeout)
             };
             baseline = new TransportOptions { IgnoreServerCertificateErrors = insecure };
@@ -241,7 +246,7 @@ public static class BenchCommand
             // or a fresh token without editing the saved request.
             savedHeaders.AddRange(headerPairs);
 
-            string? savedBody = data is not null ? R(data)
+            string? savedBody = dataSource is not null ? (dataSource.Text is { } text ? R(text) : null)
                 : string.IsNullOrEmpty(model.Body) ? null : R(model.Body!);
             request = new ApiRequest
             {
@@ -249,7 +254,9 @@ public static class BenchCommand
                 Url = model.EffectiveUrl(R),
                 Headers = savedHeaders,
                 Body = savedBody,
-                ContentType = savedBody is null ? null
+                BodyBytes = dataSource?.Bytes,
+                ContentType = dataSource?.Bytes is not null ? (contentType ?? "application/octet-stream")
+                    : savedBody is null ? null
                     : contentType ?? (model.ContentType == "(none)" ? null : model.ContentType),
                 WindowsAuth = model.AuthType == "Windows"
                     ? WindowsAuthOptions.FromCredentials(R(model.AuthUser ?? ""), R(model.AuthSecret ?? ""))

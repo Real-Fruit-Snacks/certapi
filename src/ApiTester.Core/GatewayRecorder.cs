@@ -45,11 +45,7 @@ public sealed class GatewayRecorder
                 Headers = Redact(requestHeaders),
                 QueryString = QueryString.Parse(rawQuery)
                     .Select(q => new HarNameValue(q.Key, q.Value)).ToList(),
-                PostData = requestBody.Length == 0 ? null : new HarPostData
-                {
-                    MimeType = requestContentType ?? "",
-                    Text = Encoding.UTF8.GetString(requestBody)
-                }
+                PostData = requestBody.Length == 0 ? null : HarPostData.From(requestBody, requestContentType)
             },
             Response = new HarResponse
             {

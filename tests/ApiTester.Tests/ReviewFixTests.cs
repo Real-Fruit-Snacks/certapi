@@ -75,7 +75,7 @@ public class ReviewFixTests
     {
         var r = Run(null, "send", "http://127.0.0.1:9/", "--data-binary", "@x.bin", "--no-config");
         Assert.Equal(2, r.Code);
-        Assert.Contains("-F name=@file", r.Err);
+        Assert.Contains("byte for byte", r.Err);
         // And run's --data (an iteration file) is no longer reachable through it.
         Assert.DoesNotContain(Args.Aliases, a => a.Value.Contains("--data-binary"));
     }

@@ -205,9 +205,9 @@ public static class HarToCollection
         string? contentType = null;
         foreach (var entry in entries)
         {
-            if (entry.Request.PostData is { Text.Length: > 0 } postData)
+            if (entry.Request.PostData is { } postData && postData.TextOrNull() is { } text)
             {
-                body = postData.Text;
+                body = text;
                 contentType = string.IsNullOrEmpty(postData.MimeType) ? null : postData.MimeType;
                 break;
             }

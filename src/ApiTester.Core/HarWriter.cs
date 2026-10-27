@@ -56,7 +56,14 @@ public static class HarWriter
         var queryString = QueryString.Parse(rawQuery).Select(q => new HarNameValue(q.Key, q.Value)).ToList();
 
         HarPostData? postData = null;
-        if (request.Body is not null)
+        if (request.BodyBytes is not null)
+            postData = new HarPostData
+            {
+                MimeType = request.ContentType ?? "application/octet-stream",
+                Text = Convert.ToBase64String(request.BodyBytes),
+                Encoding = "base64",
+            };
+        else if (request.Body is not null)
         {
             string text = includeSecrets ? request.Body : RedactJsonBody(request.Body);
             postData = new HarPostData { MimeType = request.ContentType ?? "", Text = text };

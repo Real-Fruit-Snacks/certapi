@@ -6,6 +6,14 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- **Binary request bodies.** A body file (`-d @file`, `--data-file`) that is not UTF-8 text is sent
+  byte for byte, as `application/octet-stream` unless `--content-type` says otherwise, so an image
+  or an archive can be PUT as it is. Text files behave as before. `bench` takes `-d @file` too, and
+  `grpc` reads a message from `-d @file`.
+- `--har` and `serve --record` store a binary request body as base64 (`"encoding": "base64"` on
+  `postData`) instead of turning it into replacement characters.
+
 ## [1.94.0] - 2026-10-27
 
 Easier to drive from a terminal — help, typos, curl habits, completion, timing, a starter

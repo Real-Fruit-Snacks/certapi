@@ -117,12 +117,12 @@ curl options with the same meaning are accepted wherever the option they stand f
 | `--max-time` | `--timeout` |
 | `--cacert` | `--ca-file` |
 | `--key` | `--key-file` |
-| `-d @file` | on `send`, reads the body (as text) from the file |
+| `-d @file` | on `send` and `bench`, reads the body from the file — byte for byte when it is not text (on `grpc`, one JSON message) |
 
 The ones whose meaning differs are refused with what to use instead: `-L` and `--compressed` (both
 already the default), `-b`/`-c`/`--cookie` (`--cookie-jar`), `-G`/`--get`/`--data-urlencode`
 (`--query`), `-v`/`--verbose` (`--include`, `--debug`, `--trace`), `-O` (`-o <file>`), `-e`/`--referer`
-(`-H "Referer: …"`), `-w`/`--write-out` (`--timing` or `--json`), `--data-binary` (`-d`, or `-F name=@file` for a binary file), `-E` (`--cert-file`), `--tlsv1.2`/`--tlsv1.3` (`--tls-min`), `-T` (`--data-file`
+(`-H "Referer: …"`), `-w`/`--write-out` (`--timing` or `--json`), `--data-binary` (`-d @file` or `--data-file`, which send a binary file byte for byte), `-E` (`--cert-file`), `--tlsv1.2`/`--tlsv1.3` (`--tls-min`), `-T` (`--data-file`
 with `-X PUT`) and `--data-raw` (`-d`).
 
 ## Exit codes
@@ -312,6 +312,8 @@ Accepts the [certificate](#certificate-options), [transport](#transport-options)
 | `--query name=value` | none | Add a query parameter to the URL, percent-encoded, after any query the URL already has. Repeatable; `name` alone sends `name=` |
 | `-d, --data <body>` | none | Request body. Implies POST unless `-X` says otherwise. As in curl, `-d @file` reads the body from a file |
 | `--data-file <path>` | none | Read the body from a file instead, without interpreting a leading `@` — for a body too large or too awkward to quote on a command line |
+
+A body file that is UTF-8 text is sent as written, with `{{variables}}` resolved and `application/json` as the default content type. Any other file — an image, an archive, a signed payload — is sent **byte for byte**, with `application/octet-stream` unless `--content-type` says otherwise, and nothing in it is changed. `--har` records such a body base64-encoded (`"encoding": "base64"` on `postData`), and so does `serve --record`.
 | `-F, --form name=value` | none | A `multipart/form-data` field. `name=@path` uploads a file; `name=@path;type=<ct>` sets that part's content type. Repeatable, implies POST, and mutually exclusive with `-d` |
 | `--graphql <query>` | none | Send a GraphQL query as a correctly formed `{query, variables}` POST |
 | `--gql-variables <json>` | none | A JSON object of GraphQL variables to go with it |
@@ -635,7 +637,7 @@ Accepts the [certificate](#certificate-options), [transport](#transport-options)
 |---|---|---|
 | `-X, --method <m>` | `GET` | HTTP method |
 | `-H, --header "k: v"` | none | Add a header. Repeatable |
-| `-d, --data <body>` | none | Request body |
+| `-d, --data <body>` | none | Request body. `-d @file` reads it from a file, byte for byte when it is not text |
 | `--content-type <ct>` | `application/json` | Body content type |
 | `--bearer <token>` | none | `Authorization: Bearer …` |
 | `--timeout <seconds>` | `100` | Per-request timeout |
@@ -1044,7 +1046,7 @@ Accepts the [certificate](#certificate-options) and [transport](#transport-optio
 
 | Option | Default | What it does |
 |---|---|---|
-| `-d, --data <json>` | `{}` | The request message as JSON. Each `-d` is **one message**, in order, so several of them make a client-streaming call. Repeatable |
+| `-d, --data <json>` | `{}` | The request message as JSON. Each `-d` is **one message**, in order, so several of them make a client-streaming call. `-d @file` reads one message from a file. Repeatable |
 | `--data-file <path>` | none | Read the request JSON from a file instead, supplying one message |
 | `-H, --header "k: v"` | none | Add gRPC metadata. Repeatable |
 | `--max-messages <n>` | unlimited | Stop a server-streaming or bidirectional call after *n* messages |

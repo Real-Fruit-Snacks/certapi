@@ -936,6 +936,12 @@ public sealed class ApiClient : IDisposable
             }
             message.Content = form;   // boundary + Content-Type are set by MultipartFormDataContent
         }
+        else if (request.BodyBytes is not null)
+        {
+            message.Content = new ByteArrayContent(request.BodyBytes);
+            message.Content.Headers.ContentType =
+                MediaTypeHeaderValue.Parse(request.ContentType ?? "application/octet-stream");
+        }
         else if (request.Body is not null)
         {
             message.Content = new StringContent(request.Body, Encoding.UTF8);
