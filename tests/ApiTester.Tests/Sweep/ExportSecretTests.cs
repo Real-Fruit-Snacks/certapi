@@ -231,3 +231,31 @@ public class ParsingSweepTests
         Assert.Equal(pass, result.Single().Passed);
     }
 }
+
+public class SweepReviewFollowUpTests
+{
+    [Fact]
+    public void A_pin_on_an_international_host_matches_its_punycode_connection()
+    {
+        using var ca = SelfSignedCertificateFactory.CreateCertificateAuthority("CA");
+        using var leaf = SelfSignedCertificateFactory.CreateSignedCertificate("localhost", ca, true, false, new[] { "localhost" });
+        var state = new AppState();
+        TrustService.Trust(state, new Uri("https://bücher.example/").Host, leaf);
+        var predicate = new TrustPredicates(state).For("bücher.example");
+        Assert.True(TrustContext.Run(null, System.Net.Security.SslPolicyErrors.None, "xn--bcher-kva.example", () => predicate(leaf)));
+    }
+
+    [Fact]
+    public void A_cookie_jar_written_before_host_only_was_recorded_keeps_its_domain_cookies()
+    {
+        var loaded = new System.Net.CookieContainer();
+        CookieJarFile.Deserialize("""[{"Name":"par","Value":"3","Domain":"example.com","Path":"/","Secure":false,"HttpOnly":false}]""", loaded);
+        Assert.Contains("par=3", loaded.GetCookieHeader(new Uri("https://api.example.com/")));
+    }
+
+    [Theory]
+    [InlineData("shop.xn--p1ai", "https://shop.xn--p1ai")]
+    [InlineData("xn--p1ai--8443", "https://xn--p1ai:8443")]
+    [InlineData("hr.corp--notaport", null)]
+    public void Punycode_labels(string label, string? expected) => Assert.Equal(expected, VirtualHosts.DecodeAuthority(label));
+}

@@ -239,7 +239,14 @@ public static class CurlParser
     /// <summary>Split a command line into arguments: bash rules, or cmd.exe's when the text is a
     /// "Copy as cURL (cmd)" command (its quotes are written <c>^"</c>).</summary>
     internal static List<string> Tokenize(string input) =>
-        input.Contains("^\"", StringComparison.Ordinal) ? TokenizeCmd(input) : TokenizeBash(input);
+        LooksLikeCmd(input) ? TokenizeCmd(input) : TokenizeBash(input);
+
+    /// <summary>"Copy as cURL (cmd)" quotes every argument as <c>^"…^"</c>, the URL first, and
+    /// continues lines with a trailing <c>^</c>. A bash command that merely contains <c>^"</c>
+    /// inside a quoted body is not that.</summary>
+    private static bool LooksLikeCmd(string input) =>
+        System.Text.RegularExpressions.Regex.IsMatch(input, @"^\s*(\S*curl(\.exe)?\s+)?\^""", System.Text.RegularExpressions.RegexOptions.IgnoreCase) ||
+        (input.Contains("^\"", StringComparison.Ordinal) && System.Text.RegularExpressions.Regex.IsMatch(input, @"\^\r?\n"));
 
     private static List<string> TokenizeBash(string input)
     {

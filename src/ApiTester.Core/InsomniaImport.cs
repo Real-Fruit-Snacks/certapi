@@ -116,6 +116,7 @@ public static class InsomniaImport
                     Enabled = !(Bool(p, "disabled") ?? false)
                 });
         // A query typed into the URL itself, with no parameter rows, is the request's query too.
+        // (With rows, the rows are the query — the established reading of an export.)
         if (model.QueryParams.Count == 0 && q >= 0)
             foreach (var kv in RequestUrl.SplitForEditing(url).Params)
                 model.QueryParams.Add(new ParamRow { Key = kv.Key, Value = kv.Value });

@@ -163,4 +163,12 @@ public class CurlParserTests
         Assert.Equal("https://h/", CurlParser.Parse("curl.exe https://h/").Url);
         Assert.Equal("https://h/", CurlParser.Parse("/usr/bin/curl https://h/ -s").Url);
     }
+
+    [Fact]
+    public void A_bash_command_with_a_caret_quote_in_its_body_is_still_bash()
+    {
+        var r = CurlParser.Parse("curl https://x/y -H 'Content-Type: application/json' -d '{\"sep\":\"^\"}'");
+        Assert.Equal("https://x/y", r.Url);
+        Assert.Equal("{\"sep\":\"^\"}", r.Body);
+    }
 }

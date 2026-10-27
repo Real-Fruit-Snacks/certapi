@@ -72,3 +72,17 @@ public class StoredHeaderSecretTests
     [InlineData("X-Request-Id", false)]
     public void Which_headers_are_secrets(string name, bool secret) => Assert.Equal(secret, SecretHeaders.IsSecret(name));
 }
+
+public class SecretHeaderNameTests
+{
+    [Theory]
+    [InlineData("Access-Control-Allow-Credentials", false)]
+    [InlineData("Access-Control-Allow-Headers", false)]
+    [InlineData("Authentication-Results", false)]
+    [InlineData("X-Author", false)]
+    [InlineData("X-Auth-User", true)]
+    [InlineData("X-Session-Id", true)]
+    [InlineData("X-Amz-Security-Token", true)]
+    [InlineData("Proxy-Authorization", true)]
+    public void Names(string name, bool secret) => Assert.Equal(secret, SecretHeaders.IsSecret(name));
+}

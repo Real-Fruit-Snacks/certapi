@@ -50,7 +50,22 @@ public static class TrustService
         return h;
     }
 
-    private static bool SameHost(string a, string b) => HostKey(a) == HostKey(b);
+    /// <summary>One host written two ways is one host: a pin stored as bücher.example (as a URL
+    /// shows it) matches a connection to xn--bcher-kva.example (as TLS names it), and back.</summary>
+    private static bool SameHost(string a, string b)
+    {
+        string x = HostKey(a), y = HostKey(b);
+        if (x == y) return true;
+        return AsciiHost(x) is { } ax && AsciiHost(y) is { } ay && ax == ay;
+    }
+
+    private static readonly System.Globalization.IdnMapping Idn = new();
+
+    private static string? AsciiHost(string host)
+    {
+        try { return Idn.GetAscii(host).ToLowerInvariant(); }
+        catch (ArgumentException) { return null; }
+    }
 
     /// <summary>True when <paramref name="host"/> has this exact <paramref name="thumbprint"/>
     /// pinned. Both sides are compared case-insensitively.</summary>
@@ -141,8 +156,7 @@ public static class TrustService
         X509ChainStatusFlags.NotSignatureValid | X509ChainStatusFlags.InvalidBasicConstraints |
         X509ChainStatusFlags.HasNotSupportedCriticalExtension | X509ChainStatusFlags.Cyclic |
         X509ChainStatusFlags.InvalidNameConstraints | X509ChainStatusFlags.HasNotPermittedNameConstraint |
-        X509ChainStatusFlags.HasExcludedNameConstraint | X509ChainStatusFlags.HasNotSupportedNameConstraint |
-        X509ChainStatusFlags.HasNotDefinedNameConstraint | X509ChainStatusFlags.ExplicitDistrust |
+        X509ChainStatusFlags.HasExcludedNameConstraint | X509ChainStatusFlags.ExplicitDistrust |
         X509ChainStatusFlags.Revoked | X509ChainStatusFlags.InvalidExtension;
 
     /// <summary>Base64 SHA-256 of the certificate's SubjectPublicKeyInfo — the value

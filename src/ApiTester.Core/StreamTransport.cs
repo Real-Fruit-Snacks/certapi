@@ -28,11 +28,7 @@ public static class StreamTransport
     {
         var handler = new SocketsHttpHandler
         {
-            DefaultProxyCredentials = CredentialCache.DefaultCredentials,
-            // Never followed: a token request's body is the client secret or the user's password,
-            // and a 307 would replay it — and present the client certificate — to wherever the
-            // Location points. A redirect is reported as the answer it is.
-            AllowAutoRedirect = false,
+            DefaultProxyCredentials = CredentialCache.DefaultCredentials
         };
         // A stream, an upgrade or a token fetch has one destination, so the system proxy's own
         // failover list survives for a host the bypass list does not match.

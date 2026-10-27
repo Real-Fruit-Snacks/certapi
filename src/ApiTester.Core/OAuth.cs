@@ -129,6 +129,9 @@ public static class OAuthClient
         if (ignoreServerCertificateErrors) options = options with { IgnoreServerCertificateErrors = true };
         var handler = StreamTransport.CreateHandler(clientCertificate, options, trustServerCertificate,
             Uri.TryCreate(req.TokenEndpoint, UriKind.Absolute, out var tokenDestination) ? tokenDestination : null);
+        // Never followed: a token request's body is the client secret or the user's password, and
+        // a 307 would replay it — and present the client certificate — wherever Location points.
+        handler.AllowAutoRedirect = false;
 
         using var http = new HttpClient(handler, disposeHandler: true) { Timeout = TimeSpan.FromSeconds(100) };
         using var message = new HttpRequestMessage(HttpMethod.Post, req.TokenEndpoint)
@@ -187,6 +190,9 @@ public static class OAuthClient
         var options = transport ?? new TransportOptions();
         if (ignoreServerCertificateErrors) options = options with { IgnoreServerCertificateErrors = true };
         var handler = StreamTransport.CreateHandler(clientCertificate, options, trustServerCertificate);
+        // Never followed: a token request's body is the client secret or the user's password, and
+        // a 307 would replay it — and present the client certificate — wherever Location points.
+        handler.AllowAutoRedirect = false;
         using var http = new HttpClient(handler, disposeHandler: true) { Timeout = TimeSpan.FromSeconds(100) };
 
         // ---- step 1: the device-authorization request ------------------------------------

@@ -124,6 +124,18 @@ public static class LoopbackTlsBinding
 
     public static bool IsBound(int port) => Describe(port) is not null;
 
+    private static bool HasUsableKey(X509Certificate2 certificate)
+    {
+        if (!certificate.HasPrivateKey) return false;
+        try
+        {
+            using var rsa = certificate.GetRSAPrivateKey();
+            using var ecdsa = rsa is null ? certificate.GetECDsaPrivateKey() : null;
+            return rsa is not null || ecdsa is not null;
+        }
+        catch (System.Security.Cryptography.CryptographicException) { return false; }
+    }
+
     /// <summary>Bind a generated certificate to the port (requires elevation). Returns the
     /// certificate's thumbprint and the exact command that was run, for the log.</summary>
     public static BindResult Bind(int port, X509Certificate2 certificate)
@@ -138,6 +150,13 @@ public static class LoopbackTlsBinding
         {
             store.Open(OpenFlags.ReadWrite);
             var existing = store.Certificates.Find(X509FindType.FindByThumbprint, thumbprint, validOnly: false);
+            // An entry an earlier version added points at a key that went with that process: it is
+            // replaced, or the binding fails exactly as before.
+            if (existing.Count > 0 && !existing.Cast<X509Certificate2>().Any(HasUsableKey))
+            {
+                store.RemoveRange(existing);
+                existing = new X509Certificate2Collection();
+            }
             if (existing.Count == 0)
             {
                 // HTTP.sys runs as SYSTEM and reads the key from the machine's key store. The cached

@@ -161,8 +161,23 @@ public static class WsdlImport
                 // Document/literal names an element; RPC/encoded names a type. Either way the
                 // placeholder says which, so the person filling it in knows what to look up.
                 if (element is null) allElements = false;
+                // The element lives in its schema's namespace, which is often not the WSDL's own
+                // (StockQuote's xsd1: beside tns:): it is resolved through the prefix the part used.
+                string qualified = "tns:" + element;
+                if (element is not null && (string?)part.Attribute("element") is { } raw)
+                {
+                    int colon = raw.IndexOf(':');
+                    var ns = colon > 0 ? part.GetNamespaceOfPrefix(raw[..colon]) : part.GetDefaultNamespace();
+                    if (ns is not null && ns != XNamespace.None && ns.NamespaceName != targetNamespace)
+                    {
+                        string prefix = "ns" + parts.Count;
+                        qualified = $"{prefix}:{element}";
+                        parts.Add($"      <!-- {partName}: element {element} — fill in from the schema -->\n      <{qualified} xmlns:{prefix}=\"{ns.NamespaceName}\"></{qualified}>");
+                        continue;
+                    }
+                }
                 parts.Add(element is not null
-                    ? $"      <!-- {partName}: element {element} — fill in from the schema -->\n      <tns:{element}></tns:{element}>"
+                    ? $"      <!-- {partName}: element {element} — fill in from the schema -->\n      <{qualified}></{qualified}>"
                     : $"      <!-- {partName}: type {type ?? "unknown"} — fill in from the schema -->\n      <{partName}></{partName}>");
             }
         }

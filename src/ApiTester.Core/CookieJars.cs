@@ -143,8 +143,9 @@ public static class CookieJarFile
             // A domain with a leading dot came from a Domain= attribute and covers subdomains; one
             // without is host-only, and must come back host-only — a Cookie built with a Domain is
             // always a domain cookie, so it is added for its host's URL with no Domain at all.
-            // (A file written before HostOnly was recorded: no leading dot reads as host-only.)
-            bool hostOnly = c.HostOnly ?? !c.Domain.StartsWith('.');
+            // A file written before HostOnly was recorded cannot tell the two apart (.NET keeps no
+            // leading dot): it is read as it always was, as a domain cookie.
+            bool hostOnly = c.HostOnly ?? false;
             var cookie = hostOnly
                 ? new Cookie(c.Name, c.Value, c.Path) { Secure = c.Secure, HttpOnly = c.HttpOnly }
                 : new Cookie(c.Name, c.Value, c.Path, c.Domain) { Secure = c.Secure, HttpOnly = c.HttpOnly };

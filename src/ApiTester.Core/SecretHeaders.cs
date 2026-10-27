@@ -12,24 +12,34 @@ public static class SecretHeaders
     };
 
     // A challenge says how to authenticate, not with what; hiding it would hide why a 401 happened.
+    // CORS headers are policy, and a replayed or exported response must keep them working.
     private static readonly HashSet<string> NeverSecret = new(StringComparer.OrdinalIgnoreCase)
     {
         "WWW-Authenticate", "Proxy-Authenticate", "Authentication-Info", "Proxy-Authentication-Info",
+        "Authentication-Results",
     };
 
-    private static readonly string[] Fragments =
-        { "token", "secret", "password", "passwd", "api-key", "apikey", "api_key", "auth", "session", "credential", "signature" };
+    // Anywhere in the name: no ordinary header carries these letters.
+    private static readonly string[] Substrings = { "token", "secret", "password", "passwd", "apikey", "api-key", "api_key" };
+
+    // Whole words of the name (split on - and _): "auth" is X-Auth-User, not X-Author.
+    private static readonly HashSet<string> Words = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "auth", "authorization", "session", "sessionid", "credential", "credentials", "signature", "sig", "cookie",
+    };
 
     /// <summary>True for the standard credential headers and for any name that says it carries a
-    /// token, key, secret, password or session (X-Api-Key, X-Auth-Token, X-CSRF-Token, …).</summary>
+    /// token, key, secret, password, session or credential (X-Api-Key, X-Auth-Token, X-CSRF-Token, …).</summary>
     public static bool IsSecret(string? name)
     {
         if (string.IsNullOrWhiteSpace(name)) return false;
         string n = name.Trim();
         if (Exact.Contains(n)) return true;
-        if (NeverSecret.Contains(n)) return false;
-        foreach (var f in Fragments)
+        if (NeverSecret.Contains(n) || n.StartsWith("Access-Control-", StringComparison.OrdinalIgnoreCase)) return false;
+        foreach (var f in Substrings)
             if (n.Contains(f, StringComparison.OrdinalIgnoreCase)) return true;
+        foreach (var w in n.Split('-', '_'))
+            if (Words.Contains(w)) return true;
         return false;
     }
 }

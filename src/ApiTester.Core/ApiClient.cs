@@ -187,7 +187,8 @@ public sealed class ApiClient : IDisposable
         // A PAC script that cannot be fetched or run must fail the send, not quietly become DIRECT:
         // DecideProxy below swallows the error, and so does the handler when its proxy throws. The
         // script is evaluated once more for that.
-        if (transport.PacUrl is { } pacUrl && Uri.TryCreate(request.Url, UriKind.Absolute, out var pacTarget) &&
+        if (transport.Proxy != ProxyMode.None && transport.PacUrl is { } pacUrl &&
+            Uri.TryCreate(request.Url, UriKind.Absolute, out var pacTarget) &&
             !ProxyBypass.IsBypassed(transport.NoProxy, pacTarget))
         {
             try { _ = PacProxyFor(pacUrl).GetProxy(pacTarget); }
@@ -792,7 +793,7 @@ public sealed class ApiClient : IDisposable
                     transport.IgnoreServerCertificateErrors,
                     judgedErrors,
                     judgedFlags,
-                    trustServerCertificate is null ? null : () => TrustContext.Run(certChain, judgedErrors, TrustContext.HostOf(sender, transport.Sni), () =>
+                    trustServerCertificate is null ? null : () => TrustContext.Run(certChain, judgedErrors, context.DnsEndPoint.Host, () =>
                     {
                         using var c = cert is null ? null : new X509Certificate2(cert);
                         return trustServerCertificate(c);
