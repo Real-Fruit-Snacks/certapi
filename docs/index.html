@@ -187,6 +187,7 @@
         <div class="tabs" role="tablist">
           <button role="tab" aria-selected="true" data-pane="exe">Download</button>
           <button role="tab" aria-selected="false" data-pane="pwsh">PowerShell</button>
+          <button role="tab" aria-selected="false" data-pane="scoop">Scoop</button>
           <button role="tab" aria-selected="false" data-pane="src">Source</button>
         </div>
         <div class="pane" data-id="pwsh"><pre><code>mkdir "$env:LOCALAPPDATA\certapi" -Force; cd "$env:LOCALAPPDATA\certapi"
@@ -195,9 +196,10 @@ curl.exe -LO https://github.com/Real-Fruit-Snacks/certapi/releases/latest/downlo
         <div class="pane" data-active data-id="exe"><pre><code><span class="c"># two portable exes, no installer, no admin</span>
 ApiTester.App.exe   <span class="c"># the desktop app</span>
 certapi.exe         <span class="c"># the command line</span></code></pre><a class="copy" href="https://github.com/Real-Fruit-Snacks/certapi/releases/latest">Releases</a></div>
+        <div class="pane" data-id="scoop"><pre><code>scoop install https://github.com/Real-Fruit-Snacks/certapi/releases/latest/download/certapi.json</code></pre><button class="copy" data-copy="scoop install https://github.com/Real-Fruit-Snacks/certapi/releases/latest/download/certapi.json">Copy</button></div>
         <div class="pane" data-id="src"><pre><code>git clone https://github.com/Real-Fruit-Snacks/certapi
 dotnet publish src/ApiTester.Cli -c Release -r win-x64 --self-contained -o publish</code></pre><button class="copy" data-copy="git clone https://github.com/Real-Fruit-Snacks/certapi && cd certapi && dotnet publish src/ApiTester.Cli -c Release -r win-x64 --self-contained -o publish">Copy</button></div>
-        <div class="foot">Both executables from the <a href="https://github.com/Real-Fruit-Snacks/certapi/releases/latest">latest release</a>, self-contained: no installer, no admin, the .NET runtime is inside. Add the folder to your <code>PATH</code> to run <code>certapi</code> from any prompt.</div>
+        <div class="foot">Both executables from the <a href="https://github.com/Real-Fruit-Snacks/certapi/releases/latest">latest release</a>, self-contained: no installer, no admin, the .NET runtime is inside. Add the folder to your <code>PATH</code> to run <code>certapi</code> from any prompt. <code>certapi update</code> fetches the next release and checks it against GitHub's SHA-256 before replacing anything.</div>
       </div>
     </div>
     <div class="term" aria-label="Example: certapi send with a Windows-store client certificate">

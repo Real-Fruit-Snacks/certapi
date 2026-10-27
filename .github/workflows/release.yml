@@ -40,6 +40,53 @@ jobs:
           TAG: ${{ github.ref_type == 'tag' && github.ref_name || inputs.tag }}
         run: git archive --format=zip --prefix="certapi-${TAG}/" -o "certapi-source-${TAG}.zip" HEAD
 
+      - name: Checksums and a Scoop manifest
+        shell: bash
+        env:
+          TAG: ${{ github.ref_type == 'tag' && github.ref_name || inputs.tag }}
+        run: |
+          VERSION="${TAG#v}"
+          BASE="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}"
+          CLI_SHA=$(sha256sum publish-cli/certapi.exe | cut -d' ' -f1)
+          APP_SHA=$(sha256sum publish/ApiTester.App.exe | cut -d' ' -f1)
+          WORDS_SHA=$(sha256sum wordlists/common-api-endpoints.txt | cut -d' ' -f1)
+          {
+            echo "${CLI_SHA}  certapi.exe"
+            echo "${APP_SHA}  ApiTester.App.exe"
+            echo "${WORDS_SHA}  common-api-endpoints.txt"
+          } > SHA256SUMS.txt
+          # Installed with: scoop install https://github.com/<repo>/releases/latest/download/certapi.json
+          cat > certapi.json <<JSON
+          {
+            "version": "${VERSION}",
+            "description": "mTLS API client for the Windows certificate store",
+            "homepage": "https://github.com/${GITHUB_REPOSITORY}",
+            "license": "MIT",
+            "architecture": {
+              "64bit": {
+                "url": ["${BASE}/certapi.exe", "${BASE}/ApiTester.App.exe"],
+                "hash": ["${CLI_SHA}", "${APP_SHA}"]
+              }
+            },
+            "bin": "certapi.exe",
+            "shortcuts": [["ApiTester.App.exe", "certapi"]],
+            "checkver": "github",
+            "autoupdate": {
+              "architecture": {
+                "64bit": {
+                  "url": [
+                    "https://github.com/${GITHUB_REPOSITORY}/releases/download/v\$version/certapi.exe",
+                    "https://github.com/${GITHUB_REPOSITORY}/releases/download/v\$version/ApiTester.App.exe"
+                  ]
+                }
+              },
+              "hash": { "url": "\$baseurl/SHA256SUMS.txt" }
+            }
+          }
+          JSON
+          python -c "import json; json.load(open('certapi.json'))"
+          cat SHA256SUMS.txt certapi.json
+
       - name: Compose release notes from CHANGELOG
         shell: bash
         env:
@@ -71,5 +118,7 @@ jobs:
             "publish-cli/certapi.exe#certapi command line (Windows x64, self-contained)" \
             "wordlists/common-api-endpoints.txt#Starter wordlist for certapi fuzz" \
             "certapi-source-${TAG}.zip#Source at this tag" \
+            "SHA256SUMS.txt#SHA-256 of each file (certapi update checks against these)" \
+            "certapi.json#Scoop manifest" \
             --title "$TAG" \
             --notes-file notes-body.md

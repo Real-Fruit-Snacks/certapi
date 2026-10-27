@@ -47,6 +47,7 @@ other.
 | [`connections <url>`](#connections) | Are connections actually being reused? |
 | [`config`](#config) | Show the configuration file and profile in effect |
 | [`completion`](#completion) | Tab completion for PowerShell |
+| [`update`](#update) | Replace this certapi (and the desktop app) with the latest release |
 | `help [command]` | Show help for a command |
 
 ## Global options
@@ -1254,3 +1255,32 @@ What completes:
 Anything else, such as a path, falls through to PowerShell's own file completion. The script asks
 the binary for each completion, so it stays right after an update. Only PowerShell is supported;
 `certapi completion <other>` says so.
+
+## update
+
+```
+certapi update [--check] [--version <tag>] [--no-app] [--force] [transport options]
+```
+
+Looks up the latest [release](https://github.com/Real-Fruit-Snacks/certapi/releases) and, when it is
+newer than the copy you are running, downloads it and replaces `certapi.exe` — and
+`ApiTester.App.exe` too, when the desktop app sits in the same folder. Every file is checked against
+the SHA-256 GitHub publishes for it (the asset's digest, or the release's `SHA256SUMS.txt`) before
+anything is replaced. A file that does not match is discarded, nothing changes, and the exit code is 1.
+
+| Option | Default | What it does |
+|---|---|---|
+| `--check` | off | Only report. Exit 0 when this copy is current, 1 when a newer release exists |
+| `--version <tag>` | latest | Install this release (`v1.93.0` or `1.93.0`), older ones included — the way back from a bad release |
+| `--force` | off | Reinstall even when the release is the version already here |
+| `--no-app` | off | Leave the desktop app alone |
+
+It accepts the [transport options](#transport-options), so a proxy, a PAC file or a private root
+works the same as for any request. `GITHUB_TOKEN` or `GH_TOKEN`, when set, goes to the GitHub API
+only (never to the download) to lift the hourly limit on anonymous calls.
+
+Windows will not overwrite a running program but will rename one, so the running `certapi.exe`
+becomes `certapi.exe.old` and the new file takes its place; the next run deletes the `.old` file.
+Close the desktop app before updating it, or pass `--no-app`. A copy installed with Scoop says so
+and points at `scoop update certapi`; a copy not running as `certapi.exe` (`dotnet certapi.dll`) is
+refused.

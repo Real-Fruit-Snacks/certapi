@@ -13,7 +13,9 @@ curl.exe -LO https://github.com/Real-Fruit-Snacks/certapi/releases/latest/downlo
 curl.exe -LO https://github.com/Real-Fruit-Snacks/certapi/releases/latest/download/ApiTester.App.exe
 ```
 
-That's `certapi.exe` (command line) and `ApiTester.App.exe` (desktop) from the [latest release](https://github.com/Real-Fruit-Snacks/certapi/releases/latest). Both are self-contained: no installer, no admin rights. Add the folder to your `PATH` to run `certapi` from any prompt.
+That's `certapi.exe` (command line) and `ApiTester.App.exe` (desktop) from the [latest release](https://github.com/Real-Fruit-Snacks/certapi/releases/latest). Both are self-contained: no installer, no admin rights. Add the folder to your `PATH` to run `certapi` from any prompt. `certapi update` later replaces both with the newest release, each file checked against the SHA-256 GitHub publishes for it.
+
+With [Scoop](https://scoop.sh) instead: `scoop install https://github.com/Real-Fruit-Snacks/certapi/releases/latest/download/certapi.json` (then `scoop update certapi`).
 
 Some internal endpoints don't take a password. They ask the browser to choose a certificate and complete a mutual-TLS handshake, and most API clients want that certificate and its private key as files on disk, which enterprise and smart-card certificates deliberately don't allow. certapi picks the certificate from your Windows certificate store — the Personal store, `CurrentUser\My`, or the machine's `LocalMachine\My` — and lets Windows sign the handshake, so the key never leaves the store and never has to be exportable. A `.pfx` or `.pem` file works too. With no certificate selected it is an ordinary HTTP client. I wrote it for my own internal APIs; it assumes Windows 10/11 and nothing else.
 

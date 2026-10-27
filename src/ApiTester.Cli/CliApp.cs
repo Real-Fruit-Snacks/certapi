@@ -64,6 +64,17 @@ public sealed class CliServices
     /// ancestors — a test running under the temporary directory would otherwise discover whatever
     /// another process happened to leave there, which is exactly the flake this seam prevents.</summary>
     public Func<string, bool> FileExists { get; init; } = File.Exists;
+
+    /// <summary>The program file this process runs from: what `update` replaces, and where it looks
+    /// for the desktop app. Injectable so a test replaces a file in a temporary folder instead.</summary>
+    public string? ExecutablePath { get; init; } = System.Environment.ProcessPath;
+
+    /// <summary>The GitHub releases API `update` reads. A test points it at a local server.</summary>
+    public string UpdateFeed { get; init; } = Commands.UpdateCommand.DefaultFeed;
+
+    /// <summary>Reads an environment variable. Injectable so a developer's GITHUB_TOKEN never
+    /// reaches a test's fake server.</summary>
+    public Func<string, string?> Environment { get; init; } = System.Environment.GetEnvironmentVariable;
 }
 
 public static class CliApp
@@ -93,6 +104,7 @@ public static class CliApp
           grpc              Discover and call a gRPC service (all four method kinds)
           mcp               Run an MCP server so AI agents can make mTLS calls
           completion        Tab completion for PowerShell (certapi completion powershell)
+          update            Replace this certapi (and the desktop app) with the latest release
           help [command]    Show help (for one command, or this overview)
 
         Global options (work on every command, anywhere on the line):
@@ -170,6 +182,7 @@ public static class CliApp
             }
             catch (CliUsageException ex) { err.WriteLine(ex.Message); return ExitCodes.Usage; }
             catch (CliDataException ex) { err.WriteLine(ex.Message); return ExitCodes.Data; }
+            catch (CliFailureException ex) { err.WriteLine("error: " + ex.Message); return ExitCodes.Failure; }
             catch (Exception ex) { err.WriteLine("error: " + log.Describe(ex)); return ExitCodes.Failure; }
         }
         return Run(args, stdout, stderr, bodyOut, services);
@@ -186,6 +199,7 @@ public static class CliApp
                           Stream? bodyOut = null, CliServices? services = null)
     {
         services ??= new CliServices();
+        Commands.UpdateCommand.CleanUpPrevious(services.ExecutablePath);
         if (args.Length == 0) { stderr.WriteLine(Usage); return ExitCodes.Usage; }
         // Tab completion passes the words being typed verbatim; none of them are options to act on.
         if (args[0] == "__complete") return Commands.CompletionCommand.RunComplete(args[1..], stdout, services);
@@ -234,11 +248,13 @@ public static class CliApp
                 "connections" => Commands.ConnectionsCommand.Run(new Args(rest), stdout, err, services),
                 "config" => Commands.ConfigCommand.Run(new Args(rest), stdout, err, services),
                 "completion" => Commands.CompletionCommand.Run(new Args(rest), stdout, err),
+                "update" => Commands.UpdateCommand.Run(new Args(rest), stdout, err, services),
                 _ => throw new CliUsageException($"Unknown command '{g.Remaining[0]}'.\n{Usage}")
             };
         }
         catch (CliUsageException ex) { err.WriteLine(ex.Message); return ExitCodes.Usage; }
         catch (CliDataException ex) { err.WriteLine(ex.Message); return ExitCodes.Data; }
+        catch (CliFailureException ex) { err.WriteLine("error: " + ex.Message); return ExitCodes.Failure; }
         catch (Exception ex) { err.WriteLine("error: " + log.Describe(ex)); return ExitCodes.Failure; }
     }
 
@@ -372,6 +388,7 @@ public static class CliApp
         "connections" => Commands.ConnectionsCommand.Help,
         "config" => Commands.ConfigCommand.Help,
         "completion" => Commands.CompletionCommand.Help,
+        "update" => Commands.UpdateCommand.Help,
         _ => null
     };
 

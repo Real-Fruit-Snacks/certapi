@@ -37,6 +37,13 @@ All notable changes to this project are documented here. The format follows
   commented out, `--cert`/`--proxy` filled in when given, `--local` for the current directory,
   `--force` to replace a file.
 
+- **`certapi update`** replaces `certapi.exe`, and the desktop app beside it, with the latest
+  GitHub release (`--version` for a specific one, `--check` to only ask). Every file is checked
+  against the SHA-256 GitHub publishes for it before anything is replaced; the transport options
+  (proxy, PAC, CA file) apply. Copies installed with Scoop are pointed at `scoop update`.
+- **Releases carry `SHA256SUMS.txt` and a Scoop manifest** (`certapi.json`):
+  `scoop install https://github.com/Real-Fruit-Snacks/certapi/releases/latest/download/certapi.json`.
+
 ### Changed
 - Single-letter options are now case-sensitive (`-x` is no longer read as `-X`). Long options are
   still case-insensitive.
