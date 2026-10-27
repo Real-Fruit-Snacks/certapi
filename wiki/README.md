@@ -34,4 +34,4 @@ The short version:
 | **License** | See `LICENSE` in the repository |
 
 Everything documented here is available in both the app and the CLI unless noted. The CLI's built-in
-help (`certapi help <command>`) is always the authoritative source for options.
+help (`certapi <command> --help`) is always the authoritative source for options.

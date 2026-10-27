@@ -6,7 +6,7 @@ Every command, every option, every default.
 and its saved requests with the desktop application, so anything you do in one is visible in the
 other.
 
-> **The tool's own help is authoritative.** `certapi help <command>` prints the same options
+> **The tool's own help is authoritative.** `certapi <command> --help` (or `certapi help <command>`) prints the same options
 > straight from the binary you are running. This page explains what they are *for*, what they
 > default to, and how they interact — the parts a terse help screen cannot carry.
 

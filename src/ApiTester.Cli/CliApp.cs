@@ -126,7 +126,7 @@ public static class CliApp
           certapi serve --profile corp --check
           certapi send https://api.example.com/x --debug --log-file certapi.log
 
-        Run 'certapi help <command>' for options. 'certapi --version' prints the version.
+        Run 'certapi <command> --help' (or 'certapi help <command>') for options. 'certapi --version' prints the version.
         """;
 
     public static int Run(string[] args, TextReader input, TextWriter stdout, TextWriter stderr,
@@ -154,6 +154,7 @@ public static class CliApp
             {
                 // The streaming commands take the same profile as everything else: a configuration
                 // that applies to `send` but not to `ws` would be a trap rather than a convenience.
+                if (PrintedHelp(cmd, g.Remaining, stdout)) return ExitCodes.Ok;
                 services.Profile = ResolveProfile(g.Config, g.Profile, g.NoConfig, services, log);
                 return cmd switch
                 {
@@ -199,10 +200,12 @@ public static class CliApp
         {
             // Resolved once, here, so every command below sees the same profile — and so a broken
             // configuration is reported before a command starts doing work with half of it.
-            services.Profile = ResolveProfile(g.Config, g.Profile, g.NoConfig, services, log);
             if (g.Remaining.Length == 0) { err.WriteLine(Usage); return ExitCodes.Usage; }
             string command = g.Remaining[0].ToLowerInvariant();
             var rest = g.Remaining.Skip(1).ToArray();
+            // Before the profile is resolved: help must work even when the configuration is broken.
+            if (PrintedHelp(command, rest, stdout)) return ExitCodes.Ok;
+            services.Profile = ResolveProfile(g.Config, g.Profile, g.NoConfig, services, log);
             return command switch
             {
                 "--version" or "-v" => Version(stdout),
@@ -334,30 +337,54 @@ public static class CliApp
 
     private static int Help(string[] rest, TextWriter stdout)
     {
-        stdout.WriteLine(rest.FirstOrDefault()?.ToLowerInvariant() switch
-        {
-            "send" => Commands.SendCommand.Help,
-            "certs" => Commands.CertsCommand.Help,
-            "run" => Commands.RunCommand.Help,
-            "token" => Commands.TokenCommand.Help,
-            "fuzz" => Commands.FuzzCommand.Help,
-            "bench" => Commands.BenchCommand.Help,
-            "sse" => Commands.SseCommand.Help,
-            "ws" => Commands.WsCommand.Help,
-            "selftest" => Commands.SelfTestCommand.Help,
-            "mock" => Commands.MockCommand.Help,
-            "import" => Commands.ImportCommand.Help,
-            "export" => Commands.ExportCommand.Help,
-            "trust" => Commands.TrustCommand.Help,
-            "serve" => Commands.ServeCommand.Help,
-            "mcp" => Commands.McpCommand.Help,
-            "grpc" => Commands.GrpcCommand.Help,
-            "doctor" => Commands.DoctorCommand.Help,
-            "proxy" => Commands.ProxyCommand.Help,
-            "connections" => Commands.ConnectionsCommand.Help,
-            "config" => Commands.ConfigCommand.Help,
-            _ => Usage
-        });
+        stdout.WriteLine(HelpFor(rest.FirstOrDefault()) ?? Usage);
         return ExitCodes.Ok;
+    }
+
+    /// <summary>The help text for one command, or null when <paramref name="command"/> is not one.</summary>
+    internal static string? HelpFor(string? command) => command?.ToLowerInvariant() switch
+    {
+        "send" => Commands.SendCommand.Help,
+        "certs" => Commands.CertsCommand.Help,
+        "run" => Commands.RunCommand.Help,
+        "token" => Commands.TokenCommand.Help,
+        "fuzz" => Commands.FuzzCommand.Help,
+        "bench" => Commands.BenchCommand.Help,
+        "sse" => Commands.SseCommand.Help,
+        "ws" => Commands.WsCommand.Help,
+        "selftest" => Commands.SelfTestCommand.Help,
+        "mock" => Commands.MockCommand.Help,
+        "import" => Commands.ImportCommand.Help,
+        "export" => Commands.ExportCommand.Help,
+        "trust" => Commands.TrustCommand.Help,
+        "serve" => Commands.ServeCommand.Help,
+        "mcp" => Commands.McpCommand.Help,
+        "grpc" => Commands.GrpcCommand.Help,
+        "doctor" => Commands.DoctorCommand.Help,
+        "proxy" => Commands.ProxyCommand.Help,
+        "connections" => Commands.ConnectionsCommand.Help,
+        "config" => Commands.ConfigCommand.Help,
+        _ => null
+    };
+
+    /// <summary>True when the words after a command ask for its help: <c>--help</c> or <c>-h</c>
+    /// anywhere before a literal <c>--</c>. <c>-h</c> is matched exactly, so it never collides with
+    /// <c>-H</c> (a header), which the option reader would otherwise match case-insensitively.</summary>
+    internal static bool AsksForHelp(IEnumerable<string> words)
+    {
+        foreach (var w in words)
+        {
+            if (w == "--") return false;
+            if (w == "-h" || w.Equals("--help", StringComparison.OrdinalIgnoreCase)) return true;
+        }
+        return false;
+    }
+
+    /// <summary>Prints the command's help and returns true when it was asked for.</summary>
+    private static bool PrintedHelp(string command, IEnumerable<string> words, TextWriter stdout)
+    {
+        if (!AsksForHelp(words) || HelpFor(command) is not { } help) return false;
+        stdout.WriteLine(help);
+        return true;
     }
 }

@@ -112,5 +112,5 @@ and failures on demand.
 
 ---
 
-The CLI's own help (`certapi help <command>`) is always the authoritative source for options; these
+The CLI's own help (`certapi <command> --help`) is always the authoritative source for options; these
 pages explain what they are for.

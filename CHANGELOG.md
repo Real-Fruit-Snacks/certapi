@@ -6,6 +6,11 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- **`certapi <command> --help` and `-h`** print that command's help, the same text as
+  `certapi help <command>`, for every command. They were rejected as unknown options before. Help
+  is printed before the configuration is read, so it works even when the configuration is broken.
+
 ## [1.93.0] - 2026-10-26
 
 Reviewed the whole transport path for three networks — public, corporate (PAC, authenticating
