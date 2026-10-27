@@ -19,11 +19,20 @@ public static class GatewayCertificate
 
     /// <summary>The cached certificate, generated and cached on first use, and regenerated when the
     /// cached one is missing, unreadable, or within 7 days of expiry.</summary>
-    public static X509Certificate2 LoadOrCreate(string? directory = null)
+    public static X509Certificate2 LoadOrCreate(string? directory = null) => LoadOrCreate(directory, null, out _);
+
+    /// <summary>As <see cref="LoadOrCreate(string?)"/>, and the certificate also names every one of
+    /// <paramref name="dnsNames"/> — the virtual-host suffix and its wildcard, under --vhost. A
+    /// cached certificate that lacks one is replaced by one naming everything it named plus the
+    /// new names, so switching between suffixes never loses one; <paramref name="replaced"/> is
+    /// the thumbprint of the certificate it replaced, so the caller can move a binding along.</summary>
+    public static X509Certificate2 LoadOrCreate(string? directory, IReadOnlyCollection<string>? dnsNames, out string? replaced)
     {
+        replaced = null;
         string dir = directory ?? DefaultDirectory;
         Directory.CreateDirectory(dir);
         string pfxPath = Path.Combine(dir, PfxFileName);
+        var names = new List<string> { "localhost" };
 
         if (File.Exists(pfxPath))
         {
@@ -31,7 +40,10 @@ public static class GatewayCertificate
             {
                 var cached = X509CertificateLoader.LoadPkcs12(
                     File.ReadAllBytes(pfxPath), (string?)null, X509KeyStorageFlags.Exportable);
-                if (cached.NotAfter > DateTime.Now.AddDays(7)) return cached;
+                var has = DnsNames(cached);
+                bool covers = dnsNames is null || dnsNames.All(n => has.Contains(n, StringComparer.OrdinalIgnoreCase));
+                if (cached.NotAfter > DateTime.Now.AddDays(7) && covers) return cached;
+                if (!covers) { replaced = cached.Thumbprint; names.AddRange(has); }
                 cached.Dispose();
             }
             catch
@@ -40,7 +52,8 @@ public static class GatewayCertificate
             }
         }
 
-        var cert = Create();
+        if (dnsNames is not null) names.AddRange(dnsNames);
+        var cert = Create(names.Distinct(StringComparer.OrdinalIgnoreCase).ToList());
         File.WriteAllBytes(pfxPath, cert.Export(X509ContentType.Pfx));
         File.WriteAllBytes(Path.Combine(dir, CerFileName), cert.Export(X509ContentType.Cert));
         return cert;
@@ -66,9 +79,17 @@ public static class GatewayCertificate
     }
 
     /// <summary>A fresh gateway certificate, not cached — no file is written.</summary>
-    public static X509Certificate2 Create() =>
+    public static X509Certificate2 Create() => Create(new[] { "localhost" });
+
+    /// <summary>A fresh gateway certificate naming these DNS names (and 127.0.0.1).</summary>
+    public static X509Certificate2 Create(IEnumerable<string> dnsNames) =>
         SelfSignedCertificateFactory.CreateSelfSignedServerCertificate(
-            "127.0.0.1", new[] { "localhost" }, new[] { IPAddress.Loopback });
+            "127.0.0.1", dnsNames, new[] { IPAddress.Loopback });
+
+    /// <summary>The DNS names a certificate's Subject Alternative Name extension lists.</summary>
+    public static IReadOnlyList<string> DnsNames(X509Certificate2 certificate) =>
+        certificate.Extensions.OfType<X509SubjectAlternativeNameExtension>()
+            .SelectMany(e => e.EnumerateDnsNames()).ToList();
 
     /// <summary>Install into CurrentUser\Root. Only ever called under the explicit --tls-trust flag.</summary>
     public static void Trust(X509Certificate2 certificate)

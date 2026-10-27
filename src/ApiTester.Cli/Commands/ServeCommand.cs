@@ -139,8 +139,8 @@ public static class ServeCommand
                                   (default 600). Only with --cors
           --rewrite-cookies       Set-Cookie loses Domain= and Secure, and SameSite=None becomes
                                   Lax, so the browser can store the cookie against the gateway
-          --rewrite-location      A 3xx Location pointing at the upstream comes back pointing at
-                                  this gateway. One pointing at another mount, or at a host on the
+          --rewrite-location      A 3xx Location (or a Refresh header's URL) pointing at the
+                                  upstream comes back pointing at this gateway. One pointing at another mount, or at a host on the
                                   --allow list, comes back through that mount or /_/… — a login →
                                   app → login hop chain stays on the certificate. One pointing
                                   anywhere else is left alone and logged
@@ -156,6 +156,12 @@ public static class ServeCommand
           --strip-csp             Drop Content-Security-Policy from responses: a policy written for
                                   the upstream's own origin blocks every fetch a page makes through
                                   the gateway. Loopback only; the browser's other protections stay
+          --rewrite-body          Upstream URLs written into HTML, CSS, JavaScript, JSON and XML
+                                  bodies (links, script sources, a meta refresh, an API base in a
+                                  config file) point back through the gateway, the same way a
+                                  Location does. Compressed bodies are decompressed and sent plain;
+                                  bodies over 32 MB pass untouched. Not part of --browser; under
+                                  --vhost most sites need neither
 
           Multi-step logins across hosts (a login host that redirects to an app host and back):
           --cookie-jar [<file>]   Keep upstream cookies on the gateway, stored against the real
@@ -313,6 +319,9 @@ public static class ServeCommand
         bool allowUpgrade = args.Flag("--allow-upgrade") || browserBundle;
         bool rewriteOrigin = args.Flag("--rewrite-origin") || browserBundle;
         bool stripCsp = args.Flag("--strip-csp") || browserBundle;
+        // Not part of --browser: it buffers and decompresses page bodies, which the relay never does
+        // unless asked by name.
+        bool rewriteBody = args.Switch("--rewrite-body", sp?.RewriteBody);
         bool refererFallback = args.Flag("--referer-fallback") || browserBundle;
         bool cookieJar = args.OptionalValue(out var cookieJarFile, "--cookie-jar");
         bool cookieJarOff = args.Negated("--cookie-jar");
@@ -487,7 +496,8 @@ public static class ServeCommand
             cors, ParseOrigins(corsOrigins), rewriteCookies, rewriteLocation, allowUpgrade,
             LocalOrigin: new Uri($"{scheme}://127.0.0.1:{port}"))
         {
-            SecureOrigin = tls, CorsMaxAgeSeconds = corsMaxAge, RewriteOrigin = rewriteOrigin, StripCsp = stripCsp
+            SecureOrigin = tls, CorsMaxAgeSeconds = corsMaxAge, RewriteOrigin = rewriteOrigin, StripCsp = stripCsp,
+            RewriteBody = rewriteBody
         };
 
         // Pins come from the same state file saved-website names resolve against; loaded here (not
@@ -548,6 +558,7 @@ public static class ServeCommand
         if (rewriteOrigin) browserParts.Add("rewrite-origin");
         if (stripCsp) browserParts.Add("strip-csp");
         if (refererFallback) browserParts.Add("referer-fallback");
+        if (rewriteBody) browserParts.Add("rewrite-body");
         var summary = new List<string>
         {
             ServeSummary.Render(ServeSummary.Rows(routes, gateway, vhosts, allow, scheme, port)),
@@ -574,7 +585,7 @@ public static class ServeCommand
         {
             summary.Add($"  127.0.0.1:{port} answers in path form too (/<site>/…).");
             if (listen is null) summary.Add("  virtual hosts answer loopback callers only; add --listen (and --token) to reach them from elsewhere.");
-            if (tls) summary.Add("  note: the gateway certificate names 127.0.0.1 only, so the browser will warn on each virtual host.");
+            if (tls) summary.Add($"  the gateway certificate names {vhosts.Suffix} and *.{vhosts.Suffix}, so every virtual host is covered.");
         }
         if (allow is { AllowsAnyHost: true })
             summary.Add("  warning: --allow * makes this an open relay carrying your client certificate to any host a local caller names.");
@@ -602,8 +613,28 @@ public static class ServeCommand
         string? gatewayThumb = null;
         if (tls)
         {
-            gatewayCert = GatewayCertificate.LoadOrCreate();
+            // Under --vhost the certificate also names the suffix and *.suffix, so every site's
+            // host (api.gw.localhost) and every dynamic one is covered and the browser accepts it.
+            gatewayCert = GatewayCertificate.LoadOrCreate(null,
+                vhosts is null ? null : new[] { vhosts.Suffix, "*." + vhosts.Suffix }, out var replacedThumb);
             gatewayThumb = LoopbackTlsBinding.NormalizeThumbprint(gatewayCert.Thumbprint!);
+            if (replacedThumb is not null)
+            {
+                Log($"the gateway certificate now also names {vhosts!.Suffix} and *.{vhosts.Suffix}; it was regenerated ({gatewayThumb}).");
+                var oldBinding = LoopbackTlsBinding.Describe(port);
+                if (oldBinding is not null && oldBinding.Thumbprint.Equals(LoopbackTlsBinding.NormalizeThumbprint(replacedThumb), StringComparison.OrdinalIgnoreCase))
+                {
+                    // The binding is ours, to the certificate just replaced: move it along.
+                    if (!LoopbackTlsBinding.IsElevated())
+                        throw new CliUsageException(
+                            $"The gateway certificate was regenerated to name the virtual hosts, and 127.0.0.1:{port} is still bound to the old one. " +
+                            "From an elevated prompt run:\n  " + LoopbackTlsBinding.BuildDeleteCommand(port) + "\n  " +
+                            LoopbackTlsBinding.BuildAddCommand(port, gatewayThumb) + "\nthen start the gateway again.");
+                    LoopbackTlsBinding.Unbind(port);
+                }
+                if (!tlsTrust && GatewayCertificate.IsTrusted(LoopbackTlsBinding.NormalizeThumbprint(replacedThumb)))
+                    Log("  the old certificate is trusted in CurrentUser\\Root and the new one is not yet: add --tls-trust once.");
+            }
 
             if (tlsTrust)
             {
@@ -855,11 +886,29 @@ public static class ServeCommand
                                 : spec.WindowsAuth == true ? new WindowsAuthOptions(true) : null,
                     WindowsAuthOff = spec.WindowsAuth == false,
                     RequestHeaders = spec.Headers,
+                    Sni = spec.Sni,
                 };
             }
             routes.Add(new GatewayRoute(spec.Prefix, spec.Upstream) { Certificate = cert, Name = spec.Name, Settings = settings });
         }
         return routes;
+    }
+
+    private static string? HeaderValue(IReadOnlyList<KeyValuePair<string, string>> headers, string name) =>
+        headers.FirstOrDefault(h => h.Key.Equals(name, StringComparison.OrdinalIgnoreCase)).Value;
+
+    /// <summary>Up to <paramref name="limit"/> bytes, and whether that was the whole stream.</summary>
+    private static async Task<(byte[] Bytes, bool Complete)> ReadUpToAsync(Stream source, int limit, CancellationToken ct)
+    {
+        using var buffer = new MemoryStream();
+        var chunk = new byte[81920];
+        while (buffer.Length <= limit)
+        {
+            int read = await source.ReadAsync(chunk, ct);
+            if (read == 0) return (buffer.ToArray(), true);
+            buffer.Write(chunk, 0, read);
+        }
+        return (buffer.ToArray(), false);
     }
 
     /// <summary>The path a URL carries beyond "/", or null — what a site URL would silently lose.</summary>
@@ -1059,10 +1108,13 @@ public static class ServeCommand
             }
 
             // The gateway's own endpoints: never forwarded, never recorded.
-            if (pathAndQuery.StartsWith("/_certapi/", StringComparison.OrdinalIgnoreCase) ||
-                pathAndQuery.Equals("/_certapi", StringComparison.OrdinalIgnoreCase))
+            // Read from the path as sent, before a virtual host's mount is put in front of it, so
+            // http://api.gw.localhost:8819/_certapi/health answers as the path form does.
+            string asSent = req.RawUrl ?? "/";
+            if (asSent.StartsWith("/_certapi/", StringComparison.OrdinalIgnoreCase) ||
+                asSent.Equals("/_certapi", StringComparison.OrdinalIgnoreCase))
             {
-                await AnswerSelfAsync(res, pathAndQuery, gateway, routes, policy, ct);
+                await AnswerSelfAsync(res, asSent, gateway, routes, policy, ct);
                 log($"{method,-6} {pathAndQuery}  -> {res.StatusCode} (gateway)");
                 return;
             }
@@ -1228,10 +1280,11 @@ public static class ServeCommand
                 // the response came from. With every accommodation off the rewriter hands back the
                 // upstream's headers as they were, which is what keeps the default relay faithful.
                 var responseHeaders = gwResp.Headers;
-                if (gateway.ResolveTarget(pathAndQuery, out _, out _) is { } route)
+                GatewayRoute? responseRoute = gateway.ResolveTarget(pathAndQuery, out _, out _);
+                if (responseRoute is not null)
                 {
                     responseHeaders = BrowserRewriter.RewriteResponseHeaders(
-                        gwResp.Headers, req.Headers["Origin"], ForBrowser(route), browser, out var warnings);
+                        gwResp.Headers, req.Headers["Origin"], ForBrowser(responseRoute), browser, out var warnings);
                     foreach (var warning in warnings) log("warning: " + warning);
                 }
 
@@ -1240,6 +1293,36 @@ public static class ServeCommand
                 // deliberately gets their value. Applied whether or not any browser accommodation is
                 // on: a header rule is not a browser concern.
                 responseHeaders = headerRules.ApplyToResponse(responseHeaders);
+
+                // --rewrite-body: a page's own URLs back through the gateway. Read whole (up to the
+                // limit) because a URL can straddle any read boundary; a body that cannot be read
+                // or names nothing to rewrite goes out byte for byte, headers untouched.
+                byte[]? bodyPrefix = null;
+                byte[]? rewrittenBody = null;
+                if (browser.RewriteBody && responseRoute is not null &&
+                    !method.Equals("HEAD", StringComparison.OrdinalIgnoreCase) &&
+                    gwResp.StatusCode is not (204 or 304) &&
+                    BodyRewriter.Applies(HeaderValue(responseHeaders, "Content-Type")))
+                {
+                    var (buffered, complete) = await ReadUpToAsync(gwResp.Body, BodyRewriter.MaxBytes, ct);
+                    bodyPrefix = buffered;
+                    if (complete && BodyRewriter.Rewrite(buffered, HeaderValue(responseHeaders, "Content-Encoding"),
+                            HeaderValue(responseHeaders, "Content-Type"), ForBrowser(responseRoute), browser) is { } rewritten)
+                    {
+                        rewrittenBody = rewritten;
+                        responseHeaders = responseHeaders
+                            .Where(h => !h.Key.Equals("Content-Encoding", StringComparison.OrdinalIgnoreCase) &&
+                                        !h.Key.Equals("Content-Length", StringComparison.OrdinalIgnoreCase))
+                            .Append(new("Content-Length", rewritten.Length.ToString(System.Globalization.CultureInfo.InvariantCulture)))
+                            .ToList();
+                    }
+                }
+                async Task CopyBodyAsync(Stream destination)
+                {
+                    if (rewrittenBody is not null) { await destination.WriteAsync(rewrittenBody, ct); return; }
+                    if (bodyPrefix is not null) await destination.WriteAsync(bodyPrefix, ct);
+                    await gwResp.Body.CopyToAsync(destination, ct);
+                }
 
                 long? contentLength = null;
                 foreach (var h in responseHeaders)
@@ -1253,14 +1336,14 @@ public static class ServeCommand
 
                 if (recorder is null)
                 {
-                    await gwResp.Body.CopyToAsync(res.OutputStream, ct);
+                    await CopyBodyAsync(res.OutputStream);
                 }
                 else
                 {
                     // Tee the body: read it whole so the same bytes go to the client and into the
                     // HAR. Only when recording — the default relay still streams without buffering.
                     using var captured = new MemoryStream();
-                    await gwResp.Body.CopyToAsync(captured, ct);
+                    await CopyBodyAsync(captured);
                     byte[] body = captured.ToArray();
                     await res.OutputStream.WriteAsync(body, ct);
                     recorder.Record(

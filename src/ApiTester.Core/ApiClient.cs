@@ -995,6 +995,12 @@ public sealed class ApiClient : IDisposable
             return "--resolve cannot be used with --http3: QUIC connects inside the handler, so " +
                    "there is no dial this product could re-point.";
 
+        // The proxy path's TLS is negotiated by the HTTP stack from the URL, which has no setting for
+        // another server name; refusing beats sending the URL's name while the user believes otherwise.
+        if (transport.Sni is not null && url.StartsWith("https:", StringComparison.OrdinalIgnoreCase) && ProxyWillBeUsed(url, transport))
+            return $"--sni cannot be used through a proxy ({ProxyUriFor(url, transport) ?? "one applies to this URL"}): the " +
+                   "tunnel's TLS is negotiated from the URL's host. Use --no-proxy to send it direct.";
+
         if (transport.Resolve.Count > 0 && ProxyWillBeUsed(url, transport))
             return $"--resolve cannot be used together with a proxy (the connection is tunnelled " +
                    $"through {ProxyUriFor(url, transport) ?? "a proxy"}, so the address cannot be " +

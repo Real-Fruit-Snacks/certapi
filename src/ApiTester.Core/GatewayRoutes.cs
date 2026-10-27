@@ -54,10 +54,13 @@ public sealed record SiteSettings
     public IReadOnlyList<KeyValuePair<string, string>> RequestHeaders { get; init; } =
         Array.Empty<KeyValuePair<string, string>>();
 
+    /// <summary>The server name sent in this site's TLS handshake instead of its host.</summary>
+    public string? Sni { get; init; }
+
     /// <summary>Identity for connection pooling: two sites on one host with different settings
     /// must not share a pool, and two with the same settings may.</summary>
     public string PoolKey =>
-        $"{Insecure}|{ExtraRoots?.Fingerprint}|{Revocation}|{(WindowsAuthOff ? "off" : WindowsAuth is null ? "" : WindowsAuth.UseDefaultCredentials ? "sso" : AccountName(WindowsAuth))}";
+        $"{Insecure}|{ExtraRoots?.Fingerprint}|{Revocation}|{Sni}|{(WindowsAuthOff ? "off" : WindowsAuth is null ? "" : WindowsAuth.UseDefaultCredentials ? "sso" : AccountName(WindowsAuth))}";
 
     /// <summary>The settings as short phrases for the startup table — never a secret's value.</summary>
     public IEnumerable<string> Describe()
@@ -70,6 +73,7 @@ public sealed record SiteSettings
         else if (WindowsAuth is { } wa)
             yield return wa.UseDefaultCredentials ? "windows-auth" : "windows-auth " + AccountName(wa);
         if (RequestHeaders.Count > 0) yield return "headers " + string.Join(",", RequestHeaders.Select(h => h.Key));
+        if (Sni is not null) yield return "sni " + Sni;
     }
 
     private static string AccountName(WindowsAuthOptions wa) =>

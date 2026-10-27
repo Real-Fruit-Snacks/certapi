@@ -43,6 +43,11 @@ public sealed record BrowserOptions(
     /// other mounts, and any host on the dynamic allow list. Null means "nowhere but this route":
     /// a Location to another host then leaves the gateway, as before.</summary>
     public Func<Uri, string?>? GatewayPathFor { get; init; }
+
+    /// <summary>Rewrite upstream URLs written into HTML, CSS, JavaScript, JSON and XML bodies so
+    /// they point back through the gateway — `serve --rewrite-body`. Off by default, because it
+    /// buffers and decompresses those bodies, which a faithful relay never does.</summary>
+    public bool RewriteBody { get; init; }
 }
 
 /// <summary>The policy seam that makes an upstream usable from a browser through the gateway:
@@ -136,6 +141,11 @@ public static class BrowserRewriter
                 result.Add(new(h.Key, RewriteLocation(h.Value, route, options, notes)));
                 continue;
             }
+            if (options.RewriteLocation && h.Key.Equals("Refresh", StringComparison.OrdinalIgnoreCase))
+            {
+                result.Add(new(h.Key, RewriteRefresh(h.Value, route, options, notes)));
+                continue;
+            }
             result.Add(h);
         }
 
@@ -222,28 +232,44 @@ public static class BrowserRewriter
         if (!absolute.Contains("://", StringComparison.Ordinal) ||
             !Uri.TryCreate(absolute, UriKind.Absolute, out var target)) return location;
 
-        // Another host the gateway can reach — a second mount, or a host on the --allow list — is
-        // sent back through the gateway too, which is what keeps a login → app → login hop chain
-        // (the ordinary shape of single sign-on) on the certificate. Anywhere else is left as the
-        // upstream wrote it, and said out loud: the browser is about to leave the gateway.
+        if (GatewayUrlFor(target, route, options) is { } through) return through;
+        notes.Add($"Redirect to '{location}' leaves the gateway; the browser will follow it " +
+                  "directly and without the client certificate.");
+        return location;
+    }
+
+    /// <summary>The URL a browser should use for <paramref name="target"/>: this route's own
+    /// upstream back through its mount, another host the gateway can reach — a second mount, or a
+    /// host on the --allow list — through the gateway too, and null for anywhere else. Shared by
+    /// Location, Refresh and body rewriting, so they can never disagree about where a URL goes.</summary>
+    public static string? GatewayUrlFor(Uri target, GatewayRoute route, BrowserOptions options)
+    {
+        string local = options.LocalOrigin.GetLeftPart(UriPartial.Authority);
         if (!target.GetLeftPart(UriPartial.Authority).Equals(
                 route.Upstream.GetLeftPart(UriPartial.Authority), StringComparison.OrdinalIgnoreCase))
         {
             // A gateway path under this origin, or — in virtual-host mode — a whole URL on another.
             if (options.GatewayPathFor?.Invoke(target) is { } elsewhere)
-                return !elsewhere.StartsWith('/')
-                    ? elsewhere
-                    : options.LocalOrigin.GetLeftPart(UriPartial.Authority) + elsewhere;
-            notes.Add($"Redirect to '{location}' leaves the gateway; the browser will follow it " +
-                      "directly and without the client certificate.");
-            return location;
+                return !elsewhere.StartsWith('/') ? elsewhere : local + elsewhere;
+            return null;
         }
 
         // Back through the mount point the upstream is reached by, so the rewritten target routes
         // to the same upstream on the next request. The root prefix mounts everything, and adding
         // it would only double the path's leading slash.
         string prefix = route.PathPrefix == "/" ? "" : route.PathPrefix;
-        return options.LocalOrigin.GetLeftPart(UriPartial.Authority) + prefix + target.PathAndQuery;
+        return local + prefix + target.PathAndQuery;
+    }
+
+    /// <summary>A <c>Refresh: 5; url=…</c> header's URL, rewritten as a Location would be. The
+    /// delay and the spelling around the URL are kept as the upstream wrote them.</summary>
+    private static string RewriteRefresh(string refresh, GatewayRoute route, BrowserOptions options, List<string> notes)
+    {
+        var m = System.Text.RegularExpressions.Regex.Match(refresh, @"(?i)(url\s*=\s*)(['""]?)([^'""]+)\2\s*$");
+        if (!m.Success) return refresh;
+        string url = m.Groups[3].Value.Trim();
+        string rewritten = RewriteLocation(url, route, options, notes);
+        return refresh[..m.Groups[3].Index] + rewritten + refresh[(m.Groups[3].Index + m.Groups[3].Length)..];
     }
 
     /// <summary>One Set-Cookie value as the browser can actually store it. Over the default

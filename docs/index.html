@@ -326,9 +326,9 @@ certapi mcp --cert <span class="a">"CN=matt"</span> --allow internal.corp</code>
         <li><code>--http3</code> is Windows 11 / Server 2022 and direct connections only.</li>
         <li>Through a proxy, TLS version, cipher and certificate-presented details are not visible; <code>--no-proxy</code> brings them back.</li>
         <li>Over the plaintext gateway, <code>__Host-</code>/<code>__Secure-</code> cookies cannot work; <code>serve --tls</code> is the fix.</li>
-        <li><code>serve</code> does not rewrite absolute URLs inside HTML or JS. A site that uses absolute paths works under <code>--vhost</code>.</li>
+        <li><code>serve --rewrite-body</code> reaches URLs written into a page, not ones a script assembles at run time; <code>--vhost</code> needs no rewriting at all.</li>
         <li>A proxy that itself requires a client certificate is not supported.</li>
-        <li><code>--pac</code> and <code>--cert-pin</code> are Windows-only; <code>--sni</code> works on direct connections only, and not through <code>serve</code>.</li>
+        <li><code>--pac</code> and <code>--cert-pin</code> are Windows-only; <code>--sni</code> works on direct connections only.</li>
       </ul>
     </div>
   </div>

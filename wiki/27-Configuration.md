@@ -97,7 +97,7 @@ colliding with it.
 A typed list (`--ca-file`, and on `serve` `--allow` and `--cors <origins>`) replaces the profile's
 list rather than adding to it. A switch a profile turns on is turned off for one run with its
 `--no-` form: `--no-insecure`, `--no-revocation-strict`, and on `serve` `--no-browser`,
-`--no-vhost`, `--no-tls`, `--no-forwarded`, `--no-auto-token`, `--no-windows-auth`, `--no-cors` and
+`--no-vhost`, `--no-tls`, `--no-rewrite-body`, `--no-forwarded`, `--no-auto-token`, `--no-windows-auth`, `--no-cors` and
 `--no-cookie-jar`. Typing a switch and its `--no-` form together is a usage error. A profile's
 `noProxy` is undone by naming a proxy with `--proxy <url>`.
 
@@ -141,10 +141,10 @@ certapi serve --profile corp            # start it
 
 The `serve` fields are `port`, `vhost`, `browser`, `cors` (`true`, an origin, or a list), `token`,
 `allow`, `listen`, `cookieJar`, `autoToken`, `windowsAuth`, `windowsUser`, `windowsPassword`,
-`forwarded`, `maxBody`, `timeout`, `tls` and `sites`. `sites` is exactly the
+`forwarded`, `maxBody`, `timeout`, `tls`, `rewriteBody` and `sites`. `sites` is exactly the
 [`--routes` file format](19-Local-Gateway.md#sites-with-their-own-certificate-and-settings---routes):
 each site has a `name` (or `prefix`) and an `upstream`, and may set its own `cert`, `insecure`,
-`caFile`, `revocation`, `windowsAuth` and `headers`. An unknown field is an error naming it.
+`caFile`, `revocation`, `windowsAuth`, `headers` and `sni`. An unknown field is an error naming it.
 
 The certificate, proxy, CA files and revocation for the gateway as a whole come from the profile's
 own top-level fields, as they do for every command. A flag typed on the command line wins; sites

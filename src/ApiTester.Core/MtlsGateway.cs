@@ -200,14 +200,15 @@ public sealed class MtlsGateway : IDisposable
         var cert = site?.Certificate ?? _clientCertificate;
         bool insecure = s?.Insecure ?? _ignoreServerCertificateErrors;
         var transport = _transport;
-        if (s is not null && (s.ExtraRoots is not null || s.Revocation is not null || s.Insecure is not null))
+        if (s is not null && (s.ExtraRoots is not null || s.Revocation is not null || s.Insecure is not null || s.Sni is not null))
         {
             var baseline = transport ?? new TransportOptions();
             transport = baseline with
             {
                 ExtraRoots = s.ExtraRoots ?? baseline.ExtraRoots,
                 Revocation = s.Revocation ?? baseline.Revocation,
-                IgnoreServerCertificateErrors = insecure
+                IgnoreServerCertificateErrors = insecure,
+                Sni = s.Sni ?? baseline.Sni
             };
         }
         var windowsAuth = s is { WindowsAuthOff: true } ? null : s?.WindowsAuth ?? _windowsAuth;
@@ -289,8 +290,53 @@ public sealed class MtlsGateway : IDisposable
         }
 
         if (transport is not null) ApplyTransport(handler, transport, destination);
+        if (options.Sni is { } sni && destination is { } dest && dest.Scheme is "https" or "wss")
+            SendServerName(handler, sni, dest);
 
         return handler;
+    }
+
+    /// <summary>Makes the handshake with <paramref name="destination"/> name <paramref name="sni"/>.
+    /// The handler negotiates TLS from the URL's host and has no setting for another name, so the
+    /// handshake is done here, on the connection the handler asked for, with the handler's own
+    /// certificate, protocols and validation; a stream that is already TLS is used as it is. A
+    /// connection to anything else — a proxy — is handed back untouched (the command line refuses
+    /// --sni through a proxy; this is the belt to that brace).</summary>
+    private static void SendServerName(SocketsHttpHandler handler, string sni, Uri destination)
+    {
+        var inner = handler.ConnectCallback;
+        var tls = handler.SslOptions;
+        int port = destination.IsDefaultPort ? 443 : destination.Port;
+        handler.ConnectCallback = async (context, ct) =>
+        {
+            Stream network;
+            if (inner is not null) network = await inner(context, ct);
+            else
+            {
+                var socket = new Socket(SocketType.Stream, ProtocolType.Tcp) { NoDelay = true };
+                try { await socket.ConnectAsync(context.DnsEndPoint, ct); }
+                catch { socket.Dispose(); throw; }
+                network = new NetworkStream(socket, ownsSocket: true);
+            }
+            if (!context.DnsEndPoint.Host.Equals(destination.Host, StringComparison.OrdinalIgnoreCase) ||
+                context.DnsEndPoint.Port != port)
+                return network;
+            var ssl = new SslStream(network, leaveInnerStreamOpen: false);
+            var options = new SslClientAuthenticationOptions
+            {
+                TargetHost = sni,
+                RemoteCertificateValidationCallback = tls.RemoteCertificateValidationCallback,
+                ClientCertificates = tls.ClientCertificates,
+                EnabledSslProtocols = tls.EnabledSslProtocols,
+                CertificateRevocationCheckMode = tls.CertificateRevocationCheckMode,
+                CertificateChainPolicy = tls.CertificateChainPolicy,
+                // The relay speaks HTTP/1.1 to upstreams; offering only that keeps ALPN honest.
+                ApplicationProtocols = [SslApplicationProtocol.Http11],
+            };
+            try { await ssl.AuthenticateAsClientAsync(options, ct); }
+            catch { await ssl.DisposeAsync(); throw; }
+            return ssl;
+        };
     }
 
     /// <summary>The transport controls that make sense for a relay: how to reach the upstream.

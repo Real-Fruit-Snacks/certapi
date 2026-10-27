@@ -71,13 +71,12 @@ Body goes to stdout, diagnostics to stderr. Exit codes: 0 success Â· 1 failure Â
 - `--http3` is Windows 11 / Server 2022 and direct connections only.
 - Through a proxy, the TLS version, cipher and certificate-presented details are not visible. `--no-proxy` brings them back.
 - Over the plaintext gateway, `__Host-`/`__Secure-` cookies cannot work; `serve --tls` is the fix.
-- `serve` does not rewrite absolute URLs inside HTML/JS bodies. A site that links to its own hostname leaves the gateway on those links; `--browser` fixes headers (Location, cookies, CORS), not bodies. A site that uses absolute *paths* (`/static/app.js`, `Path=/` cookies) works under `--vhost`, which gives each upstream its own origin, or with `--referer-fallback`.
-- `serve --vhost` with `--tls` warns in the browser once per virtual host: the generated certificate names `127.0.0.1` only.
+- `serve --rewrite-body` rewrites a page's absolute URLs only when they are in a body it can read: UTF-8 text up to 32 MB. URLs a script builds at run time from pieces are out of its reach; `--vhost` gives each upstream its own origin and needs no rewriting.
 - `serve --windows-auth` answers the upstream's challenge, not the proxy's; a proxy that wants Negotiate is handled by the transport as before.
 - `certapi doctor` cannot probe through a SOCKS proxy; `send --debug --trace` can.
 - A proxy that itself requires a client certificate (mTLS to the proxy) is not supported; .NET's HTTP stack cannot present one to a proxy.
 - `--pac` and `--cert-pin` are Windows-only (WinHTTP, CNG).
-- `--sni` works on direct connections only, and not through `serve`.
+- `--sni` works on direct connections only; through a proxy it is refused.
 
 ## Configuration
 

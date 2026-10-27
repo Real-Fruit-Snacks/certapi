@@ -24,11 +24,13 @@ public sealed record GatewayRouteSpec(
     public string? WindowsPassword { get; init; }
     public IReadOnlyList<KeyValuePair<string, string>> Headers { get; init; } =
         Array.Empty<KeyValuePair<string, string>>();
+    /// <summary>The server name to send in this site's TLS handshake instead of its host.</summary>
+    public string? Sni { get; init; }
 
     /// <summary>Whether the site changes anything beyond where it points and which certificate it shows.</summary>
     public bool HasSettings =>
         Insecure is not null || CaFiles.Count > 0 || Revocation is not null || WindowsAuth is not null ||
-        WindowsUser is not null || Headers.Count > 0;
+        WindowsUser is not null || Headers.Count > 0 || Sni is not null;
 }
 
 /// <summary>The site format shared by `serve --routes <file>` and a profile's <c>serve.sites</c>:
@@ -36,7 +38,7 @@ public sealed record GatewayRouteSpec(
 /// <code>
 /// { "name": "hr", "upstream": "https://hr.corp:8443", "cert": "CN=svc-hr",
 ///   "insecure": false, "caFile": "hr-root.pem", "revocation": "online",
-///   "windowsAuth": true, "headers": { "X-Team": "people" } }
+///   "windowsAuth": true, "headers": { "X-Team": "people" }, "sni": "hr.internal" }
 /// </code>
 /// <c>name</c> mounts the site at <c>/name</c> and, under --vhost, at <c>name.gw.localhost</c>;
 /// <c>prefix</c> mounts it at that path instead of <c>/name</c>; the name still labels the site and its
@@ -48,7 +50,7 @@ public static class GatewayRoutesFile
     {
         "name", "prefix", "path", "upstream", "url",
         "cert", "certFile", "certPassword", "keyFile",
-        "insecure", "caFile", "revocation", "windowsAuth", "windowsUser", "windowsPassword", "headers",
+        "insecure", "caFile", "revocation", "windowsAuth", "windowsUser", "windowsPassword", "headers", "sni",
     };
 
     /// <summary>A routes file. <paramref name="baseDirectory"/> resolves relative <c>certFile</c>,
@@ -158,7 +160,10 @@ public static class GatewayRoutesFile
                 WindowsUser = Str("windowsUser"),
                 WindowsPassword = Str("windowsPassword"),
                 Headers = headers,
+                Sni = Str("sni"),
             };
+            if (spec.Sni is not null && Uri.CheckHostName(spec.Sni) is not (UriHostNameType.Dns))
+                throw new InvalidDataException($"{where}: site '{label}': \"sni\" must be a host name, got '{spec.Sni}'.");
             if (spec.Cert is not null && spec.CertFile is not null)
                 throw new InvalidDataException($"{where}: site '{label}' names both \"cert\" and \"certFile\"; choose one.");
             if (spec.CertFile is null && (spec.CertPassword is not null || spec.KeyFile is not null))

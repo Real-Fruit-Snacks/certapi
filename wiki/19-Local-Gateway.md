@@ -121,6 +121,7 @@ inherits. Here `lab` refuses an untrusted server certificate even though the gat
 | `windowsAuth` | `true` answers this site's Negotiate/NTLM challenge as you; `false` never does, even with `--windows-auth` (and cannot be combined with `windowsUser`). A JSON boolean |
 | `windowsUser`, `windowsPassword` | Answer it as this account instead |
 | `headers` | Headers set (replace or add) on every request to this site, after the gateway's `--request-header` rules |
+| `sni` | The server name sent in this site's TLS handshake instead of its host — for a site reached by address, or one whose front end routes by a different name. Direct connections only; the certificate is then checked against this name |
 
 Paths are relative to the file. Any value may be `${env:NAME}`, read from the environment, so a
 password or key stays out of a file you share; an unset variable is an error naming the field. Two
@@ -204,16 +205,17 @@ secret masked.
 | `--forwarded` | Add `X-Forwarded-For/Proto/Host` and `Via: 1.1 certapi` to forwarded requests |
 | `--workspace <file>` | Resolve a saved-website `<upstream>` from a workspace file |
 | `-q, --quiet` | No startup table or per-request log |
-| `--tls` | Serve the gateway itself over HTTPS on 127.0.0.1 with a generated gateway certificate, so `Secure` and `__Host-`/`__Secure-` cookies work. Binding the port needs an elevated prompt the first time; the exact `netsh` command is printed if it isn't available |
+| `--tls` | Serve the gateway itself over HTTPS on 127.0.0.1 with a generated gateway certificate, so `Secure` and `__Host-`/`__Secure-` cookies work. Binding the port needs an elevated prompt the first time; the exact `netsh` command is printed if it isn't available. With `--vhost` the certificate also names the suffix and `*.<suffix>`, so every virtual host is covered (the first such run regenerates it and moves the binding; add `--tls-trust` once) |
 | `--tls-trust` | Also install that certificate into `CurrentUser\Root` so the browser accepts it silently — explicit, logged, and reversible. Only with `--tls` |
 | `--tls-untrust` | Remove a previously trusted gateway certificate and exit; a standalone action |
 | `--browser` | The bundle: the seven browser accommodations below at once |
 | `--cors [<origins>]` | Answer CORS (Cross-Origin Resource Sharing) preflights and add the headers a script needs; echoes the caller's `Origin` with no value, or takes an allowlist. Repeatable |
 | `--cors-max-age <seconds>` | How long a browser may cache a preflight answer (default 600). Only with `--cors` (or `--browser`) |
 | `--rewrite-cookies` | Strip `Domain=` and `Secure` from each `Set-Cookie` and turn `SameSite=None` into `Lax`, so the browser stores the cookie against the gateway |
-| `--rewrite-location` | Bring a 3xx `Location` aimed at the upstream, another site or an allowed host back through the gateway |
+| `--rewrite-location` | Bring a 3xx `Location` (and a `Refresh` header's URL) aimed at the upstream, another site or an allowed host back through the gateway |
 | `--rewrite-origin` | `Origin` and `Referer` on a forwarded request point at the upstream |
 | `--strip-csp` | Drop `Content-Security-Policy` from responses |
+| `--rewrite-body` | Upstream URLs written into HTML, CSS, JavaScript, JSON and XML bodies — links, script sources, a meta refresh, an API base in a config file — point back through the gateway, mapped exactly as a `Location` is. JSON's escaped `https:\/\/` form is kept escaped. A compressed body is decompressed and sent plain; a body over 32 MB, or not UTF-8, passes untouched. Not part of `--browser`: it buffers bodies the relay otherwise streams |
 | `--referer-fallback` | A path no site owns, from a page the gateway served, is sent (307) to the same path under that page's site |
 | `--allow-upgrade` | Relay WebSocket connections through your certificate |
 | `--cookie-jar [<file>]` | Keep upstream cookies on the gateway and send them to matching hosts; with a file, kept across restarts encrypted (DPAPI) |
@@ -227,9 +229,10 @@ secret masked.
 The proxy options (`--proxy`, `--no-proxy`, `--noproxy`, `--pac`, `--no-env-proxy`, `--proxy-user`),
 `--resolve`, `--tls-min`, `--connect-timeout`, `--offline` and `-4`/`-6` apply to the gateway's
 connections exactly as they do on [`send`](21-CLI-Reference.md#transport-options). The redirect,
-decompression, HTTP-version, retry and `--sni` options are accepted but do not apply. The gateway answers
-`/_certapi/health` (state as JSON) and `/_certapi/routes` (sites, settings, allow list) itself; both
-honour `--token`.
+decompression, HTTP-version and retry options are accepted but do not apply. `--sni` names the server
+in every site's handshake (a site's own `"sni"` wins), direct connections only. The gateway answers
+`/_certapi/health` (state as JSON) and `/_certapi/routes` (sites, settings, allow list) itself, on
+`127.0.0.1` and on every virtual host alike; both honour `--token`.
 
 ## Revocation checking
 

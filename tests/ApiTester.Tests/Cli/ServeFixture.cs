@@ -112,13 +112,17 @@ internal sealed class ServeHost : IAsyncDisposable
             if (!host._run.Wait(TimeSpan.FromMilliseconds(750)) || host._run.Result == ExitCodes.Ok)
                 return host;
 
-            host.DisposeAsync().AsTask().GetAwaiter().GetResult();
+            if (attempt < 4) host.DisposeAsync().AsTask().GetAwaiter().GetResult();
         }
-        return host!;   // give the caller the last attempt; its assertions are the verdict
+        return host!;   // give the caller the last attempt, undisposed; its assertions are the verdict
     }
+
+    private bool _disposed;
 
     public async ValueTask DisposeAsync()
     {
+        if (_disposed) return;
+        _disposed = true;
         _cts.Cancel();
         try { await _run.WaitAsync(ServeFixture.Limit); } catch { /* the test's assertions are the verdict */ }
         _cts.Dispose();

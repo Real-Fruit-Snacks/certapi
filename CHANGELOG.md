@@ -44,6 +44,18 @@ All notable changes to this project are documented here. The format follows
 - **Releases carry `SHA256SUMS.txt` and a Scoop manifest** (`certapi.json`):
   `scoop install https://github.com/Real-Fruit-Snacks/certapi/releases/latest/download/certapi.json`.
 
+- **`serve --rewrite-body`**: upstream URLs written into HTML, CSS, JavaScript, JSON and XML bodies
+  point back through the gateway, mapped exactly as a `Location` is (compressed bodies are
+  decompressed; JSON's escaped slashes stay escaped). Profile field `rewriteBody`.
+- **`serve --rewrite-location` also rewrites a `Refresh` header's URL.**
+- **`serve --sni` and a site's own `"sni"`** set the server name in the gateway's handshake with
+  that upstream (direct connections; through a proxy `--sni` is now refused everywhere, rather than
+  silently not sent).
+- **`serve --vhost --tls`**: the gateway certificate also names the suffix and `*.<suffix>`, so
+  the browser accepts every virtual host. The first such run regenerates the certificate and moves
+  the binding.
+- **`/_certapi/health` and `/_certapi/routes` answer on every virtual host**, not only in path form.
+
 ### Changed
 - Single-letter options are now case-sensitive (`-x` is no longer read as `-X`). Long options are
   still case-insensitive.
