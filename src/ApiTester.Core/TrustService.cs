@@ -66,8 +66,19 @@ public static class TrustService
     /// <summary>Every kind of pin at once: the leaf's thumbprint, the leaf's public key, or any
     /// issuer in <paramref name="chain"/>. The chain is the one the handshake built (it carries the
     /// intermediates the server sent, which a chain rebuilt from the leaf alone would not).</summary>
+    /// <remarks>Without explicit policy errors, the ones the current validation callback reported
+    /// (<see cref="TrustContext.CurrentPolicyErrors"/>) apply — so a predicate written by hand
+    /// inside a callback still refuses an issuer pin for a certificate issued to another name.</remarks>
+    public static bool IsTrusted(AppState state, string host, X509Certificate2 leaf, X509Chain? chain) =>
+        IsTrusted(state, host, leaf, chain, TrustContext.CurrentPolicyErrors);
+
+    /// <summary>The trust decision for the connection being validated right now: its chain, its
+    /// policy errors, and the host it actually reached (a redirect hop's, not the first one's).</summary>
+    public static bool IsTrustedHere(AppState state, string host, X509Certificate2 leaf) =>
+        IsTrusted(state, TrustContext.CurrentHost ?? host, leaf, TrustContext.CurrentChain, TrustContext.CurrentPolicyErrors);
+
     public static bool IsTrusted(AppState state, string host, X509Certificate2 leaf, X509Chain? chain,
-                                 System.Net.Security.SslPolicyErrors policyErrors = System.Net.Security.SslPolicyErrors.None)
+                                 System.Net.Security.SslPolicyErrors policyErrors)
     {
         // A leaf or key pin names this server's own certificate, so it stands in for the name check
         // too (an IP literal, an internal alias). An issuer pin only vouches for the chain: a

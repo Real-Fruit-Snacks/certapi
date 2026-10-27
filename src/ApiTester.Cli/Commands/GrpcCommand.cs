@@ -143,11 +143,15 @@ public static class GrpcCommand
         string? maxMessagesRaw = args.Value("--max-messages");
         string store = args.Value("--store") ?? services.Profile?.Store ?? "CurrentUser";
         bool insecure = args.Switch("--insecure", services.Profile?.Insecure);
-        string? proxyUrl = args.Value("--proxy");
-        bool noProxy = args.Flag("--no-proxy");
-        string? proxyUser = args.Value("--proxy-user");
-        string? noProxySpec = args.ListValue("--noproxy");
-        string? revocationRaw = args.Value("--revocation");
+        // The profile fills in what is not typed, exactly as on send/ws/sse: a corporate proxy set
+        // once in the configuration must not be skipped by one command.
+        string? proxyFlag = args.Value("--proxy");
+        bool noProxyFlag = args.Flag("--no-proxy");
+        string? proxyUrl = proxyFlag ?? (noProxyFlag ? null : services.Profile?.Proxy);
+        bool noProxy = noProxyFlag || (proxyFlag is null && services.Profile?.NoProxy == true);
+        string? proxyUser = args.Value("--proxy-user") ?? (proxyUrl is not null ? services.Profile?.ProxyUser : null);
+        string? noProxySpec = args.ListValue("--noproxy") ?? (noProxyFlag ? null : services.Profile?.NoProxyList);
+        string? revocationRaw = args.Value("--revocation") ?? services.Profile?.Revocation;
         bool revocationStrict = args.Switch("--revocation-strict", services.Profile?.RevocationStrict);
         string? timeoutRaw = args.Value("--timeout");
         string? workspace = args.Value("--workspace");
@@ -160,7 +164,7 @@ public static class GrpcCommand
         if (dataValues.Count > 0 && dataFile is not null)
             throw new CliUsageException("-d/--data and --data-file are mutually exclusive.");
 
-        if (proxyUrl is not null && noProxy)
+        if (proxyFlag is not null && noProxyFlag)
             throw new CliUsageException("--proxy and --no-proxy are mutually exclusive.");
         string? proxyAuthUser = null, proxyAuthPassword = null;
         if (proxyUser is not null)
@@ -266,7 +270,7 @@ public static class GrpcCommand
         var state = LoadWorkspaceOrEmpty(workspace, services, stderr);
         string host = TokenService.HostOf(addressRaw);
         Func<X509Certificate2?, bool> trustCert = c =>
-            c is not null && TrustService.IsTrusted(state, host, c, TrustContext.CurrentChain);
+            c is not null && TrustService.IsTrustedHere(state, host, c);
 
         if (!noAutoToken)
         {

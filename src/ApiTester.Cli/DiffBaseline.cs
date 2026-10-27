@@ -15,10 +15,11 @@ public static class DiffBaseline
     /// argument names something missing, unreadable, or not matching the request. Nothing else ever
     /// escapes: an IOException or a JsonException reaching the top would print a stack trace for
     /// what is only ever a bad file the user named.</summary>
-    public static ResponseSnapshot Resolve(string argument, string method, string url, AppState state)
+    public static ResponseSnapshot Resolve(string argument, string method, string url, AppState state,
+                                           IReadOnlyDictionary<string, string>? vars = null)
     {
         if (string.Equals(argument, KnownGoodToken, StringComparison.OrdinalIgnoreCase))
-            return FromKnownGood(method, url, state);
+            return FromKnownGood(method, url, state, vars);
         if (argument.EndsWith(".har", StringComparison.OrdinalIgnoreCase))
             return FromHar(argument, method, url);
         if (argument.EndsWith(".json", StringComparison.OrdinalIgnoreCase))
@@ -33,9 +34,13 @@ public static class DiffBaseline
     /// <summary>The stored known-good response of the saved request this send is repeating. Matching
     /// on method + URL rather than a name keeps `--diff known-good` usable from a plain
     /// `certapi send <url>` line, which is the only form that has no request to name.</summary>
-    private static ResponseSnapshot FromKnownGood(string method, string url, AppState state)
+    private static ResponseSnapshot FromKnownGood(string method, string url, AppState state,
+                                                  IReadOnlyDictionary<string, string>? vars)
     {
-        var node = FindSaved(state.Collections, method, url)
+        // A saved URL is usually a template ({{base}}/health); the send's URL is resolved, so the
+        // saved one is resolved with the same variables before they are compared.
+        Func<string, string>? resolve = vars is null ? null : s => VariableResolver.Resolve(s, vars).Result;
+        var node = FindSaved(state.Collections, method, url, resolve)
             ?? throw new CliDataException(
                 $"--diff known-good found no saved request matching {method} {url}. " +
                 "Save the request and run it once so a known-good response is recorded.");
@@ -49,15 +54,17 @@ public static class DiffBaseline
     /// <summary>Depth-first, first match wins. Two saved requests can legitimately point at the same
     /// endpoint; picking the first is at least stable and repeatable, where refusing would make the
     /// flag unusable in exactly the workspaces that use it most.</summary>
-    private static CollectionNode? FindSaved(IEnumerable<CollectionNode> nodes, string method, string url)
+    private static CollectionNode? FindSaved(IEnumerable<CollectionNode> nodes, string method, string url,
+                                            Func<string, string>? resolve)
     {
         foreach (var node in nodes)
         {
             if (!node.IsFolder && node.Request is { } request &&
                 string.Equals(request.Method, method, StringComparison.OrdinalIgnoreCase) &&
-                string.Equals(request.EffectiveUrl(), url, StringComparison.OrdinalIgnoreCase))
+                (string.Equals(request.EffectiveUrl(), url, StringComparison.OrdinalIgnoreCase) ||
+                 (resolve is not null && string.Equals(request.EffectiveUrl(resolve), url, StringComparison.OrdinalIgnoreCase))))
                 return node;
-            if (FindSaved(node.Children, method, url) is { } found) return found;
+            if (FindSaved(node.Children, method, url, resolve) is { } found) return found;
         }
         return null;
     }

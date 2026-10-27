@@ -175,10 +175,19 @@ public static class CompletionCommand
 
     /// <summary>True when the help shows the option followed by a value placeholder
     /// (<c>--cert &lt;thumb|subject&gt;</c>, <c>-X, --method &lt;m&gt;</c>, <c>--query name=value</c>).</summary>
+    private static readonly string[] TransportValueOptions =
+    {
+        "--proxy", "--proxy-user", "--noproxy", "--pac", "--ca-file", "--cacert", "--revocation", "--tls-min",
+        "--connect-timeout", "--sni", "--resolve", "--max-redirs", "--timeout", "--max-time", "-x", "-U",
+    };
+
     internal static bool TakesValue(string help, string option)
     {
         if (GlobalValueOptions.Contains(option, StringComparer.OrdinalIgnoreCase)) return true;
         if (KnownChoices.Contains(option, StringComparer.OrdinalIgnoreCase)) return true;
+        // The shared transport options take a value everywhere, including in the helps (mcp,
+        // update) that list them by name only, with no <placeholder> to recognise.
+        if (TransportValueOptions.Contains(option, StringComparer.OrdinalIgnoreCase)) return true;
         string o = Regex.Escape(option);
         return Regex.IsMatch(help, $@"(?<![\w-]){o}(?:,\s*--?[\w.\-]+)*(?: |=)(?:<|\[<|[a-z]+=|""[a-z])",
             RegexOptions.IgnoreCase);

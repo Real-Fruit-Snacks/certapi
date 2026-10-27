@@ -205,6 +205,29 @@ public static class RunCommand
             if (!Directory.Exists(harDir)) throw new CliUsageException($"--har directory does not exist: {harDir}");
         }
 
+        // Replaying a HAR file runs its own recorded requests through its own loop, which knows
+        // none of these: refused by name rather than accepted and silently ignored.
+        bool replaysHar = diffHar is not null ||
+            (positionals.Count == 1 && positionals[0].EndsWith(".har", StringComparison.OrdinalIgnoreCase) && File.Exists(positionals[0]));
+        if (replaysHar)
+        {
+            var unused = new List<string>();
+            if (harPath is not null) unused.Add("--har");
+            if (mdFile is not null) unused.Add("--md");
+            if (mdVault is not null) unused.Add("--md-vault");
+            if (useCookies) unused.Add(cookieJarPath is not null ? "--cookie-jar" : "--cookies");
+            if (dataFile is not null) unused.Add("--data");
+            if (envName is not null) unused.Add("--env");
+            if (varOverrides.Count > 0) unused.Add("--var");
+            if (strictVars) unused.Add("--strict-vars");
+            if (noAutoToken) unused.Add("--no-auto-token");
+            if (recordFlag || noRecord) unused.Add(recordFlag ? "--record" : "--no-record");
+            if (unused.Count > 0)
+                throw new CliUsageException(
+                    $"{string.Join(", ", unused)} {(unused.Count == 1 ? "applies" : "apply")} to a saved collection or chain, " +
+                    "not to replaying a HAR file; a replay sends the archive's own requests as recorded.");
+        }
+
         var state = CliWorkspace.Load(workspace, services.LiveStatePath, stderr);
         // One instance for the whole run: ApiClient's handler cache keys the per-host trust
         // predicate by delegate identity, so a caller that built a fresh lambda per request could

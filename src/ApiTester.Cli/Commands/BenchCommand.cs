@@ -154,6 +154,9 @@ public static class BenchCommand
                 "requests or for a period, not both.");
         int count = ParsePositive(countRaw, 100, "-n/--count", "requests");
         int concurrency = ParsePositive(concurrencyRaw, 10, "-c/--concurrency", "workers");
+        // The default never outnumbers the requests: "-n 5" alone runs 5 workers, as the help's
+        // "never more than --count" says. A typed -c larger than -n is still refused below.
+        if (concurrencyRaw is null && durationRaw is null) concurrency = Math.Min(concurrency, count);
         var duration = ParsePositiveSeconds(durationRaw, "--duration");
         var warmUp = ParsePositiveSeconds(warmupRaw, "--warmup");
         int timeout = ParsePositive(timeoutRaw, 100, "--timeout", "seconds");
@@ -312,7 +315,7 @@ public static class BenchCommand
 
         var result = Bench.RunAsync(request, cert, transport, options,
             Counter(json, stderr), services.Cancel,
-            trustServerCertificate: c => c is not null && TrustService.IsTrusted(state, host, c, TrustContext.CurrentChain))
+            trustServerCertificate: c => c is not null && TrustService.IsTrustedHere(state, host, c))
             .GetAwaiter().GetResult();
         if (!json) stderr.WriteLine();
 

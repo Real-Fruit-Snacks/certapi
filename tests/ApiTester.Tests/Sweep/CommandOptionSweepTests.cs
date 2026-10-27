@@ -45,3 +45,40 @@ public class CommandOptionSweepTests
     public void Serve_max_body_never_wraps_around(string raw, long? expected) =>
         Assert.Equal(expected, ServeCommand.ParseSize(raw));
 }
+
+public class CommandOptionSweepTests2
+{
+    [Fact]
+    public void An_mcp_call_without_an_id_is_not_answered()
+    {
+        var output = new StringWriter();
+        var input = new StringReader("{\"jsonrpc\":\"2.0\",\"method\":\"tools/list\"}\n{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"ping\"}\n");
+        CliApp.Run(new[] { "--no-config", "mcp" }, input, output, TextWriter.Null);
+        var lines = output.ToString().Split('\n', StringSplitOptions.RemoveEmptyEntries);
+        var only = Assert.Single(lines);
+        Assert.Contains("\"id\":1", only);
+    }
+
+    [Fact]
+    public void A_har_replay_refuses_the_options_it_does_not_honour()
+    {
+        string har = Path.Combine(Path.GetTempPath(), $"r-{Guid.NewGuid():N}.har");
+        File.WriteAllText(har, "{\"log\":{\"version\":\"1.2\",\"creator\":{\"name\":\"t\",\"version\":\"1\"},\"entries\":[]}}");
+        try
+        {
+            var err = new StringWriter();
+            int code = CliApp.Run(new[] { "--no-config", "run", har, "--md", "r.md", "--har", "out.har" }, TextWriter.Null, err);
+            Assert.Equal(ExitCodes.Usage, code);
+            Assert.Contains("--har, --md", err.ToString());
+        }
+        finally { File.Delete(har); }
+    }
+
+    [Theory]
+    [InlineData("--connect-timeout")]
+    [InlineData("--sni")]
+    [InlineData("--pac")]
+    [InlineData("--ca-file")]
+    public void Completion_knows_transport_options_take_a_value(string option) =>
+        Assert.True(CompletionCommand.TakesValue(McpCommand.Help, option));
+}

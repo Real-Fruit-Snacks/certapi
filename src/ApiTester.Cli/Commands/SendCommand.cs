@@ -404,7 +404,7 @@ public static class SendCommand
         // --insecure bypass; --insecure (above) already trusts anything and is untouched.
         string host = TokenService.HostOf(url);
         Func<System.Security.Cryptography.X509Certificates.X509Certificate2?, bool> trustCert = c =>
-            c is not null && TrustService.IsTrusted(state, host, c, TrustContext.CurrentChain);
+            c is not null && TrustService.IsTrustedHere(state, host, c);
 
         // ---- diff baseline ----
         // Resolved after the URL is fully variable-resolved but before anything goes over the wire:
@@ -419,7 +419,7 @@ public static class SendCommand
                 : DiffOptions.DefaultIgnoredHeaders.Concat(diffIgnoreHeaders).ToList(),
             CompareHeaderValues = true
         };
-        var baseline = diffBaseline is null ? null : DiffBaseline.Resolve(diffBaseline, method, url, state);
+        var baseline = diffBaseline is null ? null : DiffBaseline.Resolve(diffBaseline, method, url, state, vars);
 
         // ---- automatic session token ----
         if (!noAutoToken)

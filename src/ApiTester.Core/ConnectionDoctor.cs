@@ -219,15 +219,22 @@ public static class ConnectionDoctor
         // ---- stage 4: TCP --------------------------------------------------------------------
         start = clock.Elapsed;
         var socket = new Socket(SocketType.Stream, ProtocolType.Tcp) { NoDelay = true };
+        // --connect-timeout bounds this stage as it bounds a send's connect: on a network that
+        // blackholes the host, the OS's own timeout is tens of seconds to minutes.
+        using var connectBudget = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        if (options.ConnectTimeout is { } connectTimeout) connectBudget.CancelAfter(connectTimeout);
         try
         {
-            await socket.ConnectAsync(target.Host, target.Port, ct);
+            await socket.ConnectAsync(target.Host, target.Port, connectBudget.Token);
             stages.Add(DoctorStage.Pass("tcp", $"connected to {target.Host}:{target.Port}", clock.Elapsed - start));
         }
         catch (Exception ex)
         {
             socket.Dispose();
-            stages.Add(DoctorStage.Fail("tcp", $"could not connect to {target.Host}:{target.Port} — {ex.Message}",
+            string why = ex is OperationCanceledException && !ct.IsCancellationRequested && options.ConnectTimeout is { } t
+                ? $"no answer within {t.TotalSeconds:0.#} s (--connect-timeout)"
+                : ex.Message;
+            stages.Add(DoctorStage.Fail("tcp", $"could not connect to {target.Host}:{target.Port} — {why}",
                 clock.Elapsed - start,
                 advice: proxyUri is not null
                     ? "The PROXY is what refused the connection, not the target host. Check the proxy address, or try --no-proxy."
@@ -292,6 +299,9 @@ public static class ConnectionDoctor
                 if (clientCertificate is not null)
                     sslOptions.ClientCertificates = new X509CertificateCollection { clientCertificate };
                 RevocationCheck.Apply(sslOptions, options);
+                // --tls-min and --sni, as a real send would use them: a doctor that negotiated
+                // TLS 1.2 under --tls-min 1.3 would report a success the send never has.
+                TlsPolicy.Apply(sslOptions, options);
 
                 try
                 {

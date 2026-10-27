@@ -142,8 +142,10 @@ public sealed class McpServer
             JsonElement? id = IdOf(root);
             bool isNotification = id is null;
 
-            // Notifications never get a response.
-            if (method.StartsWith("notifications/", StringComparison.Ordinal)) return null;
+            // Notifications never get a response — and a call sent as a notification (no id) is
+            // not run: JSON-RPC gives it no way to report its result, so running a tool for it
+            // would act with nobody to tell.
+            if (method.StartsWith("notifications/", StringComparison.Ordinal) || isNotification) return null;
 
             switch (method)
             {
