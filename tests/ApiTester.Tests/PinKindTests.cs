@@ -212,7 +212,7 @@ public class PinKindTests
                     using var ssl = new System.Net.Security.SslStream(c.GetStream());
                     await ssl.AuthenticateAsServerAsync(new System.Net.Security.SslServerAuthenticationOptions { ServerCertificateContext = context });
                     var buf = new byte[4096];
-                    await ssl.ReadAsync(buf);
+                    _ = await ssl.ReadAtLeastAsync(buf, 1, throwOnEndOfStream: false);
                     await ssl.WriteAsync("HTTP/1.1 200 OK\r\nContent-Length: 4\r\nConnection: close\r\n\r\nevil"u8.ToArray());
                 }
                 catch { /* the client refused the handshake */ }

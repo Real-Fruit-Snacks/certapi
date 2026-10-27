@@ -156,7 +156,8 @@ public static class CliApp
         // The command is the first word that is not a global option, wherever those sit: global
         // options work anywhere on the line, before the command included.
         (string[] Remaining, bool Debug, string? LogFile, string? Config, string? Profile, bool NoConfig,
-         bool Trace, string? TraceFile, IReadOnlyList<string> TraceFilters, bool TraceVerbose, bool TraceIncludeSecrets) g = default;
+         bool Trace, string? TraceFile, IReadOnlyList<string> TraceFilters, bool TraceVerbose, bool TraceIncludeSecrets) g =
+            (Array.Empty<string>(), false, null, null, null, false, false, null, Array.Empty<string>(), false, false);
         bool streaming = false;
         if (args.Length > 0 && args[0] != "__complete")
         {
@@ -174,7 +175,7 @@ public static class CliApp
 
             using var log = CliLog.Create(g.Debug, g.LogFile, stderr);
             services.Log = log;
-                var err = log.WrapStderr(stderr);
+            var err = log.WrapStderr(stderr);
             TransportFlags.Warn = err.WriteLine;
             // The streaming commands trace too: a hanging WebSocket handshake is exactly the case
             // this exists for, and a flag that worked on `send` but not `ws` would be a trap.
