@@ -124,7 +124,7 @@ public static class BenchCommand
         bool json = args.Flag("--json");
         bool benchRetries = args.Flag("--bench-retries");
         string store = args.Value("--store") ?? services.Profile?.Store ?? "CurrentUser";
-        bool insecure = args.FlagOrNull("--insecure") ?? services.Profile?.Insecure ?? false;
+        bool insecure = args.Switch("--insecure", services.Profile?.Insecure);
         string? envName = args.Value("--env");
         var varOverrides = args.Values("--var");
         string? workspace = args.Value("--workspace");

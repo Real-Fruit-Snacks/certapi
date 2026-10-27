@@ -170,8 +170,8 @@ the command line alongside `--profile`.
 A flag typed on the command line wins. A typed list (`--allow`, `--cors <origins>`, `--ca-file`)
 replaces the profile's rather than adding to it; typed Windows credentials replace the profile's as
 a pair; sites typed on the command line replace the profile's list whole, and the gateway says so. A
-switch the profile turns on (`browser`, `tls`, …) cannot be turned off from the command line — use
-another profile, or `--no-config`. `certapi config show --profile corp` lists the sites with every
+switch the profile turns on is turned off for one run with its `--no-` form (`--no-browser`,
+`--no-tls`, `--no-vhost`, `--no-cors`, …). `certapi config show --profile corp` lists the sites with every
 secret masked.
 
 ## Options

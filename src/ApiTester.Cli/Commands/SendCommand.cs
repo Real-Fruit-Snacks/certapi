@@ -192,9 +192,9 @@ public static class SendCommand
         string? bearer = args.Value("--bearer");
         string? basic = args.Value("--basic");
         string store = args.Value("--store") ?? services.Profile?.Store ?? "CurrentUser";
-        // FlagOrNull rather than Flag: a profile's `insecure: true` must be usable, and only the
-        // three-state read can tell "not typed" from "typed", which is what the precedence needs.
-        bool insecure = args.FlagOrNull("--insecure") ?? services.Profile?.Insecure ?? false;
+        // A switch rather than a plain flag: a profile's `insecure: true` applies when nothing is
+        // typed, and --no-insecure undoes it for one run.
+        bool insecure = args.Switch("--insecure", services.Profile?.Insecure);
         string? timeoutRaw = args.Value("--timeout") ?? services.Profile?.Timeout?.ToString();
         int timeout = 100;
         if (timeoutRaw is not null && (!int.TryParse(timeoutRaw, out timeout) || timeout <= 0))

@@ -257,6 +257,10 @@ public static class ServeCommand
           certapi serve --port 8819 --cert "CN=My Client" --allow "*.corp,*.internal" --proxy http://proxy.corp:8080 --ca-file corp-root.pem --browser
           # then: http://127.0.0.1:8819/_/https://wiki.corp/page   http://127.0.0.1:8819/_/https://api.internal:8443/v1/orders
 
+        A switch a --profile turns on is turned off for this run with its --no- form: --no-browser,
+        --no-vhost, --no-tls, --no-cors, --no-cookie-jar, --no-auto-token, --no-windows-auth,
+        --no-forwarded, --no-insecure.
+
         Answers loopback callers only unless --listen is given. Stop with Ctrl+C.
         Exit 0 clean shutdown (or a valid --check), 2 usage, 3 data error.
         """;
@@ -268,12 +272,15 @@ public static class ServeCommand
         var sp = services.Profile?.Serve;
         string? portRaw = args.Value("--port") ?? sp?.Port?.ToString();
         string store = args.Value("--store") ?? services.Profile?.Store ?? "CurrentUser";
-        bool insecure = args.FlagOrNull("--insecure") ?? services.Profile?.Insecure ?? false;
+        bool insecure = args.Switch("--insecure", services.Profile?.Insecure);
         bool windowsAuthTyped = args.Flag("--windows-auth", "--ntlm", "--negotiate");
+        bool windowsAuthOff = args.Negated("--windows-auth");
+        if (windowsAuthTyped && windowsAuthOff)
+            throw new CliUsageException("--windows-auth and --no-windows-auth contradict each other; give one.");
         string? winUserTyped = args.Value("--windows-user");
         string? winPassTyped = args.Value("--windows-password");
         // Windows credentials are one choice: typed ones replace the profile's as a pair.
-        bool windowsCredsTyped = windowsAuthTyped || winUserTyped is not null || winPassTyped is not null;
+        bool windowsCredsTyped = windowsAuthTyped || windowsAuthOff || winUserTyped is not null || winPassTyped is not null;
         bool windowsAuth = windowsCredsTyped ? windowsAuthTyped : sp?.WindowsAuth == true;
         string? winUser = windowsCredsTyped ? winUserTyped : sp?.WindowsUser;
         string? winPass = windowsCredsTyped ? winPassTyped : sp?.WindowsPassword;
@@ -287,7 +294,7 @@ public static class ServeCommand
         var routesFiles = args.Values("--routes");
         // --browser is a bundle over the four accommodations, each of which still works on its own;
         // the flag is read first so every one of them is consumed either way.
-        bool browserBundle = args.Flag("--browser") || sp?.Browser == true;
+        bool browserBundle = args.Switch("--browser", sp?.Browser);
         // --cors may be repeated with origins, which add up; a bare --cors among them changes nothing.
         bool corsTyped = false;
         var corsOriginList = new List<string>();
@@ -296,9 +303,11 @@ public static class ServeCommand
             corsTyped = true;
             if (oneCors is not null) corsOriginList.Add(oneCors);
         }
-        if (!corsTyped && sp?.Cors == true) { corsTyped = true; corsOriginList.AddRange(sp.CorsOrigins); }
+        bool corsOff = args.Negated("--cors");
+        if (corsTyped && corsOff) throw new CliUsageException("--cors and --no-cors contradict each other; give one.");
+        if (!corsTyped && !corsOff && sp?.Cors == true) { corsTyped = true; corsOriginList.AddRange(sp.CorsOrigins); }
         string? corsOrigins = corsOriginList.Count == 0 ? null : string.Join(",", corsOriginList);
-        bool cors = corsTyped || browserBundle;
+        bool cors = corsTyped || (browserBundle && !corsOff);
         bool rewriteCookies = args.Flag("--rewrite-cookies") || browserBundle;
         bool rewriteLocation = args.Flag("--rewrite-location") || browserBundle;
         bool allowUpgrade = args.Flag("--allow-upgrade") || browserBundle;
@@ -306,8 +315,10 @@ public static class ServeCommand
         bool stripCsp = args.Flag("--strip-csp") || browserBundle;
         bool refererFallback = args.Flag("--referer-fallback") || browserBundle;
         bool cookieJar = args.OptionalValue(out var cookieJarFile, "--cookie-jar");
-        if (!cookieJar && sp?.CookieJar == true) { cookieJar = true; cookieJarFile = sp.CookieJarFile; }
-        bool autoToken = args.Flag("--auto-token") || sp?.AutoToken == true;
+        bool cookieJarOff = args.Negated("--cookie-jar");
+        if (cookieJar && cookieJarOff) throw new CliUsageException("--cookie-jar and --no-cookie-jar contradict each other; give one.");
+        if (!cookieJar && !cookieJarOff && sp?.CookieJar == true) { cookieJar = true; cookieJarFile = sp.CookieJarFile; }
+        bool autoToken = args.Switch("--auto-token", sp?.AutoToken);
         string? corsMaxAgeRaw = args.Value("--cors-max-age");
         // Header rules are not a browser concern (they work with or without --browser), but they are
         // read alongside the browser flags here so every repeatable option is consumed before
@@ -320,12 +331,14 @@ public static class ServeCommand
         string? allowRaw = args.ListValue("--allow") ?? (sp is { Allow.Count: > 0 } ? string.Join(",", sp.Allow) : null);
         string? listen = args.Value("--listen") ?? sp?.Listen;
         bool vhost = args.OptionalValue(out var vhostSuffix, "--vhost");
-        if (!vhost && sp?.Vhost == true) { vhost = true; vhostSuffix = sp.VhostSuffix; }
-        bool forwarded = args.Flag("--forwarded") || sp?.Forwarded == true;
+        bool vhostOff = args.Negated("--vhost");
+        if (vhost && vhostOff) throw new CliUsageException("--vhost and --no-vhost contradict each other; give one.");
+        if (!vhost && !vhostOff && sp?.Vhost == true) { vhost = true; vhostSuffix = sp.VhostSuffix; }
+        bool forwarded = args.Switch("--forwarded", sp?.Forwarded);
         string? maxBodyRaw = args.Value("--max-body") ?? sp?.MaxBody;
 
         bool check = args.Flag("--check");
-        bool tls = args.Flag("--tls") || sp?.Tls == true;
+        bool tls = args.Switch("--tls", sp?.Tls);
         bool tlsTrust = args.Flag("--tls-trust");
         bool tlsUntrust = args.Flag("--tls-untrust");
         string? recordPath = args.Value("--record");

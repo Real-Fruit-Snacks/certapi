@@ -90,9 +90,11 @@ suppresses a profile's `cert`, and `--no-proxy` suppresses a profile's `proxy`, 
 colliding with it.
 
 A typed list (`--ca-file`, and on `serve` `--allow` and `--cors <origins>`) replaces the profile's
-list rather than adding to it. Switches (`insecure`, `revocationStrict`, and on `serve` `browser`,
-`vhost`, `tls`, `forwarded`, `autoToken`, `windowsAuth`) can be turned on by a profile but not back
-off from the command line; use another profile, or `--no-config`, for a run that needs them off.
+list rather than adding to it. A switch a profile turns on is turned off for one run with its
+`--no-` form: `--no-insecure`, `--no-revocation-strict`, and on `serve` `--no-browser`,
+`--no-vhost`, `--no-tls`, `--no-forwarded`, `--no-auto-token`, `--no-windows-auth`, `--no-cors` and
+`--no-cookie-jar`. Typing a switch and its `--no-` form together is a usage error. A profile's
+`noProxy` is undone by naming a proxy with `--proxy <url>`.
 
 Unknown fields inside `serve` and its sites are errors that name the field. Unknown fields at a
 profile's top level are ignored — so check a new profile with `certapi config show`.

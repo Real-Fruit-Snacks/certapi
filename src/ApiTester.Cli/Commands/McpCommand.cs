@@ -82,7 +82,7 @@ public static class McpCommand
     {
         string store = args.Value("--store") ?? services.Profile?.Store ?? "CurrentUser";
         var allowHosts = args.Values("--allow");
-        bool insecure = args.FlagOrNull("--insecure") ?? services.Profile?.Insecure ?? false;
+        bool insecure = args.Switch("--insecure", services.Profile?.Insecure);
         string? timeoutRaw = args.Value("--timeout");
         string? workspace = args.Value("--workspace");
         bool noAutoToken = args.Flag("--no-auto-token");

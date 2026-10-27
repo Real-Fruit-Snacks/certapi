@@ -28,7 +28,7 @@ public static class ConfigCommand
         proxy, bypass list, CA files, TLS floor, revocation, retries, timeouts, workspace, and
         standing headers. An explicitly typed flag wins over the profile, and a typed list replaces
         the profile's; the profile wins over the built-in default. A switch the profile turns on
-        (insecure, browser, …) cannot be turned off from the command line — use --no-config.
+        (insecure, browser, …) is turned off for one run with its --no- form: --no-insecure.
 
         A profile's "serve" section is a whole gateway: port, vhost, browser, token, allow, listen,
         cookieJar, windows auth, and "sites" — each site with its own certificate and settings, in

@@ -107,6 +107,25 @@ public sealed class Args
     /// ?? false</c> reads exactly as the precedence rule is written.</summary>
     public bool? FlagOrNull(params string[] names) => Flag(names) ? true : null;
 
+    /// <summary>An on/off switch a configuration profile may also set: <c>--name</c> turns it on,
+    /// <c>--no-name</c> turns it off, and with neither typed the profile decides (off when it says
+    /// nothing). This is what lets a command line undo a profile's <c>"insecure": true</c> without
+    /// dropping the whole profile with --no-config.</summary>
+    public bool Switch(string name, bool? profile, params string[] aliases)
+    {
+        bool on = Flag([name, .. aliases]);
+        string negative = NegativeOf(name);
+        bool off = Flag(negative);
+        if (on && off) throw new CliUsageException($"{name} and {negative} contradict each other; give one.");
+        return on || (!off && profile == true);
+    }
+
+    /// <summary>Consumes <c>--no-name</c> for a switch read some other way (one with an optional
+    /// value, say). True when it was given.</summary>
+    public bool Negated(string name) => Flag(NegativeOf(name));
+
+    internal static string NegativeOf(string name) => "--no-" + name.TrimStart('-');
+
     /// <summary>Consume one option and its value (name match is case-insensitive); null when absent.
     /// An option present without a value is a usage error.</summary>
     public string? Value(params string[] names)

@@ -52,7 +52,7 @@ public static class ConnectionsCommand
         if (parallel > count) parallel = count;
 
         var transportOverrides = TransportFlags.Parse(args, out _, environment: null, services.Profile);
-        bool insecure = args.FlagOrNull("--insecure") ?? services.Profile?.Insecure ?? false;
+        bool insecure = args.Switch("--insecure", services.Profile?.Insecure);
         string store = args.Value("--store") ?? services.Profile?.Store ?? "CurrentUser";
         var cert = CliCert.Resolve(args, store, services, stderr);
 

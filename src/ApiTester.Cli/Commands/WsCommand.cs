@@ -52,7 +52,7 @@ public static class WsCommand
         var messages = args.Values("-m", "--message");
         var headers = args.Values("-H", "--header");
         string store = args.Value("--store") ?? services.Profile?.Store ?? "CurrentUser";
-        bool insecure = args.FlagOrNull("--insecure") ?? services.Profile?.Insecure ?? false;
+        bool insecure = args.Switch("--insecure", services.Profile?.Insecure);
         bool quiet = args.Flag("-q", "--quiet");
         string? workspace = args.Value("--workspace");
         bool noAutoToken = args.Flag("--no-auto-token");

@@ -100,7 +100,8 @@ public static class CliApp
                             masked), certificate lookup, TLS details, timings, full stack traces
           --log-file <path> Append everything (diagnostics + all stderr output) to a log file
           --profile <name>  Use this profile's defaults from the configuration file, so a long
-                            command line becomes a short one (see 'certapi help config')
+                            command line becomes a short one (see 'certapi help config'). A
+                            switch it turns on is turned off with --no-<switch>: --no-insecure
           --config <path>   Read configuration from this file instead of discovering one
           --no-config       Ignore configuration entirely, whatever is on disk
           --trace           Report what the network stack itself did: DNS, TCP, TLS handshake,

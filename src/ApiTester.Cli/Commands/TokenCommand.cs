@@ -80,7 +80,7 @@ public static class TokenCommand
         var forUrls = args.Values("--for");
         string? workspace = args.Value("--workspace");
         string store = args.Value("--store") ?? services.Profile?.Store ?? "CurrentUser";
-        bool insecure = args.FlagOrNull("--insecure") ?? services.Profile?.Insecure ?? false;
+        bool insecure = args.Switch("--insecure", services.Profile?.Insecure);
         bool json = args.Flag("--json");
         bool quiet = args.Flag("-q", "--quiet");
         string? deviceUrl = args.Value("--device-url");

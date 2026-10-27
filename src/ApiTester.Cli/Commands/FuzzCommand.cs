@@ -104,7 +104,7 @@ public static class FuzzCommand
         var headers = args.Values("-H", "--header");
         string? bearer = args.Value("--bearer");
         string store = args.Value("--store") ?? services.Profile?.Store ?? "CurrentUser";
-        bool insecure = args.FlagOrNull("--insecure") ?? services.Profile?.Insecure ?? false;
+        bool insecure = args.Switch("--insecure", services.Profile?.Insecure);
         string? timeoutRaw = args.Value("--timeout");
         string? envName = args.Value("--env");
         var varOverrides = args.Values("--var");

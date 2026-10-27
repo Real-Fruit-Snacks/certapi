@@ -182,6 +182,11 @@ public class CompletionTests
             foreach (System.Text.RegularExpressions.Match m in System.Text.RegularExpressions.Regex.Matches(
                          File.ReadAllText(file), @"""(-{1,2}[A-Za-z0-9][A-Za-z0-9.\-]*)"""))
                 read.Add(m.Groups[1].Value);
+        // A switch's --no- form is derived, not written out.
+        foreach (var file in Directory.GetFiles(cli, "*.cs", SearchOption.AllDirectories))
+            foreach (System.Text.RegularExpressions.Match m in System.Text.RegularExpressions.Regex.Matches(
+                         File.ReadAllText(file), @"args\.(?:Switch|Negated)\(""--([a-z0-9.\-]+)"""))
+                read.Add("--no-" + m.Groups[1].Value);
 
         var unread = new List<string>();
         foreach (var command in CompletionCommand.CommandNames)

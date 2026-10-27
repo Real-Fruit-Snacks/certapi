@@ -156,7 +156,7 @@ public static class TransportFlags
         bool retryUnsafe = args.Flag("--retry-unsafe");
         bool noRetryTransport = args.Flag("--no-retry-transport");
         string? revocationRaw = args.Value("--revocation") ?? profile?.Revocation;
-        bool revocationStrict = args.Flag("--revocation-strict") || profile?.RevocationStrict == true;
+        bool revocationStrict = args.Switch("--revocation-strict", profile?.RevocationStrict);
         var caFileFlags = args.Values("--ca-file");
         string? tlsMinRaw = args.Value("--tls-min") ?? profile?.TlsMin;
         string? connectTimeoutRaw = args.Value("--connect-timeout") ?? profile?.ConnectTimeout?.ToString();
@@ -355,7 +355,7 @@ public static class TransportFlags
         string? proxyUser = args.Value("--proxy-user") ?? profile?.ProxyUser;
         string? noProxySpec = args.ListValue("--noproxy") ?? (noProxyFlag ? null : profile?.NoProxyList);
         string? revocationRaw = args.Value("--revocation") ?? profile?.Revocation;
-        bool revocationStrict = args.Flag("--revocation-strict") || profile?.RevocationStrict == true;
+        bool revocationStrict = args.Switch("--revocation-strict", profile?.RevocationStrict);
         var caFileFlags = args.Values("--ca-file");
         string? tlsMinRaw = args.Value("--tls-min") ?? profile?.TlsMin;
         string? connectTimeoutRaw = args.Value("--connect-timeout") ?? profile?.ConnectTimeout?.ToString();

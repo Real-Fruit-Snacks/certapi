@@ -66,7 +66,7 @@ public static class DoctorCommand
         string store = args.Value("--store") ?? services.Profile?.Store ?? "CurrentUser";
         bool json = args.Flag("--json");
         bool quiet = args.Flag("-q", "--quiet");
-        bool insecure = args.FlagOrNull("--insecure") ?? services.Profile?.Insecure ?? false;
+        bool insecure = args.Switch("--insecure", services.Profile?.Insecure);
         string? mdFile = args.Value("--md");
         string? mdVault = args.Value("--md-vault");
         bool mdOpen = args.Flag("--md-open");

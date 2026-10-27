@@ -28,6 +28,11 @@ All notable changes to this project are documented here. The format follows
   byte, download and total, read from .NET's own networking events. With `--json` the numbers are a
   `timing` object in the envelope. curl's `-w` points here.
 
+- **`--no-` forms for every switch a profile can turn on**: `--no-insecure`,
+  `--no-revocation-strict`, and on `serve` `--no-browser`, `--no-vhost`, `--no-tls`,
+  `--no-forwarded`, `--no-auto-token`, `--no-windows-auth`, `--no-cors`, `--no-cookie-jar`. A
+  profile's switch no longer needs `--no-config` to undo for one run.
+
 ### Changed
 - Single-letter options are now case-sensitive (`-x` is no longer read as `-X`). Long options are
   still case-insensitive.

@@ -141,7 +141,7 @@ public static class GrpcCommand
         var headers = args.Values("-H", "--header");
         string? maxMessagesRaw = args.Value("--max-messages");
         string store = args.Value("--store") ?? services.Profile?.Store ?? "CurrentUser";
-        bool insecure = args.FlagOrNull("--insecure") ?? services.Profile?.Insecure ?? false;
+        bool insecure = args.Switch("--insecure", services.Profile?.Insecure);
         string? proxyUrl = args.Value("--proxy");
         bool noProxy = args.Flag("--no-proxy");
         string? proxyUser = args.Value("--proxy-user");

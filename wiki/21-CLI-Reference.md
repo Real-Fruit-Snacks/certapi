@@ -82,6 +82,14 @@ Every other option takes one value, and giving it twice is a usage error rather 
 which one you meant: `--cert a --cert b` is refused, not resolved to `b`. The global options follow
 the same rule.
 
+## Turning a profile's switch off
+
+A switch a [configuration profile](27-Configuration.md) turns on is turned off for one run with its
+`--no-` form: `--no-insecure` and `--no-revocation-strict` on every command that has the switch, and
+on `serve` `--no-browser`, `--no-vhost`, `--no-tls`, `--no-forwarded`, `--no-auto-token`,
+`--no-windows-auth`, `--no-cors` and `--no-cookie-jar`. Typing a switch and its `--no-` form together
+is a usage error.
+
 ## Help, typos and curl habits
 
 `certapi <command> --help` (or `-h`) prints that command's options; `certapi help <command>` is the

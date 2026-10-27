@@ -167,7 +167,7 @@ public class DocsTests
             var found = new HashSet<string>(StringComparer.Ordinal);
             // Only the calls that actually consume an option; a literal elsewhere in the file is
             // not a flag, and treating it as one would make this test cry wolf.
-            foreach (Match call in Regex.Matches(text, @"args\.(?:Flag|FlagOrNull|Value|Values)\(([^)]*)\)"))
+            foreach (Match call in Regex.Matches(text, @"args\.(?:Flag|FlagOrNull|Value|Values|Switch|Negated|OptionalValue|ListValue)\(([^)]*)\)"))
                 foreach (Match literal in Regex.Matches(call.Groups[1].Value, @"""(-{1,2}[A-Za-z][A-Za-z0-9.\-]*)"""))
                     found.Add(literal.Groups[1].Value);
             if (found.Count > 0) result[Path.GetFileName(file)] = found;
