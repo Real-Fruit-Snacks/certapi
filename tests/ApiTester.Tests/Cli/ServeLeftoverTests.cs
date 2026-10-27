@@ -62,7 +62,7 @@ public class ServeLeftoverTests
         }
     }
 
-    [Fact]
+    [WildcardBindingFact]
     public async Task The_gateways_own_endpoints_answer_under_a_virtual_host()
     {
         var (ca, server, client) = Certs();

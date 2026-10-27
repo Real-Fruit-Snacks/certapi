@@ -114,7 +114,13 @@ internal sealed class ServeHost : IAsyncDisposable
 
             if (attempt < 4) host.DisposeAsync().AsTask().GetAwaiter().GetResult();
         }
-        return host!;   // give the caller the last attempt, undisposed; its assertions are the verdict
+        // Five starts that all exited before listening are not a port race: say so now, rather than
+        // let the test poll a port nothing listens on until its request times out.
+        if (host!._run.IsCompleted && host._run.Result != ExitCodes.Ok)
+            throw new InvalidOperationException(
+                $"serve exited with code {host._run.Result} before listening ({string.Join(" ", extraArgs)}). " +
+                "Under --vhost or --listen on Windows that is usually a missing URL reservation: run the tests elevated.");
+        return host;   // the last attempt, undisposed; the caller's assertions are the verdict
     }
 
     private bool _disposed;
@@ -126,5 +132,40 @@ internal sealed class ServeHost : IAsyncDisposable
         _cts.Cancel();
         try { await _run.WaitAsync(ServeFixture.Limit); } catch { /* the test's assertions are the verdict */ }
         _cts.Dispose();
+    }
+}
+
+/// <summary>A test that needs to bind every interface (<c>http://+:port/</c>), as <c>serve --vhost</c>
+/// does. On Windows that needs an elevated prompt or a URL reservation for the port; a developer
+/// machine usually has neither, and the test is skipped there with that reason instead of failing
+/// after a long wait. On CI (<c>CI=true</c>, set by GitHub Actions) it always runs.</summary>
+public sealed class WildcardBindingFactAttribute : FactAttribute
+{
+    public WildcardBindingFactAttribute()
+    {
+        if (string.Equals(Environment.GetEnvironmentVariable("CI"), "true", StringComparison.OrdinalIgnoreCase)) return;
+        if (!WildcardBinding.Available)
+            Skip = "Needs to bind http://+:<port>/ (serve --vhost), which this Windows session may not do: " +
+                   "run the tests from an elevated prompt to include it. CI always runs it.";
+    }
+}
+
+internal static class WildcardBinding
+{
+    /// <summary>Probed once per test run, on a fresh port.</summary>
+    public static readonly bool Available = Probe();
+
+    private static bool Probe()
+    {
+        try
+        {
+            using var listener = new HttpListener();
+            listener.Prefixes.Add($"http://+:{ServeFixture.FreePort()}/");
+            listener.Start();
+            listener.Stop();
+            return true;
+        }
+        catch (HttpListenerException) { return false; }
+        catch (PlatformNotSupportedException) { return false; }
     }
 }

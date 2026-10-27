@@ -7,6 +7,7 @@ Issues and pull requests are welcome. This is a one-maintainer project, so small
 - Build and test on Windows; the app is WPF and the test project targets `net9.0-windows`.
   `dotnet build -warnaserror` then `dotnet test --filter "Category!=StoreRoundTrip"`.
 - `StoreRoundTrip` tests touch the real certificate store and `TlsBinding` tests touch `netsh` bindings; both are opt-in and must stay that way.
+- The `serve --vhost` tests skip themselves in a prompt that cannot bind `http://+:<port>/`; run elevated to include them (CI always does). Mark a new test that binds every interface `[WildcardBindingFact]`.
 - Every behaviour lives in `ApiTester.Core` with a test. The app and `certapi` are thin layers over it.
 - Anything that writes an archive, export or log must route credentials through the existing redaction; there is a test that fails if a new builder doesn't.
 - Add a `CHANGELOG.md` entry under `[Unreleased]` in the house style: what changed, what broke, nothing else.

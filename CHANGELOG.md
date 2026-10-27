@@ -23,6 +23,9 @@ All notable changes to this project are documented here. The format follows
 - CI and release workflows use `actions/checkout@v7`, `actions/setup-dotnet@v6` and
   `actions/upload-artifact@v7`, which run on Node 24; GitHub had warned that the `@v4` versions
   were being forced off the deprecated Node 20.
+- The virtual-host tests skip, with the reason, on a Windows session that cannot bind
+  `http://+:<port>/` (not elevated, no URL reservation) instead of failing after minutes of
+  retries; CI still runs them. A gateway that exits before listening now fails its test at once.
 
 ## [1.94.0] - 2026-10-27
 

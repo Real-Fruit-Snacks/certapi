@@ -38,6 +38,10 @@ The test suite is fast and self-contained — it spins up loopback mTLS (mutual 
 Security)/HTTP (Hypertext Transfer Protocol) servers in memory (no
 network, no real certificates needed).
 
+The virtual-host tests (`serve --vhost`) bind every interface, which Windows allows only from an
+elevated prompt or with a URL reservation. In an ordinary prompt they are reported as **skipped**,
+with that reason; run `dotnet test` elevated to include them. CI always runs them.
+
 ## Run the two front ends
 
 ```powershell

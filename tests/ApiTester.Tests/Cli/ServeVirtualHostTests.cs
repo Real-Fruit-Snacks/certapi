@@ -73,7 +73,7 @@ public class ServeVirtualHostTests
     private static HttpRequestMessage To(ServeHost serve, string host, string path) =>
         new(HttpMethod.Get, $"{serve.Origin}{path}") { Headers = { Host = $"{host}:{serve.Port}" } };
 
-    [Fact]
+    [WildcardBindingFact]
     public async Task Each_virtual_host_reaches_its_own_mount_and_the_path_form_still_works()
     {
         var (ca, server, client) = Certs();
@@ -100,7 +100,7 @@ public class ServeVirtualHostTests
         }
     }
 
-    [Fact]
+    [WildcardBindingFact]
     public async Task Rewrites_speak_host_form_cookies_keep_their_path_and_a_cross_mount_redirect_lands_on_the_other_host()
     {
         var (ca, server, client) = Certs();
@@ -125,7 +125,7 @@ public class ServeVirtualHostTests
         }
     }
 
-    [Fact]
+    [WildcardBindingFact]
     public async Task An_allowed_dynamic_host_answers_under_its_own_name()
     {
         var (ca, server, client) = Certs();
