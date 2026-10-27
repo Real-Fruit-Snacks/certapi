@@ -6,6 +6,11 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.94.0] - 2026-10-27
+
+Easier to drive from a terminal — help, typos, curl habits, completion, timing, a starter
+configuration, and an update command — and the gateway's remaining gaps closed.
+
 ### Added
 - **`certapi <command> --help` and `-h`** print that command's help, the same text as
   `certapi help <command>`, for every command. They were rejected as unknown options before. Help
@@ -2825,7 +2830,8 @@ Initial release.
 - Save any response (including binary) to a file.
 - Self-contained single-file executable — no installer, no admin rights, no runtime dependency.
 
-[Unreleased]: https://github.com/Real-Fruit-Snacks/certapi/compare/v1.93.0...HEAD
+[Unreleased]: https://github.com/Real-Fruit-Snacks/certapi/compare/v1.94.0...HEAD
+[1.94.0]: https://github.com/Real-Fruit-Snacks/certapi/compare/v1.93.0...v1.94.0
 [1.93.0]: https://github.com/Real-Fruit-Snacks/certapi/compare/v1.92.3...v1.93.0
 [1.92.3]: https://github.com/Real-Fruit-Snacks/certapi/compare/v1.92.2...v1.92.3
 [1.92.2]: https://github.com/Real-Fruit-Snacks/certapi/compare/v1.92.1...v1.92.2
