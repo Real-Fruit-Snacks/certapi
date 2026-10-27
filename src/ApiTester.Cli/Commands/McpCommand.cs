@@ -213,7 +213,7 @@ public static class McpCommand
                 .GetAwaiter().GetResult();
 
             if (!noAutoToken && response.Error is null &&
-                TokenService.Capture(state, url, response.Body, response.ContentType, response.Headers) is { } captured)
+                TokenService.Capture(state, response.FinalUrl(url), response.Body, response.ContentType, response.Headers) is { } captured)
                 notes.Add($"captured bearer token for {TokenService.HostOf(url)} ({captured.Source})");
             foreach (var n in notes) notifier?.Info(n);
 

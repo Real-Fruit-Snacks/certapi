@@ -172,7 +172,7 @@ public partial class FuzzWindow : Window
             var response = await _client.SendAsync(probe, cert,
                 transport: new TransportOptions { IgnoreServerCertificateErrors = _insecure, FollowRedirects = false },
                 cancellationToken: ct);
-            if (response.Error is null) lock (captureLock) TokenService.Capture(_state, request.Url, response.Body, response.ContentType, response.Headers);
+            if (response.Error is null) lock (captureLock) TokenService.Capture(_state, response.FinalUrl(request.Url), response.Body, response.ContentType, response.Headers);
             return response;
         }
 

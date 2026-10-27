@@ -66,6 +66,10 @@ public sealed record ApiResponse
     /// response was final.</summary>
     public IReadOnlyList<RedirectHop> Redirects { get; init; } = Array.Empty<RedirectHop>();
 
+    /// <summary>Where this response came from: the last redirect's target, or the URL asked for
+    /// when nothing redirected. A token captured from it belongs to that origin.</summary>
+    public string FinalUrl(string requestedUrl) => Redirects.Count > 0 ? Redirects[^1].To : requestedUrl;
+
     /// <summary>How many attempts this result took. 1 when no retry happened, which is every response
     /// this client produced before retry existed.</summary>
     public int Attempts { get; init; } = 1;

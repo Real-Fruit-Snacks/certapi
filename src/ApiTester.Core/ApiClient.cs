@@ -184,6 +184,22 @@ public sealed class ApiClient : IDisposable
         // carries the bypass list in its own IWebProxy (see ProxyConfiguration.Apply), so a redirect
         // hop that lands on a differently-dispositioned host is still routed correctly on the wire —
         // this decision only chooses which of the two send paths below runs and what gets reported.
+        // A PAC script that cannot be fetched or run must fail the send, not quietly become DIRECT:
+        // DecideProxy below swallows the error, and so does the handler when its proxy throws. The
+        // script is evaluated once more for that.
+        if (transport.PacUrl is { } pacUrl && Uri.TryCreate(request.Url, UriKind.Absolute, out var pacTarget) &&
+            !ProxyBypass.IsBypassed(transport.NoProxy, pacTarget))
+        {
+            try { _ = PacProxyFor(pacUrl).GetProxy(pacTarget); }
+            catch (Exception ex)
+            {
+                return new ApiResponse
+                {
+                    Error = new ApiError(ApiErrorKind.ProxyFailure, ex.Message)
+                };
+            }
+        }
+
         var (disposition, bypassRule) = DecideProxy(request.Url, transport);
         bool viaProxy = disposition == ProxyDisposition.Proxied;
 
@@ -1086,6 +1102,10 @@ public sealed class ApiClient : IDisposable
         }
         catch { return (ProxyDisposition.Direct, null); }
     }
+
+    // Per send, not cached for the process: the desktop app lives for days, and a script edited
+    // in that time must be read again.
+    private static ProxyConfiguration.PacWebProxy PacProxyFor(string pac) => new(pac);
 
     /// <summary>Whether this request will actually be tunnelled through a proxy. The answer decides
     /// whether the ConnectCallback path (and with it the TLS diagnostics and --resolve) is available.</summary>

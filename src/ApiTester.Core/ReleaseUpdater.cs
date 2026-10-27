@@ -218,7 +218,24 @@ public sealed class ReleaseUpdater
         if (pa is null && pb is null) return 0;
         if (pa is null) return 1;
         if (pb is null) return -1;
-        return string.CompareOrdinal(pa, pb);
+        return ComparePrerelease(pa, pb);
+    }
+
+    /// <summary>SemVer's rule: dot-separated identifiers left to right, numeric ones as numbers
+    /// (beta.10 after beta.9), a numeric one before an alphanumeric one, and a shorter list first
+    /// when it is a prefix of the longer.</summary>
+    private static int ComparePrerelease(string a, string b)
+    {
+        var x = a.Split('.');
+        var y = b.Split('.');
+        for (int i = 0; i < Math.Min(x.Length, y.Length); i++)
+        {
+            bool xn = ulong.TryParse(x[i], System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var xv);
+            bool yn = ulong.TryParse(y[i], System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var yv);
+            int c = xn && yn ? xv.CompareTo(yv) : xn ? -1 : yn ? 1 : string.CompareOrdinal(x[i], y[i]);
+            if (c != 0) return c;
+        }
+        return x.Length.CompareTo(y.Length);
     }
 
     /// <summary>True when <paramref name="exe"/> lives in a Scoop install, which Scoop itself updates.</summary>

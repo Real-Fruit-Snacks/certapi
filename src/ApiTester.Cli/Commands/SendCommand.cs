@@ -606,7 +606,7 @@ public static class SendCommand
             stateDirty |= outcome.Count > 0;
         }
         if (!noAutoToken && response.Error is null &&
-            TokenService.Capture(state, url, response.Body, response.ContentType, response.Headers) is { } captured)
+            TokenService.Capture(state, response.FinalUrl(url), response.Body, response.ContentType, response.Headers) is { } captured)
         {
             if (!quiet)
             {

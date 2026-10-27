@@ -2441,7 +2441,7 @@ public partial class MainWindow : Window
                 StatusText.Text += $"   Remembered website & certificate for “{rootFolder.Name}”.";
             }
             if (response.Error is null)
-                TokenService.Capture(_state, request.Url, response.Body ?? Array.Empty<byte>(),
+                TokenService.Capture(_state, response.FinalUrl(request.Url), response.Body ?? Array.Empty<byte>(),
                     response.ContentType, response.Headers ?? new List<KeyValuePair<string, string>>());
             UpdateTokenChip();
             if (response.Error is null && model.Captures.Count > 0)

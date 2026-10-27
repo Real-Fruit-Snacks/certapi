@@ -213,7 +213,7 @@ public static class FuzzCommand
                 trustServerCertificate: predicates.For(TokenService.HostOf(request.Url)),
                 cancellationToken: ct);
             if (!noAutoToken && response.Error is null)
-                lock (captureLock) TokenService.Capture(state, request.Url, response.Body, response.ContentType, response.Headers);
+                lock (captureLock) TokenService.Capture(state, response.FinalUrl(request.Url), response.Body, response.ContentType, response.Headers);
             // Probes never follow redirects, so one entry per probe (no redirect hops to unfold).
             if (harEntries is not null)
                 lock (captureLock) harEntries.Add(HarWriter.FromExchange(probe, response, harIncludeSecrets));

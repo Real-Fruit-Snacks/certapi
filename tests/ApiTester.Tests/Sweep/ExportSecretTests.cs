@@ -53,3 +53,29 @@ public class ExportSecretTests
         Assert.DoesNotContain("SECRET", note);
     }
 }
+
+public class PacFailureTests
+{
+    [Fact]
+    public async Task A_pac_script_that_cannot_be_run_fails_the_send_rather_than_going_direct()
+    {
+        await using var server = new RawHttpServer(_ => RawHttpServer.Response(200, "OK", "direct"));
+        string missing = Path.Combine(Path.GetTempPath(), $"missing-{Guid.NewGuid():N}.pac");
+        var resp = await new ApiClient().SendAsync(new ApiRequest { Method = HttpMethod.Get, Url = server.BaseUrl + "/" },
+            null, new TransportOptions { PacUrl = missing });
+        Assert.Equal(ApiErrorKind.ProxyFailure, resp.Error?.Kind);
+        Assert.Empty(server.Requests);
+    }
+}
+
+public class PrereleaseOrderTests
+{
+    [Theory]
+    [InlineData("1.94.0-beta.10", "1.94.0-beta.9", 1)]
+    [InlineData("1.94.0-beta.2", "1.94.0-beta.11", -1)]
+    [InlineData("1.94.0-alpha", "1.94.0-alpha.1", -1)]
+    [InlineData("1.94.0-1", "1.94.0-alpha", -1)]
+    [InlineData("1.94.0", "1.94.0-rc.1", 1)]
+    public void Prereleases_order_as_semver_says(string a, string b, int sign) =>
+        Assert.Equal(sign, Math.Sign(ReleaseUpdater.CompareVersions(a, b)));
+}

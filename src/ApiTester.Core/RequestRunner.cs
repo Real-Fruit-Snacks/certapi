@@ -93,7 +93,7 @@ public static class RequestRunner
         var (response, url) = await ExecuteAsync(label, node.Request!, ctx, vars.Current, ct).ConfigureAwait(false);
         bool tokensCaptured = false;
         if (!ctx.NoAutoToken && response.Error is null &&
-            TokenService.Capture(ctx.State, url, response.Body, response.ContentType, response.Headers) is { } captured)
+            TokenService.Capture(ctx.State, response.FinalUrl(url), response.Body, response.ContentType, response.Headers) is { } captured)
         {
             ctx.Note?.Invoke($"{label}: captured bearer token for {TokenService.HostOf(url)} ({captured.Source})");
             tokensCaptured = true;
