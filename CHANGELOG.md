@@ -19,6 +19,11 @@ All notable changes to this project are documented here. The format follows
 - `--har` and `serve --record` store a binary request body as base64 (`"encoding": "base64"` on
   `postData`) instead of turning it into replacement characters.
 
+### Changed
+- CI and release workflows use `actions/checkout@v7`, `actions/setup-dotnet@v6` and
+  `actions/upload-artifact@v7`, which run on Node 24; GitHub had warned that the `@v4` versions
+  were being forced off the deprecated Node 20.
+
 ## [1.94.0] - 2026-10-27
 
 Easier to drive from a terminal — help, typos, curl habits, completion, timing, a starter
