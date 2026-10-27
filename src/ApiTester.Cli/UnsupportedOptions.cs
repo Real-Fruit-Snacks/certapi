@@ -49,6 +49,7 @@ public static class UnsupportedOptions
         ["--upload-file"] = "Use --data-file <path> with -X PUT.",
         ["-w"] = "Use --timing for where the time went (DNS, connect, TLS, wait, download), or --json for status, headers, size and timing as one JSON object.",
         ["--write-out"] = "Use --timing for where the time went (DNS, connect, TLS, wait, download), or --json for status, headers, size and timing as one JSON object.",
+        ["--data-binary"] = "certapi bodies are text: use -d/--data (or -d @file, --data-file <path>). A binary file goes as multipart with -F name=@file.",
         ["--data-raw"] = "Use -d/--data. As in curl, -d @file reads the body from a file; a body that really starts with @ goes in a file passed to --data-file.",
     };
 

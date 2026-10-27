@@ -75,6 +75,10 @@ public sealed class CliServices
     /// <summary>Reads an environment variable. Injectable so a developer's GITHUB_TOKEN never
     /// reaches a test's fake server.</summary>
     public Func<string, string?> Environment { get; init; } = System.Environment.GetEnvironmentVariable;
+
+    /// <summary>The global --config path, for `config init` (which does not read a configuration
+    /// and so never resolves one): the file it should write.</summary>
+    public string? ExplicitConfigPath { get; set; }
 }
 
 public static class CliApp
@@ -226,6 +230,7 @@ public static class CliApp
             // `config init` writes a configuration, so it must work when the current one is broken.
             bool writesConfig = command == "config" && rest.FirstOrDefault()?.Equals("init", StringComparison.OrdinalIgnoreCase) == true;
             if (!writesConfig) services.Profile = ResolveProfile(g.Config, g.Profile, g.NoConfig, services, log);
+            else services.ExplicitConfigPath = g.Config;
             return command switch
             {
                 "--version" or "-v" => Version(stdout),
@@ -395,12 +400,17 @@ public static class CliApp
     /// <summary>True when the words after a command ask for its help: <c>--help</c> or <c>-h</c>
     /// anywhere before a literal <c>--</c>. <c>-h</c> is matched exactly, so it never collides with
     /// <c>-H</c> (a header), which the option reader would otherwise match case-insensitively.</summary>
-    internal static bool AsksForHelp(IEnumerable<string> words)
+    internal static bool AsksForHelp(IEnumerable<string> words, string? help = null)
     {
+        string? previous = null;
         foreach (var w in words)
         {
             if (w == "--") return false;
-            if (w == "-h" || w.Equals("--help", StringComparison.OrdinalIgnoreCase)) return true;
+            // The value of an option that takes one ("-d -h" sends "-h") is not a request for help.
+            bool isValue = help is not null && previous is not null && previous.StartsWith('-') &&
+                           Commands.CompletionCommand.TakesValue(help, previous);
+            if (!isValue && (w == "-h" || w.Equals("--help", StringComparison.OrdinalIgnoreCase))) return true;
+            previous = isValue ? null : w;
         }
         return false;
     }
@@ -408,7 +418,7 @@ public static class CliApp
     /// <summary>Prints the command's help and returns true when it was asked for.</summary>
     private static bool PrintedHelp(string command, IEnumerable<string> words, TextWriter stdout)
     {
-        if (!AsksForHelp(words) || HelpFor(command) is not { } help) return false;
+        if (HelpFor(command) is not { } help || !AsksForHelp(words, help)) return false;
         stdout.WriteLine(help);
         return true;
     }

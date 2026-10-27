@@ -81,8 +81,7 @@ Browsers resolve every `*.localhost` name to loopback without a hosts-file entry
 bare suffix (`gw.localhost`), and a site mounted at a path with no name is named after its path
 (`/auth/sso` → `auth-sso.gw.localhost`). `--vhost` binds every interface, which on Windows needs a one-time URL
 reservation (the `netsh` command is printed), but answers only loopback callers unless `--listen` is
-also given. `127.0.0.1` keeps working in path form beside it. With `--tls` the browser warns once per
-virtual host, because the gateway certificate names `127.0.0.1` only.
+also given. `127.0.0.1` keeps working in path form beside it. With `--tls` the gateway certificate also names the suffix, every site under it, and each `--allow` host on its default https port; an allowed host on another port or over http (or under `--allow *`) warns once in the browser.
 
 ### Sites with their own certificate and settings: `--routes`
 
@@ -172,7 +171,7 @@ A flag typed on the command line wins. A typed list (`--allow`, `--cors <origins
 replaces the profile's rather than adding to it; typed Windows credentials replace the profile's as
 a pair; sites typed on the command line replace the profile's list whole, and the gateway says so. A
 switch the profile turns on is turned off for one run with its `--no-` form (`--no-browser`,
-`--no-tls`, `--no-vhost`, `--no-cors`, …). `certapi config show --profile corp` lists the sites with every
+`--no-tls`, `--no-vhost`, `--no-cors`, `--no-rewrite-body`, …). `certapi config show --profile corp` lists the sites with every
 secret masked.
 
 ## Options
@@ -205,7 +204,7 @@ secret masked.
 | `--forwarded` | Add `X-Forwarded-For/Proto/Host` and `Via: 1.1 certapi` to forwarded requests |
 | `--workspace <file>` | Resolve a saved-website `<upstream>` from a workspace file |
 | `-q, --quiet` | No startup table or per-request log |
-| `--tls` | Serve the gateway itself over HTTPS on 127.0.0.1 with a generated gateway certificate, so `Secure` and `__Host-`/`__Secure-` cookies work. Binding the port needs an elevated prompt the first time; the exact `netsh` command is printed if it isn't available. With `--vhost` the certificate also names the suffix and `*.<suffix>`, so every virtual host is covered (the first such run regenerates it and moves the binding; add `--tls-trust` once) |
+| `--tls` | Serve the gateway itself over HTTPS on 127.0.0.1 with a generated gateway certificate, so `Secure` and `__Host-`/`__Secure-` cookies work. Binding the port needs an elevated prompt the first time; the exact `netsh` command is printed if it isn't available. With `--vhost` the certificate also names the suffix, every site under it and each `--allow` host on its default https port (the first such run regenerates it and moves the binding; add `--tls-trust` once) |
 | `--tls-trust` | Also install that certificate into `CurrentUser\Root` so the browser accepts it silently — explicit, logged, and reversible. Only with `--tls` |
 | `--tls-untrust` | Remove a previously trusted gateway certificate and exit; a standalone action |
 | `--browser` | The bundle: the seven browser accommodations below at once |

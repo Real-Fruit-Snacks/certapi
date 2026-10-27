@@ -20,11 +20,15 @@ public static class BodyRewriter
         @"(?:(?<scheme>https?:)|(?<=[""'(=]))(?<slashes>//|\\/\\/)(?<authority>[A-Za-z0-9](?:[A-Za-z0-9.\-]*[A-Za-z0-9])?(?::\d{1,5})?)",
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
-    /// <summary>Whether a response with this Content-Type is text this rewriter reads.</summary>
-    public static bool Applies(string? contentType)
+    /// <summary>Whether a response with this Content-Type is text this rewriter reads. JSON and XML
+    /// only with a Content-Length: without one they may be a stream (a watch, a feed) that must
+    /// reach the client as it arrives, and buffering it would hold every event until it ends.</summary>
+    public static bool Applies(string? contentType, bool hasLength = true)
     {
         if (string.IsNullOrWhiteSpace(contentType)) return false;
         string media = contentType.Split(';')[0].Trim().ToLowerInvariant();
+        bool data = media.Contains("json", StringComparison.Ordinal) || media.EndsWith("xml", StringComparison.Ordinal);
+        if (data && media != "image/svg+xml" && media != "application/xhtml+xml" && !hasLength) return false;
         return media is "text/html" or "application/xhtml+xml" or "text/css" or "text/javascript"
                    or "application/javascript" or "application/x-javascript" or "application/ecmascript"
                    or "application/json" or "application/manifest+json" or "text/xml" or "application/xml"
@@ -91,8 +95,15 @@ public static class BodyRewriter
                 _ => Stream.Null
             };
             if (decoder == Stream.Null) return null;
+            // Capped as the compressed body is: a small body that inflates to gigabytes is not a page.
             using var output = new MemoryStream();
-            decoder.CopyTo(output);
+            var chunk = new byte[81920];
+            int read;
+            while ((read = decoder.Read(chunk, 0, chunk.Length)) > 0)
+            {
+                output.Write(chunk, 0, read);
+                if (output.Length > MaxBytes) return null;
+            }
             return output.ToArray();
         }
         catch (InvalidDataException) { return null; }

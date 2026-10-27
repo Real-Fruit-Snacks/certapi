@@ -102,6 +102,26 @@ public sealed class VirtualHosts
         return $"{Scheme}://{EncodeAuthority(target)}.{Suffix}:{Port}{target.PathAndQuery}";
     }
 
+    /// <summary>The names the gateway's TLS certificate needs for this suffix: the suffix, every
+    /// single-label host under it (named sites), and each allowed dynamic host on its default https
+    /// port — <c>wiki.corp.gw.localhost</c> for an exact entry, <c>*.corp.gw.localhost</c> for
+    /// <c>*.corp</c>. Hosts reached on another port or over http, and <c>--allow *</c>, are not
+    /// coverable by a fixed list; <paramref name="uncovered"/> says so.</summary>
+    public static IReadOnlyList<string> CertificateNames(string suffix, IEnumerable<string>? allowEntries, out bool uncovered)
+    {
+        var names = new List<string> { suffix, "*." + suffix };
+        uncovered = false;
+        foreach (var raw in allowEntries ?? Array.Empty<string>())
+        {
+            string e = raw.Trim().ToLowerInvariant();
+            if (e == "*") { uncovered = true; continue; }
+            if (e.StartsWith("*.", StringComparison.Ordinal)) names.Add("*." + e[2..] + "." + suffix);
+            else if (e.StartsWith('.')) names.Add("*" + e + "." + suffix);
+            else names.Add(e + "." + suffix);
+        }
+        return names.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+    }
+
     /// <summary>A URL authority as one DNS label: <c>api.corp</c>, <c>api.corp--8443</c>,
     /// <c>http--pub.corp</c>, <c>http--pub.corp--8080</c>. Dots are allowed inside a label here
     /// because every level under *.localhost is still loopback.</summary>

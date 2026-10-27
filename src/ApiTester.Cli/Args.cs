@@ -56,7 +56,6 @@ public sealed class Args
             ["--timeout"] = ["--max-time"],
             ["--ca-file"] = ["--cacert"],
             ["--key-file"] = ["--key"],
-            ["--data"] = ["--data-binary"],
         };
 
     /// <summary>Single-letter options are case-sensitive (<c>-H</c> is a header, <c>-h</c> is help;
@@ -209,7 +208,7 @@ public sealed class Args
     /// its alternative, or a near miss of an option this command does have.</summary>
     private string UnknownOptionMessage(string t)
     {
-        if (_seen.Contains(t))
+        if (_seen.Any(s => NameMatches(t, s)))
             return $"Option '{t}' was given more than once, and this command takes it once.";
         if (UnsupportedOptions.Explain(t) is { } why)
             return $"Option '{t}' does not exist. {why}";

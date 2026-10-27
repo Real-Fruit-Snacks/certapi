@@ -110,6 +110,20 @@ public static class CompletionCommand
     /// <c>certapi</c>, the last one possibly partial or empty).</summary>
     internal static IEnumerable<string> Complete(IReadOnlyList<string> words, CliServices services)
     {
+        // Global options may come before the command (certapi --profile corp send …): set them
+        // aside, with their values, so the command is still the first word.
+        var rest = words.ToList();
+        while (rest.Count > 1 && rest[0].StartsWith('-'))
+        {
+            string option = rest[0];
+            rest.RemoveAt(0);
+            if (!GlobalValueOptions.Contains(option, StringComparer.OrdinalIgnoreCase)) continue;
+            // The word being typed is this global option's value.
+            if (rest.Count == 1)
+                return option.Equals("--profile", StringComparison.OrdinalIgnoreCase) ? Filter(ProfileNames(services), rest[0]) : [];
+            rest.RemoveAt(0);
+        }
+        words = rest;
         string current = words.Count == 0 ? "" : words[^1];
         var prior = words.Take(Math.Max(0, words.Count - 1)).ToList();
 

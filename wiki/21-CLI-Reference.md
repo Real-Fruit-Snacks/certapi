@@ -87,7 +87,7 @@ the same rule.
 
 A switch a [configuration profile](27-Configuration.md) turns on is turned off for one run with its
 `--no-` form: `--no-insecure` and `--no-revocation-strict` on every command that has the switch, and
-on `serve` `--no-browser`, `--no-vhost`, `--no-tls`, `--no-forwarded`, `--no-auto-token`,
+on `serve` `--no-browser`, `--no-vhost`, `--no-tls`, `--no-rewrite-body`, `--no-forwarded`, `--no-auto-token`,
 `--no-windows-auth`, `--no-cors` and `--no-cookie-jar`. Typing a switch and its `--no-` form together
 is a usage error.
 
@@ -117,13 +117,12 @@ curl options with the same meaning are accepted wherever the option they stand f
 | `--max-time` | `--timeout` |
 | `--cacert` | `--ca-file` |
 | `--key` | `--key-file` |
-| `--data-binary` | `--data` |
-| `-d @file` | reads the body from the file |
+| `-d @file` | on `send`, reads the body (as text) from the file |
 
 The ones whose meaning differs are refused with what to use instead: `-L` and `--compressed` (both
 already the default), `-b`/`-c`/`--cookie` (`--cookie-jar`), `-G`/`--get`/`--data-urlencode`
 (`--query`), `-v`/`--verbose` (`--include`, `--debug`, `--trace`), `-O` (`-o <file>`), `-e`/`--referer`
-(`-H "Referer: …"`), `-w`/`--write-out` (`--timing` or `--json`), `-E` (`--cert-file`), `--tlsv1.2`/`--tlsv1.3` (`--tls-min`), `-T` (`--data-file`
+(`-H "Referer: …"`), `-w`/`--write-out` (`--timing` or `--json`), `--data-binary` (`-d`, or `-F name=@file` for a binary file), `-E` (`--cert-file`), `--tlsv1.2`/`--tlsv1.3` (`--tls-min`), `-T` (`--data-file`
 with `-X PUT`) and `--data-raw` (`-d`).
 
 ## Exit codes
@@ -237,7 +236,7 @@ either way. `--insecure` overrides both, and says so when it does.
 | `--ca-file <pem>` | none | Trust the root certificate(s) in this file for this run, on top of the Windows store. Repeatable; a PEM bundle with several certificates is fine; DER is accepted. For the network whose TLS-intercepting proxy re-signs every site with a private CA that is handed out as a file: narrower than `--insecure`, which trusts anything. A chain ending in one of these roots is accepted the way a store-trusted chain is; a name mismatch and an expired certificate are still refused, and a revoked one is when `--revocation` is on. Profile key `caFile` (a path or a list, relative to the config file) |
 | `--tls-min <1.2\|1.3>` | OS default | Refuse to negotiate below this TLS version. `1.3` proves a server — or a middlebox in front of it — really speaks it. Profile key `tlsMin` |
 | `--connect-timeout <s>` | none | A separate budget for the TCP connect and the proxy tunnel. On a network that blackholes unknown hosts this turns a 100-second hang into "unreachable" in seconds. Profile key `connectTimeout` |
-| `--sni <name>` | the URL's host | Send a different server name in the TLS handshake. Direct connections only — a proxy tunnel's TLS is negotiated by the HTTP stack from the URL, and the combination is refused. The certificate is still checked against the URL's host, so pair it with a pin or `--insecure` when the two differ |
+| `--sni <name>` | the URL's host | Send a different server name in the TLS handshake. Direct connections only — a proxy tunnel's TLS is negotiated by the HTTP stack from the URL, so `--sni` with any proxy that applies (explicit, PAC, system or environment) is refused. The server's certificate is then checked against the name sent, so a certificate that names only the URL's host needs a pin or `--insecure` |
 | `--pac <url\|file>` | the machine's | Decide the proxy for each URL with this PAC script, through WinHTTP's own engine, when the machine's configured PAC is not the one the job needs. Windows only |
 | `--no-env-proxy` | off | Ignore `HTTP_PROXY`, `HTTPS_PROXY` and `NO_PROXY` from the environment and use the machine's proxy settings — for the shell whose stale variables point at a proxy that is no longer there |
 | `--offline` | off | Touch nothing on the network but the request itself: no revocation fetch, no AIA chase, no captive-portal probe, no PAC download. For the air-gapped network, and for proving a request needs nothing it should not |
@@ -946,8 +945,8 @@ Accepts the [certificate](#certificate-options) and [transport](#transport-optio
 | `--timeout <seconds>` | `100` | How long to wait for the upstream's **response headers**. A body that streams for longer — events, long polls, downloads — is not cut off; a slow upstream is `504` |
 | `--max-body <bytes>` | none | Refuse a request body larger than this with `413`. `k`/`m`/`g` suffixes |
 | `--forwarded` | off | Add `X-Forwarded-For`, `X-Forwarded-Proto`, `X-Forwarded-Host` and `Via: 1.1 certapi` to forwarded requests, for an upstream that builds links from them |
-| `--routes <file>` | none | Sites from a JSON file, repeatable: `[{ "name": "hr", "upstream": "https://hr.corp:8443", "cert": "CN=svc-hr", "windowsAuth": true }, …]` or `{ "routes": […] }` (or `"sites"`). Each site can set `cert` (or `certFile`/`certPassword`/`keyFile`), `insecure`, `caFile`, `revocation`, `windowsAuth`/`windowsUser`/`windowsPassword` and `headers`, each overriding the gateway's flag for that site only; `prefix` mounts at a path instead of `/name`. Paths are relative to the file; values may be `${env:NAME}`. A missing certificate or file is a startup error naming the site. Full field list in [Local Gateway](19-Local-Gateway.md#sites-with-their-own-certificate-and-settings---routes) |
-| `--vhost [<suffix>]` | off | **One origin per site** instead of one path each. Site `api` answers at `http://api.gw.localhost:<port>/`, the site at `/` at `http://gw.localhost:<port>/`, and an allowed dynamic host at `http://<host>.gw.localhost:<port>/` (`hr.corp--8443` for a port, `http--pub.corp` for plain http). Paths, cookies and origins reach the browser as the upstream wrote them; a cross-site redirect lands on the other host. Browsers resolve `*.localhost` to loopback by themselves; another suffix needs a hosts-file entry. Binds every interface (Windows needs a one-time URL reservation; the `netsh` command is printed) but answers **only loopback callers** unless `--listen` is also given. `127.0.0.1` keeps working in path form beside it. With `--tls` the gateway certificate also names the suffix and `*.<suffix>`, so every virtual host is covered |
+| `--routes <file>` | none | Sites from a JSON file, repeatable: `[{ "name": "hr", "upstream": "https://hr.corp:8443", "cert": "CN=svc-hr", "windowsAuth": true }, …]` or `{ "routes": […] }` (or `"sites"`). Each site can set `cert` (or `certFile`/`certPassword`/`keyFile`), `insecure`, `caFile`, `revocation`, `windowsAuth`/`windowsUser`/`windowsPassword`, `headers` and `sni`, each overriding the gateway's flag for that site only; `prefix` mounts at a path instead of `/name`. Paths are relative to the file; values may be `${env:NAME}`. A missing certificate or file is a startup error naming the site. Full field list in [Local Gateway](19-Local-Gateway.md#sites-with-their-own-certificate-and-settings---routes) |
+| `--vhost [<suffix>]` | off | **One origin per site** instead of one path each. Site `api` answers at `http://api.gw.localhost:<port>/`, the site at `/` at `http://gw.localhost:<port>/`, and an allowed dynamic host at `http://<host>.gw.localhost:<port>/` (`hr.corp--8443` for a port, `http--pub.corp` for plain http). Paths, cookies and origins reach the browser as the upstream wrote them; a cross-site redirect lands on the other host. Browsers resolve `*.localhost` to loopback by themselves; another suffix needs a hosts-file entry. Binds every interface (Windows needs a one-time URL reservation; the `netsh` command is printed) but answers **only loopback callers** unless `--listen` is also given. `127.0.0.1` keeps working in path form beside it. With `--tls` the gateway certificate also names the suffix, every site under it, and each `--allow` host on its default https port; an allowed host on another port or over http (or under `--allow *`) warns once in the browser |
 | `--listen <address>` | loopback | Also answer on this address — a LAN address, `0.0.0.0` or `+` for every interface — so a VM, a container or a teammate can use the gateway. **Requires `--token`**, because anything that reaches the port then reaches your client certificate. Not with `--tls`. On Windows a non-loopback prefix needs a one-time URL reservation; the exact `netsh http add urlacl` command is printed when it is missing |
 | `--workspace <file>` | live state | Resolve a saved-website upstream from a workspace file |
 | `-q, --quiet` | off | No startup table and no per-request log |

@@ -354,7 +354,9 @@ public static class SendCommand
         url = R(url);
         if (querySpecs.Count > 0) url = RequestUrl.AppendQuery(url, ParseQuery(querySpecs).Select(kv => new KeyValuePair<string, string>(R(kv.Key), R(kv.Value))));
         var headerPairs = new List<KeyValuePair<string, string>>();
-        if (userAgent is not null) headerPairs.Add(new("User-Agent", R(userAgent)));
+        // As in curl, a User-Agent typed with -H wins over -A.
+        if (userAgent is not null && !headers.Any(h => h.TrimStart().StartsWith("User-Agent:", StringComparison.OrdinalIgnoreCase)))
+            headerPairs.Add(new("User-Agent", R(userAgent)));
         foreach (var raw in headers)
         {
             int colon = raw.IndexOf(':');

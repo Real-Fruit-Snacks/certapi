@@ -147,7 +147,7 @@ public static class GrpcCommand
         string? proxyUser = args.Value("--proxy-user");
         string? noProxySpec = args.ListValue("--noproxy");
         string? revocationRaw = args.Value("--revocation");
-        bool revocationStrict = args.Flag("--revocation-strict");
+        bool revocationStrict = args.Switch("--revocation-strict", services.Profile?.RevocationStrict);
         string? timeoutRaw = args.Value("--timeout");
         string? workspace = args.Value("--workspace");
         bool noAutoToken = args.Flag("--no-auto-token");

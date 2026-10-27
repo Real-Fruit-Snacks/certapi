@@ -146,11 +146,19 @@ public static class UpdateCommand
             downloads.Add((target, file.Body));
         }
 
+        // The app first: it is not running, so if anything is going to refuse, it is the one more
+        // likely to — and then the command line is still the old, consistent one.
+        downloads.Reverse();
+        var done = new List<string>();
         foreach (var (target, bytes) in downloads)
         {
             try { Replace(target, bytes); }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-            { throw new CliFailureException($"could not replace {target}: {ex.Message}"); }
+            {
+                throw new CliFailureException($"could not replace {target}: {ex.Message}" +
+                    (done.Count == 0 ? " Nothing was changed." : $" Already replaced: {string.Join(", ", done)} (now {release.Version}); run update again to finish."));
+            }
+            done.Add(target);
             stdout.WriteLine($"replaced {target}");
         }
         stdout.WriteLine($"certapi {current} -> {release.Version}. Release notes: {release.Page}");
@@ -201,24 +209,31 @@ public static class UpdateCommand
         string fresh = target + ".new";
         string old = target + ".old";
         File.WriteAllBytes(fresh, bytes);
-        try
+        if (File.Exists(old)) File.Delete(old);
+        bool hadOld = File.Exists(target);
+        if (hadOld) File.Move(target, old);
+        try { File.Move(fresh, target); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            if (File.Exists(old)) File.Delete(old);
-            bool hadOld = File.Exists(target);
-            if (hadOld) File.Move(target, old);
-            try { File.Move(fresh, target); }
-            catch
+            if (!hadOld) { TryDelete(fresh); throw; }
+            try { File.Move(old, target); }
+            catch (Exception back) when (back is IOException or UnauthorizedAccessException)
             {
-                if (hadOld) File.Move(old, target);
-                throw;
+                // Neither move worked: keep both copies and say where they are, rather than
+                // deleting the only good one.
+                throw new IOException($"{ex.Message} Putting the old file back failed too ({back.Message}). " +
+                                      $"The new version is {fresh} and the previous one {old}; rename either to {Path.GetFileName(target)}.", ex);
             }
-        }
-        finally
-        {
-            try { if (File.Exists(fresh)) File.Delete(fresh); } catch (IOException) { }
+            TryDelete(fresh);
+            throw;
         }
         // A program that is running cannot be deleted; the next run removes it (CleanUpPrevious).
         try { File.Delete(old); } catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+    }
+
+    private static void TryDelete(string path)
+    {
+        try { if (File.Exists(path)) File.Delete(path); } catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
     }
 
     /// <summary>Removes what an earlier update left behind beside <paramref name="exe"/>. Called on

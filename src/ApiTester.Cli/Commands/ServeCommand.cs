@@ -36,7 +36,8 @@ public static class ServeCommand
                                        "insecure": true|false,     "caFile": "hr-root.pem" (or list),
                                        "revocation": "online",     "windowsAuth": true|false,
                                        "windowsUser": "CORP\\svc", "windowsPassword": "${env:HR_PW}",
-                                       "headers": { "X-Team": "people" } }, …]
+                                       "headers": { "X-Team": "people" },
+                                       "sni": "hr.internal" }, …]
                                   "prefix": "/path" mounts at a path instead of /<name>. Paths are
                                   relative to the file; ${env:NAME} reads the environment. A site
                                   with no "cert" presents the gateway's --cert
@@ -228,9 +229,10 @@ public static class ServeCommand
 
           These apply to the gateway's upstream connections: the proxy options, --resolve,
           --ca-file, --revocation / --revocation-strict, --tls-min, --connect-timeout, --offline
-          and -4 / -6. The redirect, decompression, HTTP-version, retry and --sni flags are
-          accepted but do not apply: the gateway hands back the 3xx and the exact bytes the
-          upstream sent, does not retry on a caller's behalf, and names each upstream by its URL.
+          -4 / -6 and --sni (every site's handshake; a site's own "sni" wins). The redirect,
+          decompression, HTTP-version and retry flags are accepted but do not apply: the gateway
+          hands back the 3xx and the exact bytes the upstream sent, and does not retry on a
+          caller's behalf.
 
         Global: --debug (verbose diagnostics) and --log-file <path> work here too.
 
@@ -265,7 +267,7 @@ public static class ServeCommand
 
         A switch a --profile turns on is turned off for this run with its --no- form: --no-browser,
         --no-vhost, --no-tls, --no-cors, --no-cookie-jar, --no-auto-token, --no-windows-auth,
-        --no-forwarded, --no-insecure.
+        --no-forwarded, --no-rewrite-body, --no-insecure.
 
         Answers loopback callers only unless --listen is given. Stop with Ctrl+C.
         Exit 0 clean shutdown (or a valid --check), 2 usage, 3 data error.
@@ -482,8 +484,11 @@ public static class ServeCommand
         // than a setting silently dropped on the floor.
         var transport = transportOverrides.ApplyTo(new TransportOptions());
         foreach (var route in routes.All)
-            if (ApiClient.ValidateTransport(transport, route.Upstream.ToString()) is { } transportProblem)
-                throw new CliUsageException(transportProblem);
+        {
+            var siteTransport = route.Settings?.Sni is { } siteSni ? transport with { Sni = siteSni } : transport;
+            if (ApiClient.ValidateTransport(siteTransport, route.Upstream.ToString()) is { } transportProblem)
+                throw new CliUsageException(route.Settings?.Sni is null ? transportProblem : $"site {route.Name ?? route.PathPrefix}: {transportProblem.Replace("--sni", "\"sni\"")}");
+        }
 
         var logLock = new object();
         void Log(string line) { if (!quiet) lock (logLock) stderr.WriteLine(line); }
@@ -585,7 +590,13 @@ public static class ServeCommand
         {
             summary.Add($"  127.0.0.1:{port} answers in path form too (/<site>/…).");
             if (listen is null) summary.Add("  virtual hosts answer loopback callers only; add --listen (and --token) to reach them from elsewhere.");
-            if (tls) summary.Add($"  the gateway certificate names {vhosts.Suffix} and *.{vhosts.Suffix}, so every virtual host is covered.");
+            if (tls)
+            {
+                VirtualHosts.CertificateNames(vhosts.Suffix, allow?.Entries, out bool uncovered);
+                summary.Add($"  the gateway certificate names {vhosts.Suffix}, every site under it" +
+                            (allow is null ? "." : " and each allowed host on its default https port.") +
+                            (uncovered || allow is not null ? " An allowed host on another port or over http (or under --allow *) warns once in the browser." : ""));
+            }
         }
         if (allow is { AllowsAnyHost: true })
             summary.Add("  warning: --allow * makes this an open relay carrying your client certificate to any host a local caller names.");
@@ -616,11 +627,11 @@ public static class ServeCommand
             // Under --vhost the certificate also names the suffix and *.suffix, so every site's
             // host (api.gw.localhost) and every dynamic one is covered and the browser accepts it.
             gatewayCert = GatewayCertificate.LoadOrCreate(null,
-                vhosts is null ? null : new[] { vhosts.Suffix, "*." + vhosts.Suffix }, out var replacedThumb);
+                vhosts is null ? null : VirtualHosts.CertificateNames(vhosts.Suffix, allow?.Entries, out _), out var replacedThumb);
             gatewayThumb = LoopbackTlsBinding.NormalizeThumbprint(gatewayCert.Thumbprint!);
             if (replacedThumb is not null)
             {
-                Log($"the gateway certificate now also names {vhosts!.Suffix} and *.{vhosts.Suffix}; it was regenerated ({gatewayThumb}).");
+                Log($"the gateway certificate now also names the virtual hosts under {vhosts!.Suffix}; it was regenerated ({gatewayThumb}).");
                 var oldBinding = LoopbackTlsBinding.Describe(port);
                 if (oldBinding is not null && oldBinding.Thumbprint.Equals(LoopbackTlsBinding.NormalizeThumbprint(replacedThumb), StringComparison.OrdinalIgnoreCase))
                 {
@@ -1301,8 +1312,9 @@ public static class ServeCommand
                 byte[]? rewrittenBody = null;
                 if (browser.RewriteBody && responseRoute is not null &&
                     !method.Equals("HEAD", StringComparison.OrdinalIgnoreCase) &&
-                    gwResp.StatusCode is not (204 or 304) &&
-                    BodyRewriter.Applies(HeaderValue(responseHeaders, "Content-Type")))
+                    gwResp.StatusCode is not (204 or 206 or 304) &&
+                    HeaderValue(responseHeaders, "Content-Range") is null &&
+                    BodyRewriter.Applies(HeaderValue(responseHeaders, "Content-Type"), HeaderValue(responseHeaders, "Content-Length") is not null))
                 {
                     var (buffered, complete) = await ReadUpToAsync(gwResp.Body, BodyRewriter.MaxBytes, ct);
                     bodyPrefix = buffered;

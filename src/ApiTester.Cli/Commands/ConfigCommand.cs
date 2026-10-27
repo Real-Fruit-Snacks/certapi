@@ -129,7 +129,10 @@ public static class ConfigCommand
     private static int Init(bool local, string? path, string? name, string? cert, string? proxy, bool force,
                             TextWriter stdout, CliServices services)
     {
-        if (local && path is not null) throw new CliUsageException("--local and --path both say where to write; give one.");
+        if (path is not null && services.ExplicitConfigPath is not null)
+            throw new CliUsageException("--path and --config both say where to write; give one.");
+        path ??= services.ExplicitConfigPath;
+        if (local && path is not null) throw new CliUsageException("--local and --path (or --config) both say where to write; give one.");
         string target = path is not null ? Path.GetFullPath(path)
             : local ? Path.Combine(services.WorkingDirectory, ConfigLoader.FileName)
             : services.UserConfigPath ?? throw new CliUsageException("There is no per-user configuration path here; use --local or --path <file>.");

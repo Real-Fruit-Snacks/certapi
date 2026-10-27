@@ -13,11 +13,13 @@ All notable changes to this project are documented here. The format follows
 - **"Did you mean …?"** A mistyped option names the closest option the command has
   (`--insecur` → `--insecure`).
 - **curl habits work.** `-k`, `-i`, `-s`/`--silent`, `-u`/`--user`, `-x`, `-U`, `-f`, `--max-time`,
-  `--cacert`, `--key` and `--data-binary` are aliases wherever the option they stand for is read.
-  curl options whose meaning differs (`-L`, `--compressed`, `-b`, `-c`, `-G`, `--data-urlencode`,
-  `-v`, `-O`, `-e`, `-E`, `--tlsv1.2`, `-T`, `--data-raw`) are refused with what to use instead.
-- **`send -I/--head`**, **`send -A/--user-agent`**, **`send --query name=value`** (encoded, repeatable),
-  and **`-d @file`** reads the body from a file, as in curl.
+  `--cacert` and `--key` are aliases wherever the option they stand for is read, and `send` gains
+  `-I`/`--head` and `-A`/`--user-agent`. curl options whose meaning differs (`-L`/`--location`,
+  `--compressed`, `-b`/`--cookie`, `-c`, `-G`/`--get`, `--data-urlencode`, `--data-binary`,
+  `--data-raw`, `-v`/`--verbose`, `-O`/`--remote-name`, `-e`/`--referer`, `-E`, `--tlsv1.2`,
+  `--tlsv1.3`, `-T`/`--upload-file`, `-w`/`--write-out`) are refused with what to use instead.
+- **`send --query name=value`** (encoded, repeatable), and on `send` **`-d @file`** reads the body
+  from a file, as in curl. A `User-Agent` typed with `-H` wins over `-A`.
 
 - **Tab completion for PowerShell**: `certapi completion powershell | Out-String | Invoke-Expression`.
   Completes commands, subcommands, every option of the command being typed, HTTP methods,
@@ -30,7 +32,8 @@ All notable changes to this project are documented here. The format follows
 
 - **`--no-` forms for every switch a profile can turn on**: `--no-insecure`,
   `--no-revocation-strict`, and on `serve` `--no-browser`, `--no-vhost`, `--no-tls`,
-  `--no-forwarded`, `--no-auto-token`, `--no-windows-auth`, `--no-cors`, `--no-cookie-jar`. A
+  `--no-forwarded`, `--no-auto-token`, `--no-windows-auth`, `--no-cors`, `--no-cookie-jar`,
+  `--no-rewrite-body`. A
   profile's switch no longer needs `--no-config` to undo for one run.
 
 - **`certapi config init`** writes a starter configuration: one default profile, every other field
@@ -51,8 +54,8 @@ All notable changes to this project are documented here. The format follows
 - **`serve --sni` and a site's own `"sni"`** set the server name in the gateway's handshake with
   that upstream (direct connections; through a proxy `--sni` is now refused everywhere, rather than
   silently not sent).
-- **`serve --vhost --tls`**: the gateway certificate also names the suffix and `*.<suffix>`, so
-  the browser accepts every virtual host. The first such run regenerates the certificate and moves
+- **`serve --vhost --tls`**: the gateway certificate also names the suffix, every site under it,
+  and each `--allow` host on its default https port, so the browser accepts them. The first such run regenerates the certificate and moves
   the binding.
 - **`/_certapi/health` and `/_certapi/routes` answer on every virtual host**, not only in path form.
 

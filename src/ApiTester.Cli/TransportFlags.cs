@@ -66,9 +66,9 @@ public static class TransportFlags
                                   proxy resolves the target itself). For the dual-stack host whose
                                   IPv6 route is advertised but blackholed
           --sni <name>            Send this server name in the TLS handshake instead of the URL's
-                                  host. Direct connections only (not through a proxy). The
-                                  certificate is still checked against the URL's host, so pair it
-                                  with a pin or --insecure when the names differ
+                                  host. Direct connections only (refused through any proxy). The
+                                  certificate is checked against the name sent, so one naming only
+                                  the URL's host needs a pin or --insecure
 
           A proxy URL may carry credentials — http://user:pass@proxy:8080 — which are used exactly
           as --proxy-user would be and never written to a log. Set HTTPS_PROXY / NO_PROXY in the
