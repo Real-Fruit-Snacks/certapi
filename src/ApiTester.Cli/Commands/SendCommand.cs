@@ -14,8 +14,12 @@ public static class SendCommand
 
         Request:
           -X, --method <m>        HTTP method (default GET)
+          -I, --head              Send HEAD and print the status line and headers
           -H, --header "k: v"     Add a header (repeatable)
-          -d, --data <body>       Request body ( --data-file <file> reads it from disk )
+          -A, --user-agent <ua>   Set the User-Agent header
+          --query name=value      Add a query parameter to the URL, percent-encoded (repeatable)
+          -d, --data <body>       Request body; -d @file reads it from a file, as in curl
+                                  ( --data-file <file> reads a file without interpreting @ )
           -F, --form name=value   multipart/form-data field; name=@path uploads a file
                                   (name=@path;type=<ct> sets its content type). Repeatable;
                                   implies POST. Mutually exclusive with -d.
@@ -23,7 +27,7 @@ public static class SendCommand
           --gql-variables <json>  A JSON object of GraphQL variables
           --content-type <ct>     Body content type (default application/json)
           --bearer <token>        Authorization: Bearer …
-          --basic <user:pass>     Authorization: Basic …
+          -u, --basic <user:pass> Authorization: Basic …
           --windows-auth          Windows Integrated Auth (Negotiate/NTLM) with your signed-in
                                   account (aliases: --ntlm, --negotiate)
           --windows-user <u>      Explicit Windows creds instead of SSO (DOMAIN\user); pair with
@@ -41,7 +45,7 @@ public static class SendCommand
           --cert-pin <pin>        Smart-card / HSM PIN for the key, supplied ahead of time so a
                                   headless job is not stopped by the prompt. Prefer CERTAPI_CERT_PIN,
                                   which keeps it out of the shell history. Windows (CNG) only
-          --insecure              Ignore server certificate errors
+          -k, --insecure          Ignore server certificate errors
 
 
         """ + TransportFlags.Help + """
@@ -90,11 +94,11 @@ public static class SendCommand
 
         Output:
           -o, --output <file>     Write the body to a file instead of stdout
-          --include               Print status line and headers before the body
+          -i, --include           Print status line and headers before the body
           --pretty                Pretty-print the body (JSON/XML; hex for binary)
           --json                  Print a JSON result envelope instead of the raw body
-          --fail                  Exit 1 when the HTTP status is 400 or higher
-          -q, --quiet             No metadata line on stderr
+          -f, --fail              Exit 1 when the HTTP status is 400 or higher
+          -q, -s, --quiet         No metadata line on stderr
           --har <file>            Capture the request/response (and every redirect hop) as a
                                   HAR file, written once when the command finishes
           --har-include-secrets   Don't redact Authorization/Proxy-Authorization/Cookie/
@@ -168,6 +172,12 @@ public static class SendCommand
         // ---- bind options ----
         string? methodOpt = args.Value("-X", "--method");
         MethodOption.Require(methodOpt, "-X/--method");
+        bool head = args.Flag("--head");
+        if (head && methodOpt is not null && !methodOpt.Equals("HEAD", StringComparison.OrdinalIgnoreCase))
+            throw new CliUsageException($"-I/--head sends a HEAD request, so it cannot be combined with -X {methodOpt}.");
+        if (head) methodOpt = "HEAD";
+        string? userAgent = args.Value("--user-agent");
+        var querySpecs = args.Values("--query");
         var headers = args.Values("-H", "--header");
         string? data = args.Value("-d", "--data");
         string? dataFile = args.Value("--data-file");
@@ -192,7 +202,7 @@ public static class SendCommand
         string? workspace = args.Value("--workspace") ?? services.Profile?.Workspace;
         bool strictVars = args.Flag("--strict-vars");
         string? outFile = args.Value("-o", "--output");
-        bool include = args.Flag("--include");
+        bool include = args.Flag("--include") || head;
         bool pretty = args.Flag("--pretty");
         bool json = args.Flag("--json");
         bool fail = args.Flag("--fail");
@@ -306,6 +316,13 @@ public static class SendCommand
             }
             else parts.Add(new MultipartPart(name, rest, null));
         }
+        // As in curl, -d @file reads the body from a file. A body that genuinely starts with '@'
+        // goes in a file and is passed with --data-file, which never interprets its contents.
+        if (data is { Length: > 1 } && data[0] == '@')
+        {
+            string from = data[1..];
+            data = File.Exists(from) ? File.ReadAllText(from) : throw new CliDataException($"Body file not found: {from} (from -d @{from})");
+        }
         string? body = data ?? (dataFile is not null
             ? File.Exists(dataFile) ? File.ReadAllText(dataFile) : throw new CliDataException($"Body file not found: {dataFile}")
             : null);
@@ -330,7 +347,9 @@ public static class SendCommand
         }
 
         url = R(url);
+        if (querySpecs.Count > 0) url = RequestUrl.AppendQuery(url, ParseQuery(querySpecs).Select(kv => new KeyValuePair<string, string>(R(kv.Key), R(kv.Value))));
         var headerPairs = new List<KeyValuePair<string, string>>();
+        if (userAgent is not null) headerPairs.Add(new("User-Agent", R(userAgent)));
         foreach (var raw in headers)
         {
             int colon = raw.IndexOf(':');
@@ -773,6 +792,19 @@ public static class SendCommand
         string path = workspace ?? services.LiveStatePath;
         try { CliWorkspace.ReportSaveResult(state.SaveTo(path), path, stderr); }
         catch (Exception ex) { stderr.WriteLine($"warning: could not save captured values: {ex.Message}"); }
+    }
+
+    /// <summary>--query name=value pairs; a pair without '=' is a name with an empty value.</summary>
+    internal static List<KeyValuePair<string, string>> ParseQuery(IEnumerable<string> specs)
+    {
+        var pairs = new List<KeyValuePair<string, string>>();
+        foreach (var raw in specs)
+        {
+            int eq = raw.IndexOf('=');
+            if (eq == 0) throw new CliUsageException($"--query expects name=value, got '{raw}'.");
+            pairs.Add(eq < 0 ? new(raw, "") : new(raw[..eq], raw[(eq + 1)..]));
+        }
+        return pairs;
     }
 
     internal static string BuildEnvelope(ApiResponse r, bool includeBody, IReadOnlyList<string>? notes = null,

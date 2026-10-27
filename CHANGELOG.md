@@ -10,6 +10,18 @@ All notable changes to this project are documented here. The format follows
 - **`certapi <command> --help` and `-h`** print that command's help, the same text as
   `certapi help <command>`, for every command. They were rejected as unknown options before. Help
   is printed before the configuration is read, so it works even when the configuration is broken.
+- **"Did you mean …?"** A mistyped option names the closest option the command has
+  (`--insecur` → `--insecure`).
+- **curl habits work.** `-k`, `-i`, `-s`/`--silent`, `-u`/`--user`, `-x`, `-U`, `-f`, `--max-time`,
+  `--cacert`, `--key` and `--data-binary` are aliases wherever the option they stand for is read.
+  curl options whose meaning differs (`-L`, `--compressed`, `-b`, `-c`, `-G`, `--data-urlencode`,
+  `-v`, `-O`, `-e`, `-E`, `--tlsv1.2`, `-T`, `--data-raw`) are refused with what to use instead.
+- **`send -I/--head`**, **`send -A/--user-agent`**, **`send --query name=value`** (encoded, repeatable),
+  and **`-d @file`** reads the body from a file, as in curl.
+
+### Changed
+- Single-letter options are now case-sensitive (`-x` is no longer read as `-X`). Long options are
+  still case-insensitive.
 
 ## [1.93.0] - 2026-10-26
 

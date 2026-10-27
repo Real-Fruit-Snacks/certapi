@@ -31,6 +31,19 @@ public static class RequestUrl
         return (path, QueryString.Parse(query));
     }
 
+    /// <summary>Append query parameters to a URL, percent-encoded, after any query it already has
+    /// and before any fragment. The existing query is left byte-for-byte as it was.</summary>
+    public static string AppendQuery(string url, IEnumerable<KeyValuePair<string, string>> pairs)
+    {
+        var q = QueryString.Build(pairs);
+        if (q.Length == 0) return url;
+        int hash = url.IndexOf('#');
+        string fragment = hash >= 0 ? url[hash..] : "";
+        string head = hash >= 0 ? url[..hash] : url;
+        string sep = !head.Contains('?') ? "?" : head.EndsWith('?') || head.EndsWith('&') ? "" : "&";
+        return head + sep + q + fragment;
+    }
+
     // Mirror of the App's UrlHelper.Combine, kept here so Core stays self-contained and testable.
     private static string UrlCombine(string? baseUrl, string? path)
     {

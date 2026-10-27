@@ -63,12 +63,18 @@ public class ArgsTests
     }
 
     [Fact]
-    public void Names_match_case_insensitively()
+    public void Long_names_match_case_insensitively_and_single_letters_exactly()
     {
-        var a = new Args(new[] { "--INSECURE", "-x", "post" });
+        var a = new Args(new[] { "--INSECURE", "-X", "post", "--Method", "put" });
         Assert.True(a.Flag("--insecure"));
         Assert.Equal("post", a.Value("-X", "--method"));
+        Assert.Equal("put", a.Value("-X", "--method"));
         Assert.Empty(a.Positionals());
+
+        // -x is curl's proxy, not -X: a single letter is matched exactly.
+        var b = new Args(new[] { "-x", "http://proxy:8080" });
+        Assert.Null(b.Value("-X", "--method"));
+        Assert.Equal("http://proxy:8080", b.Value("--proxy"));
     }
 
     [Fact]

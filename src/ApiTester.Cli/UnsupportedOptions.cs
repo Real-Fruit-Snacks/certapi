@@ -13,7 +13,7 @@ namespace ApiTester.Cli;
 /// a place to list typos.</para></summary>
 public static class UnsupportedOptions
 {
-    private static readonly Dictionary<string, string> Explanations = new(StringComparer.OrdinalIgnoreCase)
+    private static readonly Dictionary<string, string> Explanations = new(StringComparer.Ordinal)
     {
         // Verified on .NET 9 / Windows: the switch and SSLKEYLOGFILE were tried in code, in
         // runtimeconfig.json, and in the process environment, and no key log was ever written.
@@ -23,6 +23,31 @@ public static class UnsupportedOptions
         ["--key-log"] = KeyLog,
         ["--sslkeylogfile"] = KeyLog,
         ["--ssl-key-log-file"] = KeyLog,
+
+        // curl options people type out of habit. The ones with a direct equivalent are accepted
+        // as aliases (see Args.Aliases); these are the ones whose meaning differs enough that
+        // quietly accepting them would do something the user did not ask for.
+        ["-L"] = "Redirects are already followed (curl's -L is the default here). Drop it; --no-redirect turns following off.",
+        ["--location"] = "Redirects are already followed (curl's --location is the default here). Drop it; --no-redirect turns following off.",
+        ["--compressed"] = "Responses are already decompressed (gzip, deflate, br). Drop it; --no-decompress keeps the bytes as received.",
+        ["-b"] = "Use --cookie-jar <file>: it reads cookies before the request and saves new ones after, curl's -b and -c in one. For a one-off cookie, -H \"Cookie: name=value\".",
+        ["--cookie"] = "Use --cookie-jar <file> (reads and saves, curl's -b and -c in one), or -H \"Cookie: name=value\" for a one-off cookie.",
+        ["-c"] = "Use --cookie-jar <file>: it reads cookies before the request and saves new ones after, curl's -b and -c in one.",
+        ["-G"] = "Use --query name=value: it adds the pair to the URL, percent-encoded (repeatable).",
+        ["--get"] = "Use --query name=value: it adds the pair to the URL, percent-encoded (repeatable).",
+        ["--data-urlencode"] = "Use --query name=value to put an encoded pair in the URL, or -F name=value for a form body.",
+        ["-v"] = "Use --include to see the response status and headers, --debug for everything the tool did, or --trace for DNS/TCP/TLS.",
+        ["--verbose"] = "Use --include to see the response status and headers, --debug for everything the tool did, or --trace for DNS/TCP/TLS.",
+        ["-O"] = "Use -o <file> and name the file.",
+        ["--remote-name"] = "Use -o <file> and name the file.",
+        ["-e"] = "Use -H \"Referer: <url>\".",
+        ["--referer"] = "Use -H \"Referer: <url>\".",
+        ["-E"] = "certapi's --cert picks a certificate from the Windows store by thumbprint or subject. For a file, use --cert-file <path> (.pfx/.p12/.pem) with --cert-password or --key-file.",
+        ["--tlsv1.2"] = "Use --tls-min 1.2.",
+        ["--tlsv1.3"] = "Use --tls-min 1.3.",
+        ["-T"] = "Use --data-file <path> with -X PUT.",
+        ["--upload-file"] = "Use --data-file <path> with -X PUT.",
+        ["--data-raw"] = "Use -d/--data. As in curl, -d @file reads the body from a file; a body that really starts with @ goes in a file passed to --data-file.",
     };
 
     private const string KeyLog =
@@ -33,5 +58,7 @@ public static class UnsupportedOptions
 
     /// <summary>The explanation for <paramref name="option"/>, or null if it is simply unknown.</summary>
     public static string? Explain(string option) =>
-        Explanations.TryGetValue(option, out var why) ? why : null;
+        Explanations.TryGetValue(
+            option.StartsWith("--", StringComparison.Ordinal) ? option.ToLowerInvariant() : option, out var why)
+            ? why : null;
 }

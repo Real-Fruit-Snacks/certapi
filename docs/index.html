@@ -279,7 +279,7 @@ certapi bench https://api.internal/health -n 500 -c 20
 certapi mock --har session.har --port 8770
 certapi mcp --cert <span class="a">"CN=matt"</span> --allow internal.corp</code></pre>
     </div>
-    <p class="mute" style="margin-top:14px">Body to stdout, diagnostics to stderr. Exit codes: 0 success · 1 failure · 2 usage · 3 data. <code>certapi help &lt;command&gt;</code> lists every option; the <a href="https://github.com/Real-Fruit-Snacks/certapi/blob/main/wiki/21-CLI-Reference.md">CLI reference</a> has them all on one page.</p>
+    <p class="mute" style="margin-top:14px">Body to stdout, diagnostics to stderr. Exit codes: 0 success · 1 failure · 2 usage · 3 data. <code>certapi &lt;command&gt; --help</code> lists every option, curl habits like <code>-k</code>, <code>-i</code> and <code>-d @file</code> work, and a mistyped flag names the one you meant; the <a href="https://github.com/Real-Fruit-Snacks/certapi/blob/main/wiki/21-CLI-Reference.md">CLI reference</a> has them all on one page.</p>
   </div>
 </section>
 

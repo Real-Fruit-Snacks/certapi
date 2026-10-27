@@ -35,6 +35,53 @@ public sealed class Args
 
     private readonly int _literalFrom;
     private readonly HashSet<string> _seen = new(StringComparer.OrdinalIgnoreCase);
+    // Every option name a command asked about, aliases included: what "did you mean" picks from.
+    private readonly HashSet<string> _asked = new(StringComparer.Ordinal);
+
+    /// <summary>curl spellings accepted wherever the option they stand for is accepted. They only
+    /// apply where the command reads the canonical option, so <c>-k</c> means <c>--insecure</c> on
+    /// every command that has <c>--insecure</c> and is unknown everywhere else.</summary>
+    internal static readonly IReadOnlyDictionary<string, string[]> Aliases =
+        new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["--insecure"] = ["-k"],
+            ["--include"] = ["-i"],
+            ["--quiet"] = ["-s", "--silent"],
+            ["--basic"] = ["-u", "--user"],
+            ["--proxy"] = ["-x"],
+            ["--proxy-user"] = ["-U"],
+            ["--user-agent"] = ["-A"],
+            ["--head"] = ["-I"],
+            ["--fail"] = ["-f"],
+            ["--timeout"] = ["--max-time"],
+            ["--ca-file"] = ["--cacert"],
+            ["--key-file"] = ["--key"],
+            ["--data"] = ["--data-binary"],
+        };
+
+    /// <summary>Single-letter options are case-sensitive (<c>-H</c> is a header, <c>-h</c> is help;
+    /// <c>-X</c> is the method, <c>-x</c> the proxy; <c>-i</c> includes headers, <c>-I</c> is HEAD).
+    /// Long options are not.</summary>
+    private static bool NameMatches(string token, string name) =>
+        name.Length == 2 && name[0] == '-' && name[1] != '-'
+            ? string.Equals(token, name, StringComparison.Ordinal)
+            : string.Equals(token, name, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>The names a call asked for, plus the curl aliases of each.</summary>
+    private string[] Expand(string[] names)
+    {
+        var all = new List<string>(names);
+        foreach (var n in names)
+            if (Aliases.TryGetValue(n, out var more)) all.AddRange(more);
+        foreach (var n in all) _asked.Add(n);
+        return all.ToArray();
+    }
+
+    private static bool AnyMatches(string token, string[] names)
+    {
+        foreach (var n in names) if (NameMatches(token, n)) return true;
+        return false;
+    }
 
     private bool IsOptionShaped(int index, string token) =>
         index < _literalFrom && token.StartsWith('-') && token.Length > 1 && !char.IsDigit(token[1]);
@@ -43,8 +90,9 @@ public sealed class Args
     /// unconsumed occurrence is later rejected by <see cref="Positionals"/> as an unknown option.</summary>
     public bool Flag(params string[] names)
     {
+        names = Expand(names);
         for (int i = 0; i < _tokens.Length; i++)
-            if (_tokens[i] is { } t && names.Contains(t, StringComparer.OrdinalIgnoreCase))
+            if (_tokens[i] is { } t && AnyMatches(t, names))
             {
                 _tokens[i] = null;
                 _seen.Add(t);
@@ -63,9 +111,10 @@ public sealed class Args
     /// An option present without a value is a usage error.</summary>
     public string? Value(params string[] names)
     {
+        names = Expand(names);
         for (int i = 0; i < _tokens.Length; i++)
         {
-            if (_tokens[i] is not { } t || !names.Contains(t, StringComparer.OrdinalIgnoreCase)) continue;
+            if (_tokens[i] is not { } t || !AnyMatches(t, names)) continue;
             if (i + 1 >= _tokens.Length || _tokens[i + 1] is null)
                 throw new CliUsageException($"Option {t} needs a value.");
             var value = _tokens[i + 1]!;
@@ -87,9 +136,10 @@ public sealed class Args
     public bool OptionalValue(out string? value, params string[] names)
     {
         value = null;
+        names = Expand(names);
         for (int i = 0; i < _tokens.Length; i++)
         {
-            if (_tokens[i] is not { } t || !names.Contains(t, StringComparer.OrdinalIgnoreCase)) continue;
+            if (_tokens[i] is not { } t || !AnyMatches(t, names)) continue;
             _tokens[i] = null;
             // The next token belongs to this option only when it could not be an option itself —
             // the same shape rule Positionals() uses — so "--cors --insecure" leaves --insecure be.
@@ -130,13 +180,61 @@ public sealed class Args
             var t = _tokens[i];
             if (t is null) continue;
             if (IsOptionShaped(i, t))
-                throw new CliUsageException(UnsupportedOptions.Explain(t) is { } why
-                    ? $"Option '{t}' does not exist. {why}"
-                    : _seen.Contains(t)
-                        ? $"Option '{t}' was given more than once, and this command takes it once."
-                        : $"Unknown option '{t}'.");
+                throw new CliUsageException(UnknownOptionMessage(t));
             positionals.Add(t);
         }
         return positionals;
+    }
+
+    /// <summary>What to say about an option nothing consumed: a repeat, a deliberate omission with
+    /// its alternative, or a near miss of an option this command does have.</summary>
+    private string UnknownOptionMessage(string t)
+    {
+        if (_seen.Contains(t))
+            return $"Option '{t}' was given more than once, and this command takes it once.";
+        if (UnsupportedOptions.Explain(t) is { } why)
+            return $"Option '{t}' does not exist. {why}";
+        if (Suggest(t) is { } near)
+            return $"Unknown option '{t}'. Did you mean '{near}'?";
+        return $"Unknown option '{t}'.";
+    }
+
+    /// <summary>The closest long option this command asked about, when it is close enough to be the
+    /// one meant: within two edits, or one for a short name. Null when nothing is close, or when
+    /// two candidates are equally close (a guess between them would be a coin toss).</summary>
+    internal string? Suggest(string token)
+    {
+        if (!token.StartsWith("--", StringComparison.Ordinal) || token.Length < 4) return null;
+        string typed = token.ToLowerInvariant();
+        string? best = null;
+        int bestDistance = int.MaxValue;
+        bool tie = false;
+        foreach (var name in _asked)
+        {
+            if (!name.StartsWith("--", StringComparison.Ordinal)) continue;
+            int d = Distance(typed, name.ToLowerInvariant());
+            if (d < bestDistance) { best = name; bestDistance = d; tie = false; }
+            else if (d == bestDistance && !string.Equals(best, name, StringComparison.OrdinalIgnoreCase)) tie = true;
+        }
+        int allowed = typed.Length <= 6 ? 1 : 2;
+        return best is not null && bestDistance <= allowed && !tie ? best : null;
+    }
+
+    /// <summary>Optimal-string-alignment distance: insertions, deletions, substitutions and
+    /// adjacent transpositions ("--insceure") each cost one.</summary>
+    internal static int Distance(string a, string b)
+    {
+        var d = new int[a.Length + 1, b.Length + 1];
+        for (int i = 0; i <= a.Length; i++) d[i, 0] = i;
+        for (int j = 0; j <= b.Length; j++) d[0, j] = j;
+        for (int i = 1; i <= a.Length; i++)
+            for (int j = 1; j <= b.Length; j++)
+            {
+                int cost = a[i - 1] == b[j - 1] ? 0 : 1;
+                d[i, j] = Math.Min(Math.Min(d[i - 1, j] + 1, d[i, j - 1] + 1), d[i - 1, j - 1] + cost);
+                if (i > 1 && j > 1 && a[i - 1] == b[j - 2] && a[i - 2] == b[j - 1])
+                    d[i, j] = Math.Min(d[i, j], d[i - 2, j - 2] + 1);
+            }
+        return d[a.Length, b.Length];
     }
 }

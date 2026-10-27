@@ -81,6 +81,41 @@ Every other option takes one value, and giving it twice is a usage error rather 
 which one you meant: `--cert a --cert b` is refused, not resolved to `b`. The global options follow
 the same rule.
 
+## Help, typos and curl habits
+
+`certapi <command> --help` (or `-h`) prints that command's options; `certapi help <command>` is the
+same. Help is printed before any configuration is read, so it works while a configuration file is
+broken.
+
+A mistyped option names the closest one the command has: `--insecur` gets
+"Did you mean '--insecure'?". Single-letter options are case-sensitive (`-H` is a header, `-h` is
+help); long ones are not.
+
+curl options with the same meaning are accepted wherever the option they stand for is:
+
+| curl | certapi |
+|---|---|
+| `-k` | `--insecure` |
+| `-i` | `--include` |
+| `-I` / `--head` | `--head` on `send`: HEAD, headers printed |
+| `-s` / `--silent` | `-q, --quiet` |
+| `-u` / `--user` | `--basic` |
+| `-x` | `--proxy` |
+| `-U` | `--proxy-user` |
+| `-A` / `--user-agent` | `--user-agent` on `send` |
+| `-f` | `--fail` |
+| `--max-time` | `--timeout` |
+| `--cacert` | `--ca-file` |
+| `--key` | `--key-file` |
+| `--data-binary` | `--data` |
+| `-d @file` | reads the body from the file |
+
+The ones whose meaning differs are refused with what to use instead: `-L` and `--compressed` (both
+already the default), `-b`/`-c`/`--cookie` (`--cookie-jar`), `-G`/`--get`/`--data-urlencode`
+(`--query`), `-v`/`--verbose` (`--include`, `--debug`, `--trace`), `-O` (`-o <file>`), `-e`/`--referer`
+(`-H "Referer: …"`), `-E` (`--cert-file`), `--tlsv1.2`/`--tlsv1.3` (`--tls-min`), `-T` (`--data-file`
+with `-X PUT`) and `--data-raw` (`-d`).
+
 ## Exit codes
 
 Script against these; they are stable.
@@ -262,9 +297,12 @@ Accepts the [certificate](#certificate-options), [transport](#transport-options)
 | Option | Default | What it does |
 |---|---|---|
 | `-X, --method <m>` | `GET` | HTTP method. Any method the server accepts, not a fixed list |
+| `-I, --head` | off | Send `HEAD` and print the status line and headers. Not with another `-X` |
 | `-H, --header "k: v"` | none | Add a header. Repeatable |
-| `-d, --data <body>` | none | Request body. Implies POST unless `-X` says otherwise |
-| `--data-file <path>` | none | Read the body from a file instead — for a body too large or too awkward to quote on a command line |
+| `-A, --user-agent <ua>` | .NET's | Set the `User-Agent` header |
+| `--query name=value` | none | Add a query parameter to the URL, percent-encoded, after any query the URL already has. Repeatable; `name` alone sends `name=` |
+| `-d, --data <body>` | none | Request body. Implies POST unless `-X` says otherwise. As in curl, `-d @file` reads the body from a file |
+| `--data-file <path>` | none | Read the body from a file instead, without interpreting a leading `@` — for a body too large or too awkward to quote on a command line |
 | `-F, --form name=value` | none | A `multipart/form-data` field. `name=@path` uploads a file; `name=@path;type=<ct>` sets that part's content type. Repeatable, implies POST, and mutually exclusive with `-d` |
 | `--graphql <query>` | none | Send a GraphQL query as a correctly formed `{query, variables}` POST |
 | `--gql-variables <json>` | none | A JSON object of GraphQL variables to go with it |
@@ -276,7 +314,7 @@ Accepts the [certificate](#certificate-options), [transport](#transport-options)
 | Option | Default | What it does |
 |---|---|---|
 | `--bearer <token>` | none | Send `Authorization: Bearer <token>` |
-| `--basic <user:password>` | none | Send `Authorization: Basic …`, encoded for you |
+| `-u, --basic <user:password>` | none | Send `Authorization: Basic …`, encoded for you |
 | `--windows-auth` | off | Windows Integrated Authentication (Negotiate/NTLM) as your signed-in account. Aliases: `--ntlm`, `--negotiate` |
 | `--windows-user <DOMAIN\user>` | signed-in | Use explicit Windows credentials instead of single sign-on |
 | `--windows-password <password>` | none | The password to go with `--windows-user` |
@@ -335,11 +373,11 @@ size and equality only.
 | Option | Default | What it does |
 |---|---|---|
 | `-o, --output <file>` | stdout | Write the body to a file |
-| `--include` | off | Print the status line and headers before the body |
+| `-i, --include` | off | Print the status line and headers before the body |
 | `--pretty` | off | Pretty-print the body: JSON and XML reformatted, binary as hex |
 | `--json` | off | Print a JSON result envelope — status, headers, timing, body — instead of the raw body |
-| `--fail` | off | Exit 1 when the HTTP status is 400 or higher |
-| `-q, --quiet` | off | No metadata line on stderr |
+| `-f, --fail` | off | Exit 1 when the HTTP status is 400 or higher |
+| `-q, -s, --quiet` | off | No metadata line on stderr |
 
 ### Capturing the exchange
 
