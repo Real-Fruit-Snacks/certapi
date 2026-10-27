@@ -18,6 +18,8 @@ Grab the latest release from the repository's **Releases** page. Each release at
 | `certapi.exe` | The command-line client (self-contained, x64) |
 | `common-api-endpoints.txt` | A starter wordlist for [endpoint discovery](14-Endpoint-Discovery.md) |
 | `certapi-source-<tag>.zip` | The full repository source at that tag |
+| `SHA256SUMS.txt` | The SHA-256 of each file |
+| `certapi.json` | A [Scoop](https://scoop.sh) manifest: `scoop install https://github.com/Real-Fruit-Snacks/certapi/releases/latest/download/certapi.json` |
 
 Both `.exe` files are **portable** — no installer, no admin rights. Put them anywhere (a USB
 (Universal Serial Bus) stick, a locked-down VM (virtual machine)) and run them. To use `certapi` from
@@ -50,11 +52,18 @@ CLI (command-line interface) reads the same file by default, so requests you bui
 immediately. You can also point either tool at a separate **workspace file** with `--workspace` — see
 [Collections & History](10-Collections-and-History.md).
 
+## Updating
+
+- **Command line:** `certapi update` replaces `certapi.exe` (and `ApiTester.App.exe` beside it) with the latest release; `certapi update --check` only asks. See [`update`](21-CLI-Reference.md#update).
+- **Desktop app:** **Help › About › Check for updates**. When a newer release exists, an **Update to x.y.z** button appears in the title bar; it downloads the app (and `certapi.exe` when it sits in the same folder), checks each file, replaces them and restarts. Tick **Check for a new release when certapi starts** to have the app ask GitHub at most once a day — it is off until you turn it on, and the app makes no other call of its own.
+
+Both check every file against the SHA-256 GitHub publishes for it before anything is replaced; nothing changes if a check fails. A copy installed with Scoop is updated with `scoop update certapi`.
+
 ## Verifying a download
 
 The self-contained `.exe` files are large (~35–65 MB — megabytes) because they bundle the runtime — that's
-expected. If your organization requires it, verify the file against the release, and note that the
-executables are **not** code-signed unless your build pipeline signs them.
+expected. To verify a file by hand, compare `Get-FileHash certapi.exe` with its line in the release's
+`SHA256SUMS.txt`. The executables are **not** code-signed unless your build pipeline signs them.
 
 ## Building it yourself
 

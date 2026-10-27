@@ -56,6 +56,9 @@
                 </StackPanel>
                 <StackPanel Grid.Column="3" Orientation="Horizontal" VerticalAlignment="Top"
                             WindowChrome.IsHitTestVisibleInChrome="True">
+                    <Button x:Name="UpdateButton" Visibility="Collapsed" Style="{StaticResource PrimaryButton}"
+                            Height="26" FontSize="11" Padding="10,0" Margin="0,9,8,0" VerticalAlignment="Top"
+                            Click="UpdateButton_Click"/>
                     <Button x:Name="ThemeToggle" Style="{StaticResource CaptionButton}" Height="44"
                             Content="&#xE706;" Click="ThemeToggle_Click" ToolTip="Toggle light / dark theme"/>
                     <Button x:Name="HelpButton" Style="{StaticResource CaptionButton}" Height="44"

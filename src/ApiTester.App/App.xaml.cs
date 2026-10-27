@@ -21,6 +21,8 @@ public partial class App : Application
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
+        // What an update left behind (the previous exe, renamed because it was running) goes now.
+        ReleaseUpdater.CleanUpPrevious(Environment.ProcessPath);
         ApplyTheme(AppState.Load().Theme);
     }
 

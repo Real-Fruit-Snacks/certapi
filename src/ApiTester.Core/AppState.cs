@@ -56,6 +56,13 @@ public sealed class AppState
     /// overlay and updated live when the user toggles it from the title bar.</summary>
     public string Theme { get; set; } = "Dark";
 
+    /// <summary>Ask GitHub for a newer release when the app starts, at most once a day. Off unless
+    /// the user turns it on: the app makes no network call of its own without being asked.</summary>
+    public bool CheckForUpdatesOnStart { get; set; }
+
+    /// <summary>When the opt-in startup check last asked GitHub, so it asks at most once a day.</summary>
+    public DateTime? LastUpdateCheckUtc { get; set; }
+
     /// <summary>File-format version. 0 = files from before the Auto/None auth split. 1 = secrets
     /// (captured tokens/cookies, saved auth secrets, secret variables) stored in the clear. 2 =
     /// those same secrets encrypted per Windows user. 3 = stored response bodies (history

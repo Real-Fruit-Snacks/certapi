@@ -19,7 +19,8 @@ layout rather than an exhaustive list, read [The Interface](05-The-Interface.md)
 | **ENV** selector | none | The active environment. Its `{{variables}}` are substituted into the URL, query, headers, body and auth when you send. Application-wide, and remembered |
 | **Edit** (beside ENV) | — | Opens [Environments](#environments-window) |
 | **Theme toggle** | dark | Switches between the dark and light themes. Application-wide, and remembered |
-| **Help** | — | Opens the built-in handbook |
+| **Update to x.y.z** | hidden | Appears when a newer release is found (Help › About › Check for updates, or the startup check). Installs it after checking each file's SHA-256, then restarts the app |
+| **Help** | — | Opens the built-in handbook. **About** has **Check for updates** and **Check for a new release when certapi starts** (off by default; at most once a day; remembered) |
 | Minimise / Maximise / Close | — | Window controls. Position, size and maximised state are remembered |
 
 ---

@@ -11,6 +11,11 @@ All notable changes to this project are documented here. The format follows
   byte for byte, as `application/octet-stream` unless `--content-type` says otherwise, so an image
   or an archive can be PUT as it is. Text files behave as before. `bench` takes `-d @file` too, and
   `grpc` reads a message from `-d @file`.
+- **The desktop app updates itself.** Help › About › **Check for updates** looks for a newer
+  release; an **Update to x.y.z** button then installs it — the app, and `certapi.exe` when it sits
+  in the same folder — after checking each file against the SHA-256 GitHub publishes, and restarts.
+  **Check for a new release when certapi starts** (off by default, at most once a day) does the
+  looking for you. The command line and the app share one implementation (`ReleaseUpdater`).
 - `--har` and `serve --record` store a binary request body as base64 (`"encoding": "base64"` on
   `postData`) instead of turning it into replacement characters.
 

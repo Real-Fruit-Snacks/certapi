@@ -226,6 +226,98 @@ public partial class MainWindow : Window
 
     private void HelpButton_Click(object sender, RoutedEventArgs e) => ShowHelp();
 
+    // ---------- updates ----------
+
+    private ReleaseInfo? _availableUpdate;
+    private string? _restartInto;
+
+    /// <summary>Whether the opt-in startup check is on — read and set by Help › About.</summary>
+    internal bool CheckForUpdatesOnStart
+    {
+        get => _state.CheckForUpdatesOnStart;
+        set { _state.CheckForUpdatesOnStart = value; SaveState(); }
+    }
+
+    protected override async void OnContentRendered(EventArgs e)
+    {
+        base.OnContentRendered(e);
+        if (!AppUpdate.StartupCheckDue(_state, DateTime.UtcNow)) return;
+        try
+        {
+            var newer = await AppUpdate.CheckAsync(_apiClient);
+            _state.LastUpdateCheckUtc = DateTime.UtcNow;
+            SaveState();
+            if (newer is not null) ShowUpdateAvailable(newer);
+        }
+        catch (Exception ex) when (ex is ReleaseUpdateException or HttpRequestException or TaskCanceledException)
+        {
+            // A startup check that fails says nothing: the user did not ask for it just now.
+        }
+    }
+
+    /// <summary>Help › About's "Check for updates": asks now and reports in words.</summary>
+    internal async Task<string> CheckForUpdateNowAsync()
+    {
+        try
+        {
+            var newer = await AppUpdate.CheckAsync(_apiClient);
+            _state.LastUpdateCheckUtc = DateTime.UtcNow;
+            SaveState();
+            if (newer is null) return $"certapi {AppUpdate.CurrentVersion} is the latest release.";
+            ShowUpdateAvailable(newer);
+            return $"certapi {newer.Version} is available (this is {AppUpdate.CurrentVersion}). Use the Update button in the title bar to install it.";
+        }
+        catch (ReleaseUpdateException ex) { return ex.Message; }
+    }
+
+    private void ShowUpdateAvailable(ReleaseInfo release)
+    {
+        _availableUpdate = release;
+        UpdateButton.Content = $"Update to {release.Version}";
+        UpdateButton.ToolTip = $"certapi {release.Version} is available — this is {AppUpdate.CurrentVersion}. Release notes: {release.Page}";
+        UpdateButton.Visibility = Visibility.Visible;
+    }
+
+    private async void UpdateButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_availableUpdate is not { } release) return;
+        string? exe = Environment.ProcessPath;
+        if (AppUpdate.CannotInstall(exe) is { } why) { StatusText.Text = why; return; }
+        bool withCli = File.Exists(Path.Combine(Path.GetDirectoryName(exe!) ?? ".", ReleaseUpdater.CliAsset));
+        if (!ChoiceDialog.Confirm(this, $"Install certapi {release.Version}",
+                $"Downloads ApiTester.App.exe{(withCli ? " and certapi.exe" : "")} from release {release.Tag}, checks each against " +
+                "the SHA-256 GitHub publishes for it, and replaces the copies in this folder. Nothing changes if a check fails. " +
+                $"The app restarts afterwards.\n\nRelease notes: {release.Page}",
+                "Install and restart"))
+            return;
+
+        UpdateButton.IsEnabled = false;
+        try
+        {
+            var progress = new Progress<string>(m => StatusText.Text = m);
+            await AppUpdate.InstallAsync(_apiClient, release, exe!, progress);
+            StatusText.Text = $"certapi {release.Version} is installed. Restarting…";
+            _restartInto = exe;
+            Close();
+        }
+        catch (Exception ex) when (ex is ReleaseUpdateException or IOException or UnauthorizedAccessException or HttpRequestException)
+        {
+            StatusText.Text = "Update not installed: " + ex.Message;
+            UpdateButton.IsEnabled = true;
+        }
+    }
+
+    protected override void OnClosed(EventArgs e)
+    {
+        base.OnClosed(e);
+        // After the workspace is saved (OnClosing), so the new copy opens on everything as it was.
+        if (_restartInto is { } exe)
+        {
+            try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(exe) { UseShellExecute = false })?.Dispose(); }
+            catch (System.ComponentModel.Win32Exception) { /* the new copy is in place; it opens next time */ }
+        }
+    }
+
     private void ShowHelp()
     {
         var help = new HelpWindow { Owner = this };

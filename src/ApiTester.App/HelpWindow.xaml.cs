@@ -612,13 +612,53 @@ public partial class HelpWindow : Window
             links,
             P(RepoUrl),
             P(DocsUrl),
+            Sub("UPDATES"),
+            Updates(),
             Sub("PRIVACY"),
             Bullets(
-                "No telemetry. The app makes no network calls other than the requests you send.",
+                "No telemetry. The app makes no network calls other than the requests you send — and, only when you ask for it, one call to GitHub's releases API to look for a new version (Check for updates, or the startup check below once you turn it on).",
                 "Client certificates are never exported; Windows performs the signing.",
                 "Window and request settings are stored locally under %AppData%\\CertApiTester."),
             Sub("LICENSE"),
             P("Released under the MIT License."));
+    }
+
+    /// <summary>Check for updates now, and the opt-in check at startup. The install itself happens
+    /// from the title bar's Update button, which a found release makes appear.</summary>
+    private UIElement Updates()
+    {
+        var panel = new StackPanel { Margin = new Thickness(0, 0, 0, 10) };
+        var main = Owner as MainWindow;
+        var result = new TextBlock
+        {
+            FontSize = 13, Foreground = B("Text.Soft"), TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 8, 0, 0)
+        };
+        var check = new Button
+        {
+            Content = "Check for updates", Height = 30, FontSize = 12, Padding = new Thickness(14, 0, 14, 0),
+            HorizontalAlignment = HorizontalAlignment.Left, IsEnabled = main is not null
+        };
+        check.Click += async (_, _) =>
+        {
+            check.IsEnabled = false;
+            result.Text = "Asking GitHub for the latest release…";
+            result.Text = await main!.CheckForUpdateNowAsync();
+            check.IsEnabled = true;
+        };
+        var startup = new CheckBox
+        {
+            Content = "Check for a new release when certapi starts (at most once a day)",
+            IsChecked = main?.CheckForUpdatesOnStart ?? false, IsEnabled = main is not null,
+            Foreground = B("Text.Soft"), Margin = new Thickness(0, 12, 0, 0)
+        };
+        startup.Checked += (_, _) => main!.CheckForUpdatesOnStart = true;
+        startup.Unchecked += (_, _) => main!.CheckForUpdatesOnStart = false;
+
+        panel.Children.Add(P("Updates come from the certapi releases on GitHub. Every file is checked against the SHA-256 GitHub publishes for it before anything is replaced; the command line does the same with certapi update."));
+        panel.Children.Add(check);
+        panel.Children.Add(result);
+        panel.Children.Add(startup);
+        return panel;
     }
 
     private static string AppVersion()

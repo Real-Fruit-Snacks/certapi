@@ -13,7 +13,7 @@ curl.exe -LO https://github.com/Real-Fruit-Snacks/certapi/releases/latest/downlo
 curl.exe -LO https://github.com/Real-Fruit-Snacks/certapi/releases/latest/download/ApiTester.App.exe
 ```
 
-That's `certapi.exe` (command line) and `ApiTester.App.exe` (desktop) from the [latest release](https://github.com/Real-Fruit-Snacks/certapi/releases/latest). Both are self-contained: no installer, no admin rights. Add the folder to your `PATH` to run `certapi` from any prompt. `certapi update` later replaces both with the newest release, each file checked against the SHA-256 GitHub publishes for it.
+That's `certapi.exe` (command line) and `ApiTester.App.exe` (desktop) from the [latest release](https://github.com/Real-Fruit-Snacks/certapi/releases/latest). Both are self-contained: no installer, no admin rights. Add the folder to your `PATH` to run `certapi` from any prompt. `certapi update` later replaces both with the newest release (in the app: Help › About › Check for updates), each file checked against the SHA-256 GitHub publishes for it.
 
 With [Scoop](https://scoop.sh) instead: `scoop install https://github.com/Real-Fruit-Snacks/certapi/releases/latest/download/certapi.json` (then `scoop update certapi`).
 
