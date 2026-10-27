@@ -144,6 +144,11 @@ public sealed class RequestModel : INotifyPropertyChanged
             m.AuthType = "Basic"; m.AuthUser = p.BasicUser; m.AuthSecret = p.BasicPassword;
         }
         m.IgnoreServerCert = p.InsecureSkipVerify;
+        if (p.FormParts.Count > 0)
+        {
+            m.IsMultipart = true;
+            foreach (var f in p.FormParts) m.FormParts.Add(new FormPart { Name = f.Name, Value = f.Value, IsFile = f.IsFile });
+        }
         return m;
     }
 

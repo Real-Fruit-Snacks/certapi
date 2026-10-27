@@ -16,7 +16,12 @@ public sealed class ParsedRequest
     public string? BasicPassword { get; set; }
     public string? BearerToken { get; set; }
     public bool InsecureSkipVerify { get; set; }
+    /// <summary>multipart/form-data fields (cURL <c>-F</c>); a file part's value is its path.</summary>
+    public List<ParsedFormPart> FormParts { get; set; } = new();
 }
+
+/// <summary>One multipart field from an import: text, or a file to upload when <paramref name="IsFile"/>.</summary>
+public sealed record ParsedFormPart(string Name, string Value, bool IsFile);
 
 /// <summary>A parsed collection: a named group with an optional base URL, child folders,
 /// and requests. Produced by the OpenAPI importer.</summary>
