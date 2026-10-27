@@ -31,7 +31,39 @@ public static class HarReader
         if (har is null)
             throw new HarFormatException("The file is not a valid HAR archive: no content.");
 
+        Normalize(har);
         return har;
+    }
+
+    /// <summary>JSON nulls where the format has lists or objects ("entries": null, "headers": null,
+    /// a null entry) become what an absent value would have been, or a named error — so every
+    /// reader downstream (import, replay, diff, mock) sees a well-formed archive or a clear message,
+    /// never a null-reference failure.</summary>
+    private static void Normalize(Har har)
+    {
+        har.Log ??= new HarLog();
+        har.Log.Entries ??= new List<HarEntry>();
+        for (int i = 0; i < har.Log.Entries.Count; i++)
+        {
+            var entry = har.Log.Entries[i]
+                ?? throw new HarFormatException($"The file is not a valid HAR archive: entry {i + 1} is null.");
+            if (entry.Request is null)
+                throw new HarFormatException($"The file is not a valid HAR archive: entry {i + 1} has no request.");
+            entry.Request.Method ??= "GET";
+            entry.Request.Url ??= "";
+            entry.Request.Headers = (entry.Request.Headers ?? new()).Where(h => h is not null && !string.IsNullOrEmpty(h.Name))
+                .Select(h => h.Value is null ? h with { Value = "" } : h).ToList();
+            entry.Request.QueryString = (entry.Request.QueryString ?? new()).Where(q => q is not null && !string.IsNullOrEmpty(q.Name))
+                .Select(q => q.Value is null ? q with { Value = "" } : q).ToList();
+            if (entry.Request.PostData is { } pd) { pd.MimeType ??= ""; pd.Text ??= ""; }
+            entry.Response ??= new HarResponse();
+            entry.Response.StatusText ??= "";
+            entry.Response.RedirectUrl ??= "";
+            entry.Response.Headers = (entry.Response.Headers ?? new()).Where(h => h is not null && !string.IsNullOrEmpty(h.Name))
+                .Select(h => h.Value is null ? h with { Value = "" } : h).ToList();
+            entry.Response.Content ??= new HarContent();
+            entry.Timings ??= new HarTimings();
+        }
     }
 
     /// <summary>Map one HAR entry onto the tool's cURL/OpenAPI import DTO, for replay. HTTP/2

@@ -259,3 +259,78 @@ public class SweepReviewFollowUpTests
     [InlineData("hr.corp--notaport", null)]
     public void Punycode_labels(string label, string? expected) => Assert.Equal(expected, VirtualHosts.DecodeAuthority(label));
 }
+
+public class Round2InputTests
+{
+    [Fact]
+    public void A_csv_quote_inside_a_field_is_a_character_not_a_new_quoted_field()
+    {
+        var rows = DataSet.ParseCsv("id,name\n1,5\" screen\n2,Bob\n3,\"Carol, Jr\"\n");
+        Assert.Equal(3, rows.Count);
+        Assert.Equal("5\" screen", rows[0]["name"]);
+        Assert.Equal("Carol, Jr", rows[2]["name"]);
+    }
+
+    [Fact]
+    public void Mock_scenario_values_written_with_the_wrong_json_type_are_read_or_named()
+    {
+        var scenario = MockScenario.Parse("""{"routes":[{"path":"/a","respond":{"status":"404","body":{"orders":[]},"headers":{"Retry-After":5}}}]}""");
+        var answer = scenario.Routes[0].Next();
+        Assert.Equal(404, answer.Status);
+        Assert.Equal("{\"orders\":[]}", System.Text.Encoding.UTF8.GetString(answer.Body));
+        Assert.Contains(answer.Headers, h => h.Key == "Retry-After" && h.Value == "5");
+        Assert.Contains(scenario.Warnings, w => w.Contains("as text"));
+    }
+
+    [Fact]
+    public void A_har_with_nulls_is_a_clear_format_error_or_reads_as_empty()
+    {
+        Assert.Throws<HarFormatException>(() => HarReader.Parse("""{"log":{"entries":[null]}}"""));
+        Assert.Empty(HarReader.Parse("""{"log":{"entries":null}}""").Log.Entries);
+        var har = HarReader.Parse("""{"log":{"entries":[{"request":{"method":"GET","url":"https://h/","headers":null},"response":null}]}}""");
+        Assert.Empty(har.Log.Entries[0].Request.Headers);
+        Assert.NotNull(HarReader.ToParsedRequest(har.Log.Entries[0]));
+    }
+
+    [Fact]
+    public async Task A_url_with_an_unsupported_scheme_is_a_failed_request_not_an_exception()
+    {
+        var resp = await new ApiClient().SendAsync(new ApiRequest { Method = HttpMethod.Get, Url = "htps://example.com/" }, null);
+        Assert.NotNull(resp.Error);
+        Assert.Contains("only http", resp.Error!.Message);
+    }
+
+    [Fact]
+    public void A_cookie_jar_keeps_more_than_twenty_cookies_for_one_domain()
+    {
+        var jar = CookieJarFile.NewContainer();
+        for (int i = 0; i < 60; i++) jar.SetCookies(new Uri("https://sso.example/"), $"c{i}=v");
+        var copy = CookieJarFile.NewContainer();
+        Assert.Equal(60, CookieJarFile.Deserialize(CookieJarFile.Serialize(jar), copy));
+        Assert.Equal(60, copy.GetAllCookies().Count);
+    }
+
+    [Fact]
+    public void A_workspace_that_cannot_be_read_is_kept_before_anything_saves_over_it()
+    {
+        string path = Path.Combine(Path.GetTempPath(), $"state-{Guid.NewGuid():N}.json");
+        File.WriteAllText(path, "{\"TimeoutSeconds\":\"100\"}");
+        try
+        {
+            string? kept = AppState.PreserveUnreadable(path);
+            Assert.NotNull(kept);
+            Assert.Equal(File.ReadAllText(path), File.ReadAllText(kept!));
+            File.Delete(kept!);
+        }
+        finally { File.Delete(path); }
+    }
+
+    [Fact]
+    public void Postman_path_segments_may_be_objects()
+    {
+        string json = """{"info":{"name":"c","schema":"https://schema.getpostman.com/json/collection/v2.0.0/collection.json"},"item":[{"name":"u","request":{"method":"GET","url":{"protocol":"https","host":["api","example"],"path":[{"type":"string","value":"users"},"1"]}}}]}""";
+        var result = PostmanImport.Parse(json);
+        string Find(CollectionNode n) => n.Request is not null ? n.Request.EffectiveUrl() : n.Children.Select(Find).First();
+        Assert.Contains("api.example/users/1", Find(result.Root));
+    }
+}

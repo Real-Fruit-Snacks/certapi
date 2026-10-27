@@ -210,7 +210,7 @@ public static class RequestRunner
         };
         // Attach any browser-captured session cookies for this origin, on top of the optional
         // shared --cookies jar (honors --no-auto-token and the workspace's AutoCookies switch).
-        var effectiveJar = ctx.Cookies ?? new System.Net.CookieContainer();
+        var effectiveJar = ctx.Cookies ?? CookieJarFile.NewContainer();
         if (!ctx.NoAutoToken) CookieService.SeedContainer(ctx.State, url, effectiveJar);
         // A pinned thumbprint for this host lets the request through even without the request's
         // own IgnoreServerCert bypass (which trusts anything and is untouched above).

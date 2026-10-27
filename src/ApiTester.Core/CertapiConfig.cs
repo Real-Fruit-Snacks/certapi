@@ -249,17 +249,34 @@ public static class ConfigLoader
     private static ConfigProfile ReadProfile(
         JsonElement element, string profileName, ConfigSource? source, Func<string, string?>? environment)
     {
-        string? Str(string name) =>
-            element.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String
-                ? Expand(v.GetString(), name, profileName, source, environment) : null;
+        // A field of the wrong JSON type is an error naming it, not silently ignored: "timeout": "60"
+        // used to leave the default in force with nothing said, which is a profile that lies.
+        string where = $"profile '{profileName}' in {source?.Path ?? "the configuration"}";
+        bool Present(string name, out JsonElement v) =>
+            element.TryGetProperty(name, out v) && v.ValueKind != JsonValueKind.Null;
 
-        bool? Bool(string name) =>
-            element.TryGetProperty(name, out var v) && v.ValueKind is JsonValueKind.True or JsonValueKind.False
-                ? v.GetBoolean() : null;
+        string? Str(string name)
+        {
+            if (!Present(name, out var v)) return null;
+            if (v.ValueKind != JsonValueKind.String) throw new ConfigException($"{where}: \"{name}\" must be a string.");
+            return Expand(v.GetString(), name, profileName, source, environment);
+        }
 
-        int? Int(string name) =>
-            element.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var n)
-                ? n : null;
+        bool? Bool(string name)
+        {
+            if (!Present(name, out var v)) return null;
+            if (v.ValueKind is not (JsonValueKind.True or JsonValueKind.False))
+                throw new ConfigException($"{where}: \"{name}\" must be true or false (without quotes).");
+            return v.GetBoolean();
+        }
+
+        int? Int(string name)
+        {
+            if (!Present(name, out var v)) return null;
+            if (v.ValueKind != JsonValueKind.Number || !v.TryGetInt32(out var n))
+                throw new ConfigException($"{where}: \"{name}\" must be a whole number (without quotes).");
+            return n;
+        }
 
         // Accepts one path or a list; relative paths are resolved against the configuration file,
         // which is where a committed PEM bundle naturally lives.

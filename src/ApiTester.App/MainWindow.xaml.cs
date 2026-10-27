@@ -27,7 +27,7 @@ public partial class MainWindow : Window
     // requests to the same host share a pooled connection. Assigned in the constructor, after
     // _state's field initializer has run (see below), rather than inline here.
     private readonly TrustPredicates _trustPredicates;
-    private readonly System.Net.CookieContainer _cookieJar = new();   // browser-like session cookies across sends
+    private readonly System.Net.CookieContainer _cookieJar = CookieJarFile.NewContainer();   // browser-like session cookies across sends
     private readonly ResponseFormatter _formatter = new();
     private readonly AppState _state = AppState.Load();
 
@@ -829,8 +829,15 @@ public partial class MainWindow : Window
 
     private void CollectionsTree_PreviewMouseRightButtonDown(object sender, MouseButtonEventArgs e)
     {
-        if (ItemsControl.ContainerFromElement(CollectionsTree, e.OriginalSource as DependencyObject) is TreeViewItem item)
+        // The nearest item under the pointer: ContainerFromElement on the tree returns the
+        // top-level container, so a nested folder's menu would act on its root.
+        var hit = e.OriginalSource as DependencyObject;
+        while (hit is not null and not TreeViewItem) hit = System.Windows.Media.VisualTreeHelper.GetParent(hit);
+        if (hit is TreeViewItem item)
+        {
             item.IsSelected = true;
+            item.Focus();
+        }
     }
 
     private void SetCollectionDefaults_Click(object sender, RoutedEventArgs e)
@@ -1444,8 +1451,9 @@ public partial class MainWindow : Window
         }
 
         // The saved entry this tab came from, found the way the send path finds it to record a result.
-        var node = ActiveRequest?.SourceCollectionId is { } srcId &&
-                   FindNodeById(srcId) is { IsFolder: false, Request: not null } leaf
+        var node = ActiveRequest is { SourceCollectionId: { } srcId } active &&
+                   FindNodeById(srcId) is { IsFolder: false, Request: { } saved } leaf &&
+                   saved.Method == active.Method && saved.EffectiveUrl() == active.EffectiveUrl()
             ? leaf
             : null;
 
@@ -1964,6 +1972,9 @@ public partial class MainWindow : Window
 
     private void LoadCertificates()
     {
+        // A refresh keeps the certificate the tab names (a smart card just inserted, a file loaded
+        // earlier): rebuilding the list must not fall back to "no certificate" under it.
+        string? keep = _allOptions.Count > 0 ? SelectedThumbprint() : null;
         _certs = _certService.ListClientCertificates();
         _allOptions = new List<CertOption> { new("— no certificate —", null, null) };
         foreach (var c in _certs)
@@ -1977,6 +1988,7 @@ public partial class MainWindow : Window
             _allOptions.Add(new CertOption($"{c.Subject}  —  {c.Thumbprint}{eku}{expiry}", c.Certificate, c.Thumbprint));
         }
         ApplyCertFilter();
+        if (keep is not null) SelectCertByThumbprint(keep);
         StatusText.Text = _certs.Count == 0
             ? "No client certificates found — you can still test APIs that don't require one."
             : $"{_certs.Count} certificate(s) available — pick one for mutual-TLS, or keep “no certificate”.";
@@ -2520,8 +2532,11 @@ public partial class MainWindow : Window
                                      KnownGoodSnapshot(response));
             // First successful send from a collection whose root has no defaults yet: remember
             // the website and certificate that worked, so sibling endpoints inherit them.
-            if (response.Error is null && model.SourceCollectionId is { } rememberId &&
-                FindNodeById(rememberId) is { IsFolder: false } rememberLeaf &&
+            // Learned only from a 2xx sent to the saved endpoint itself: a 404 from a mistyped
+            // website, or a tab pointed elsewhere, must not become every sibling's default.
+            if (response.IsSuccess && model.SourceCollectionId is { } rememberId &&
+                FindNodeById(rememberId) is { IsFolder: false, Request: { } rememberSaved } rememberLeaf &&
+                rememberSaved.Method == model.Method && rememberSaved.EffectiveUrl() == model.EffectiveUrl() &&
                 CollectionDefaults.RootOf(_collections, rememberLeaf) is { } rootFolder &&
                 string.IsNullOrWhiteSpace(rootFolder.DefaultBaseUrl) &&
                 string.IsNullOrEmpty(rootFolder.DefaultCertThumbprint) &&
@@ -2879,6 +2894,7 @@ public partial class MainWindow : Window
     {
         var run = new System.Windows.Documents.Run("The formatted response appears here after you send a request.");
         run.SetResourceReference(System.Windows.Documents.TextElement.ForegroundProperty, "Text.Faint");
+        _lastPretty = null;   // nothing for a theme change to repaint
         PrettyRich.Document = new System.Windows.Documents.FlowDocument(new System.Windows.Documents.Paragraph(run))
         {
             FontFamily = new System.Windows.Media.FontFamily("Consolas"),
@@ -2892,6 +2908,7 @@ public partial class MainWindow : Window
     {
         var run = new System.Windows.Documents.Run("Waiting for response…");
         run.SetResourceReference(System.Windows.Documents.TextElement.ForegroundProperty, "Accent");
+        _lastPretty = null;
         PrettyRich.Document = new System.Windows.Documents.FlowDocument(new System.Windows.Documents.Paragraph(run))
         {
             FontFamily = new System.Windows.Media.FontFamily("Consolas"),
@@ -2924,7 +2941,14 @@ public partial class MainWindow : Window
     private void SelectContentType(string contentType)
     {
         foreach (ComboBoxItem item in ContentTypeCombo.Items)
-            if ((item.Content?.ToString() ?? "") == contentType) { ContentTypeCombo.SelectedItem = item; return; }
+            if (string.Equals(item.Content?.ToString() ?? "", contentType, StringComparison.OrdinalIgnoreCase)) { ContentTypeCombo.SelectedItem = item; return; }
+        // A type the list does not carry (application/json;charset=UTF-8 from a browser, text/xml
+        // from a cURL) is added rather than leaving the previous tab's type selected — the next
+        // save would send that.
+        if (string.IsNullOrWhiteSpace(contentType)) return;
+        var added = new ComboBoxItem { Content = contentType };
+        ContentTypeCombo.Items.Add(added);
+        ContentTypeCombo.SelectedItem = added;
     }
 
     // ---------- URL / method live edits ----------

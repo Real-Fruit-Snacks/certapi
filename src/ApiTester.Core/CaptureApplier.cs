@@ -42,8 +42,13 @@ public static class CaptureApplier
         // a session id - and this is precisely the path that lands credentials in an environment
         // file, so what a capture writes is treated as a secret whether or not the variable existed
         // before.
-        var existing = env.Variables.FirstOrDefault(v => v.Key == key);
-        if (existing is not null) { existing.Value = value; existing.Secret = true; }
-        else env.Variables.Add(new Variable { Key = key, Value = value, Secret = true });
+        // Locked on the collection itself: the desktop app registers that same object with WPF's
+        // collection synchronization, so a list bound to it reads safely while a run writes.
+        lock (env.Variables)
+        {
+            var existing = env.Variables.FirstOrDefault(v => v.Key == key);
+            if (existing is not null) { existing.Value = value; existing.Secret = true; }
+            else env.Variables.Add(new Variable { Key = key, Value = value, Secret = true });
+        }
     }
 }

@@ -715,7 +715,7 @@ public static class ServeCommand
             if (extraPrefix is not null && ex.ErrorCode == 5)
                 throw new CliDataException(
                     $"Could not listen on {extraPrefix}: access denied. Reserve the URL once from an elevated prompt:\n" +
-                    $"  netsh http add urlacl url={extraPrefix} user={Environment.UserDomainName}\\{Environment.UserName}\n" +
+                    $"  netsh http add urlacl url={extraPrefix} user=\"{Environment.UserDomainName}\\{Environment.UserName}\"\n" +
                     "(netsh http delete urlacl url=… removes it again.)");
             throw new CliDataException($"Could not listen on port {port}: {ex.Message}");
         }

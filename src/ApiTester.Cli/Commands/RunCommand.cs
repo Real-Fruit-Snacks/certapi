@@ -286,7 +286,7 @@ public static class RunCommand
         else
         {
             try { rows = DataSet.Load(dataFile).Cast<IReadOnlyDictionary<string, string>?>().ToList(); }
-            catch (Exception ex) when (ex is IOException or System.Text.Json.JsonException)
+            catch (Exception ex) when (ex is IOException or System.Text.Json.JsonException or UnauthorizedAccessException)
             { throw new CliDataException($"Could not read data file '{dataFile}': {ex.Message}"); }
             if (rows.Count == 0) throw new CliDataException($"The data file '{dataFile}' has no rows.");
         }
@@ -316,7 +316,7 @@ public static class RunCommand
         }
 
         // One cookie jar for the whole run, so a login's Set-Cookie carries to later requests.
-        var jar = useCookies ? new System.Net.CookieContainer() : null;
+        var jar = useCookies ? CookieJarFile.NewContainer() : null;
         if (cookieJarPath is not null && jar is not null)
         {
             try { CookieJarFile.Load(cookieJarPath, jar); }
@@ -404,7 +404,7 @@ public static class RunCommand
         if (cookieJarPath is not null && jar is not null)
         {
             try { CookieJarFile.Save(cookieJarPath, jar); }
-            catch (IOException ex) { stderr.WriteLine($"warning: could not write --cookie-jar {cookieJarPath}: {ex.Message}"); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { stderr.WriteLine($"warning: could not write --cookie-jar {cookieJarPath}: {ex.Message}"); }
         }
         if (harPath is not null && harEntries is not null)
         {
@@ -541,9 +541,18 @@ public static class RunCommand
             index++;
             var pr = HarReader.ToParsedRequest(entry);
             string label = $"entry {index}: {pr.Method} {pr.Url}";
+            // A recorded method that is not a valid token ("G ET") is that entry's failure, not the run's.
+            HttpMethod method;
+            try { method = new HttpMethod(pr.Method.Trim()); }
+            catch (Exception ex) when (ex is ArgumentException or FormatException)
+            {
+                results.Add((label, pr.Method, pr.Url,
+                    new ApiResponse { Error = new ApiError(ApiErrorKind.Unknown, $"Invalid request: '{pr.Method}' is not an HTTP method.") }, null));
+                continue;
+            }
             var request = new ApiRequest
             {
-                Method = new HttpMethod(pr.Method),
+                Method = method,
                 Url = pr.Url,
                 Headers = services.Profile?.WithStandingHeaders(pr.Headers) ?? pr.Headers,
                 Body = pr.Body,

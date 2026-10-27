@@ -250,14 +250,23 @@ public static class PostmanImport
     {
         string protocol = Str(url, "protocol") ?? "https";
         string host = url.TryGetProperty("host", out var h) && h.ValueKind == JsonValueKind.Array
-            ? string.Join(".", h.EnumerateArray().Select(x => x.GetString()))
+            ? string.Join(".", h.EnumerateArray().Select(Segment))
             : Str(url, "host") ?? "";
         string path = url.TryGetProperty("path", out var p) && p.ValueKind == JsonValueKind.Array
-            ? "/" + string.Join("/", p.EnumerateArray().Select(x => x.GetString()))
+            ? "/" + string.Join("/", p.EnumerateArray().Select(Segment))
             : Str(url, "path") is { } sp ? "/" + sp.TrimStart('/') : "";
         string port = Str(url, "port") is { Length: > 0 } pt ? ":" + pt : "";
         return $"{protocol}://{host}{port}{path}";
     }
+
+    /// <summary>A host or path segment: a string, or (as the v2.0 schema also allows) an object
+    /// whose "value" is the segment.</summary>
+    private static string Segment(JsonElement x) => x.ValueKind switch
+    {
+        JsonValueKind.String => x.GetString() ?? "",
+        JsonValueKind.Object => Str(x, "value") ?? "",
+        _ => x.ToString()
+    };
 
     private static string? Str(JsonElement o, string name) =>
         o.ValueKind == JsonValueKind.Object && o.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String

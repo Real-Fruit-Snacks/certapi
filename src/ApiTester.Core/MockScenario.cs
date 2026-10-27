@@ -339,7 +339,16 @@ public sealed record MockScenario(
         string where = routeIndex == 0 ? "the fallback" : $"route {routeIndex}";
 
         int status = 200;
-        if (element.TryGetProperty("status", out var s) && s.ValueKind == JsonValueKind.Number && s.TryGetInt32(out var parsed))
+        if (element.TryGetProperty("status", out var s) && s.ValueKind == JsonValueKind.String &&
+            int.TryParse(s.GetString(), System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var fromText))
+        {
+            // "status": "404" is plainly meant as 404 — read so, and said, rather than serving 200.
+            warnings.Add($"{where} gives its status as text (\"{s.GetString()}\"); it is read as {fromText}. Write it as a number.");
+            s = JsonDocument.Parse(fromText.ToString(System.Globalization.CultureInfo.InvariantCulture)).RootElement;
+        }
+        else if (element.TryGetProperty("status", out var bad) && bad.ValueKind is not (JsonValueKind.Number or JsonValueKind.Null))
+            warnings.Add($"{where} has a status that is not a number ({bad.GetRawText()}); it answers 200.");
+        if (element.TryGetProperty("status", out _) && s.ValueKind == JsonValueKind.Number && s.TryGetInt32(out var parsed))
         {
             if (parsed is < 100 or > 599)
             {
@@ -365,8 +374,18 @@ public sealed record MockScenario(
         {
             body = Encoding.UTF8.GetBytes(inline);
         }
+        else if (element.TryGetProperty("body", out var structured) && structured.ValueKind is JsonValueKind.Object or JsonValueKind.Array)
+        {
+            // A JSON body written as JSON, not as a string of JSON: served as written.
+            body = Encoding.UTF8.GetBytes(structured.GetRawText());
+        }
+        else if (element.TryGetProperty("body", out var other) && other.ValueKind is not JsonValueKind.Null)
+            warnings.Add($"{where} has a body that is neither text nor JSON ({other.GetRawText()}); it answers with an empty body.");
 
         var headers = Pairs(element, "headers");
+        if (body.Length > 0 && element.TryGetProperty("body", out var b) && b.ValueKind is JsonValueKind.Object or JsonValueKind.Array &&
+            !headers.Any(h => h.Key.Equals("Content-Type", StringComparison.OrdinalIgnoreCase)))
+            headers = headers.Append(new KeyValuePair<string, string>("Content-Type", "application/json")).ToList();
         string? contentType = headers
             .FirstOrDefault(h => h.Key.Equals("Content-Type", StringComparison.OrdinalIgnoreCase)).Value;
 
@@ -406,8 +425,11 @@ public sealed record MockScenario(
         if (parent.ValueKind == JsonValueKind.Object &&
             parent.TryGetProperty(name, out var o) && o.ValueKind == JsonValueKind.Object)
             foreach (var property in o.EnumerateObject())
+                // A number or true/false is a header value too ("Retry-After": 5, "X-Ver": 2).
                 if (property.Value.ValueKind == JsonValueKind.String)
                     list.Add(new(property.Name, property.Value.GetString()!));
+                else if (property.Value.ValueKind is JsonValueKind.Number or JsonValueKind.True or JsonValueKind.False)
+                    list.Add(new(property.Name, property.Value.GetRawText()));
         return list;
     }
 

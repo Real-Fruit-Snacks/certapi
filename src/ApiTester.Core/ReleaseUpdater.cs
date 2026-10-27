@@ -156,7 +156,17 @@ public sealed class ReleaseUpdater
         string fresh = target + ".new";
         string old = target + ".old";
         File.WriteAllBytes(fresh, bytes);
-        if (File.Exists(old)) File.Delete(old);
+        if (File.Exists(old))
+        {
+            // The previous update's .old is still running when an earlier copy (a long-lived
+            // `certapi mcp`, `serve`) is: Windows refuses to delete a running image but lets it be
+            // renamed, so it moves aside to a unique name that the next start cleans up.
+            try { File.Delete(old); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                File.Move(old, old + "-" + Guid.NewGuid().ToString("N")[..8]);
+            }
+        }
         bool hadOld = File.Exists(target);
         if (hadOld) File.Move(target, old);
         try { File.Move(fresh, target); }
@@ -190,10 +200,17 @@ public sealed class ReleaseUpdater
         if (exe is null) return;
         string? dir = Path.GetDirectoryName(exe);
         if (dir is null) return;
-        foreach (var name in new[] { CliAsset + ".old", AppAsset + ".old" })
+        foreach (var asset in new[] { CliAsset, AppAsset })
         {
-            string path = Path.Combine(dir, name);
-            try { if (File.Exists(path)) File.Delete(path); } catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+            // .old, the .old-<id> copies moved aside while still running, and a .new left by an
+            // update that stopped half way.
+            string[] leftovers;
+            try { leftovers = Directory.GetFiles(dir, asset + ".old*").Append(Path.Combine(dir, asset + ".new")).ToArray(); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { continue; }
+            foreach (var path in leftovers)
+            {
+                try { if (File.Exists(path)) File.Delete(path); } catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+            }
         }
     }
 

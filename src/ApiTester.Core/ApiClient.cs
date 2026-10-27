@@ -33,6 +33,15 @@ public sealed class ApiClient : IDisposable
         // ignoring whichever setting lost.
         if (ValidateTransport(transport, request.Url) is { } problem)
             return new ApiResponse { Error = new ApiError(ApiErrorKind.Unknown, problem) };
+        // A URL this client cannot send (htps://, data:, a browser HAR's chrome-extension:) is one
+        // failed request, not an exception that ends a whole run.
+        if (!Uri.TryCreate(request.Url, UriKind.Absolute, out var target) ||
+            target.Scheme is not ("http" or "https"))
+            return new ApiResponse
+            {
+                Error = new ApiError(ApiErrorKind.Unknown,
+                    $"Invalid request: only http:// and https:// URLs can be sent, got '{(request.Url.Length > 80 ? request.Url[..80] + "…" : request.Url)}'.")
+            };
 
         int attempt = 0;
         while (true)
@@ -344,7 +353,7 @@ public sealed class ApiClient : IDisposable
         // A caller who supplies no jar gets a private one for this send only — precisely what the
         // handler's own fresh default cookie container gave every call before this, including
         // carrying a cookie across the hops of one redirect chain but never into a later SendAsync.
-        var jar = cookies ?? new System.Net.CookieContainer();
+        var jar = cookies ?? CookieJarFile.NewContainer();
 
         // observed overrides what a completed handshake recorded — used by the HttpRequestException
         // catch below, where a server-certificate refusal means the handshake never completed and
@@ -610,7 +619,8 @@ public sealed class ApiClient : IDisposable
                 Redirects = hops
             };
         }
-        catch (Exception ex) when (ex is UriFormatException or FormatException or InvalidOperationException)
+        catch (Exception ex) when (ex is UriFormatException or FormatException or InvalidOperationException
+                                       or NotSupportedException or ArgumentException)
         {
             stopwatch.Stop();
             return new ApiResponse
@@ -1198,7 +1208,12 @@ internal sealed class OriginBoundCredentials(ICredentials inner) : ICredentials
 {
     public static readonly AsyncLocal<string?> Origin = new();
 
+    // Windows integrated authentication only. A Basic (or Digest) challenge would otherwise be
+    // answered with the domain password — base64 in the clear on http — by whoever asked for it.
+    private static readonly HashSet<string> IntegratedSchemes = new(StringComparer.OrdinalIgnoreCase) { "Negotiate", "NTLM", "Kerberos" };
+
     public NetworkCredential? GetCredential(Uri uri, string authType) =>
+        IntegratedSchemes.Contains(authType) &&
         Origin.Value is { } origin && string.Equals(origin, ApiClient.OriginKeyOf(uri), StringComparison.OrdinalIgnoreCase)
             ? inner.GetCredential(uri, authType)
             : null;

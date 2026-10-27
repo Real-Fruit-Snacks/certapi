@@ -85,7 +85,30 @@ public sealed class AppState
     public static AppState Load()
     {
         try { return File.Exists(DefaultPath) ? LoadFrom(DefaultPath) : new AppState(); }
-        catch { return new AppState(); } // corrupt or unreadable — start fresh
+        catch (Exception ex)
+        {
+            // Corrupt or unreadable — start fresh, but never at the cost of the file: the next
+            // save would replace it with this empty workspace. A copy is kept and the user told.
+            var fresh = new AppState();
+            if (PreserveUnreadable(DefaultPath) is { } kept)
+                fresh.SecretWarnings.Add($"Your workspace could not be read ({ex.Message}); an empty one was opened and the file was kept as {Path.GetFileName(kept)}.");
+            return fresh;
+        }
+    }
+
+    /// <summary>Copies a workspace file that exists but could not be loaded to
+    /// <c>&lt;file&gt;.unreadable-&lt;time&gt;.bak</c> before anything can save over it. Returns the
+    /// copy's path, or null when there was no file (or it could not be copied).</summary>
+    public static string? PreserveUnreadable(string path)
+    {
+        try
+        {
+            if (!File.Exists(path)) return null;
+            string copy = $"{path}.unreadable-{DateTime.Now:yyyyMMdd-HHmmss}.bak";
+            File.Copy(path, copy, overwrite: false);
+            return copy;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return null; }
     }
 
     /// <summary>Load from an explicit file. Throws on missing/corrupt files — callers decide.</summary>

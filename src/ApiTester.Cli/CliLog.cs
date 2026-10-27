@@ -82,9 +82,41 @@ public sealed class CliLog : IDisposable
 
         public override System.Text.Encoding Encoding => _inner.Encoding;
 
+        // Several threads write here at once (--trace's network events, bench and fuzz workers):
+        // one lock keeps each write whole on the terminal and each line whole in the log.
+        private readonly object _gate = new();
+
         public override void Write(char value)
         {
-            _inner.Write(value);
+            lock (_gate)
+            {
+                _inner.Write(value);
+                Track(value);
+            }
+        }
+
+        public override void Write(string? value)
+        {
+            if (value is null) return;
+            lock (_gate)
+            {
+                _inner.Write(value);
+                foreach (var c in value) Track(c);
+            }
+        }
+
+        public override void WriteLine(string? value)
+        {
+            lock (_gate)
+            {
+                _inner.WriteLine(value);
+                foreach (var c in value ?? "") Track(c);
+                Track('\n');
+            }
+        }
+
+        private void Track(char value)
+        {
             if (value == '\n')
             {
                 _log.Note(_line.ToString().TrimEnd('\r'));
@@ -93,13 +125,7 @@ public sealed class CliLog : IDisposable
             else _line.Append(value);
         }
 
-        public override void Write(string? value)
-        {
-            if (value is null) return;
-            foreach (var c in value) Write(c);
-        }
-
-        public override void Flush() => _inner.Flush();
+        public override void Flush() { lock (_gate) _inner.Flush(); }
     }
 }
 

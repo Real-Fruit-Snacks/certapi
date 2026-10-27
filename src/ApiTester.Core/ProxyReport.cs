@@ -139,8 +139,6 @@ public static class ProxyIntrospection
     private const uint WinHttpAutoDetectTypeDnsA = 0x00000002;
     private const uint WinHttpAutoproxyAutoDetect = 0x00000001;
     private const uint WinHttpAutoproxyConfigUrl = 0x00000002;
-    private const uint WinHttpAutoproxyAllowStatic = 0x00000004;
-    private const uint WinHttpAutoproxyAllowCm = 0x00000008;
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
     private struct WinHttpAutoproxyOptions
@@ -192,6 +190,44 @@ public static class ProxyIntrospection
         return WinHttpProxyForUrl(targetUrl, new ProxySettings(false, pacUrl, false, null, null));
     }
 
+    /// <summary>The manual proxy Internet Options names (ProxyEnable + ProxyServer), unless the URL
+    /// is bypassed by ProxyOverride — what Windows uses when nothing automatic is configured.
+    /// Null for DIRECT.</summary>
+    internal static string? StaticProxyFor(string url, ProxySettings settings)
+    {
+        if (!settings.ProxyEnabled || string.IsNullOrWhiteSpace(settings.ProxyServer)) return null;
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri)) return null;
+
+        // ProxyOverride: "a.corp;*.internal;<local>" — wildcards, and <local> for dotless hosts.
+        foreach (var raw in (settings.ProxyOverride ?? "").Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            if (raw.Equals("<local>", StringComparison.OrdinalIgnoreCase))
+            {
+                if (!uri.Host.Contains('.')) return null;
+                continue;
+            }
+            string pattern = "^" + System.Text.RegularExpressions.Regex.Escape(raw).Replace("\\*", ".*").Replace("\\?", ".") + "$";
+            if (System.Text.RegularExpressions.Regex.IsMatch(uri.Host, pattern, System.Text.RegularExpressions.RegexOptions.IgnoreCase) ||
+                System.Text.RegularExpressions.Regex.IsMatch(uri.Authority, pattern, System.Text.RegularExpressions.RegexOptions.IgnoreCase))
+                return null;
+        }
+
+        // ProxyServer: "host:port", or per scheme "http=a:8080;https=b:8443".
+        string server = settings.ProxyServer.Trim();
+        if (server.Contains('='))
+        {
+            string? match = null;
+            foreach (var part in server.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            {
+                int eq = part.IndexOf('=');
+                if (eq <= 0) continue;
+                if (part[..eq].Equals(uri.Scheme, StringComparison.OrdinalIgnoreCase)) { match = part[(eq + 1)..]; break; }
+            }
+            return string.IsNullOrWhiteSpace(match) ? null : match;
+        }
+        return server;
+    }
+
     /// <summary>Ask WinHTTP to evaluate this URL against the configured PAC/WPAD. Never throws:
     /// any failure comes back as the error string, because a diagnostic must not be what breaks.</summary>
     private static (string? Proxy, string? Error) WinHttpProxyForUrl(string url, ProxySettings settings)
@@ -199,7 +235,7 @@ public static class ProxyIntrospection
         if (!OperatingSystem.IsWindows())
             return (null, "WinHTTP is only available on Windows.");
         if (!settings.AutoDetect && string.IsNullOrWhiteSpace(settings.AutoConfigUrl))
-            return (null, null);   // nothing automatic configured: DIRECT, and not an error
+            return (StaticProxyFor(url, settings), null);   // no PAC/WPAD: the manual proxy, if any, or DIRECT
 
         IntPtr session = IntPtr.Zero;
         try
@@ -210,7 +246,9 @@ public static class ProxyIntrospection
 
             var options = new WinHttpAutoproxyOptions
             {
-                dwFlags = WinHttpAutoproxyAllowStatic | WinHttpAutoproxyAllowCm,
+                // No ALLOW_STATIC / ALLOW_CM: they belong to WinHttpGetProxyForUrlEx, and the
+                // values once used here (0x4, 0x8) are HOST_KEEPCASE / HOST_LOWERCASE instead.
+                dwFlags = 0,
                 // fAutoLogonIfChallenged stays false: a PAC fetch that demands credentials should
                 // be reported, not silently authenticated with the user's identity.
                 fAutoLogonIfChallenged = false

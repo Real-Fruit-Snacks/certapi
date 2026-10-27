@@ -143,6 +143,10 @@ public partial class ChainRunWindow : Window
         RunButton.IsEnabled = false;
         StopButton.IsEnabled = true;
         _cts = new CancellationTokenSource();
+        // A capture that creates a variable adds it from the runner's thread; a list view still
+        // bound to that environment (the Environments window) must not throw for that.
+        foreach (var env in _state.Environments)
+            System.Windows.Data.BindingOperations.EnableCollectionSynchronization(env.Variables, env.Variables);
         try
         {
             var result = await ChainRunner.RunAsync(steps, ctx, vars, progress, _cts.Token);

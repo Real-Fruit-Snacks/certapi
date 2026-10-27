@@ -593,15 +593,25 @@ public static class ConnectionDoctor
     {
         if (chain is null || chain.Elements.Count == 0) return null;
         var (rootSubject, rootThumbprint, _) = chain.Elements[^1];
-        bool locallyTrusted = false;
+        // "Added locally" means trusted here but not one of the public roots Windows distributes:
+        // the Trusted Root store also shows every public root (the AuthRoot store feeds it), so
+        // being in it says nothing on its own — google.com's root is there too.
+        bool locallyAdded = false;
         try
         {
-            using var store = new X509Store(StoreName.Root, StoreLocation.LocalMachine);
-            store.Open(OpenFlags.ReadOnly);
-            locallyTrusted = store.Certificates.Any(c => c.Thumbprint == rootThumbprint);
+            bool InStore(StoreName name, StoreLocation location)
+            {
+                using var store = new X509Store(name, location);
+                store.Open(OpenFlags.ReadOnly);
+                return store.Certificates.Any(c => string.Equals(c.Thumbprint, rootThumbprint, StringComparison.OrdinalIgnoreCase));
+            }
+            bool trusted = InStore(StoreName.Root, StoreLocation.LocalMachine) || InStore(StoreName.Root, StoreLocation.CurrentUser);
+            bool publicRoot = InStore(StoreName.AuthRoot, StoreLocation.LocalMachine) ||
+                              rootSubject.Contains("O=Microsoft Corporation", StringComparison.OrdinalIgnoreCase);
+            locallyAdded = trusted && !publicRoot;
         }
         catch { /* a store we cannot read simply contributes nothing */ }
-        return DoctorReport.InterceptionNote(rootSubject, locallyTrusted);
+        return DoctorReport.InterceptionNote(rootSubject, locallyAdded);
     }
 
     /// <summary>The client-certificate request, described against what this machine actually has.

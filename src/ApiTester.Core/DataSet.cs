@@ -11,7 +11,14 @@ public static class DataSet
     public static IReadOnlyList<IReadOnlyDictionary<string, string>> Load(string path)
     {
         if (!File.Exists(path)) throw new FileNotFoundException($"Data file not found: {path}");
-        var text = File.ReadAllText(path);
+        // UTF-8 only, and said so: Excel's "CSV (Comma delimited)" is Windows-1252, and reading it
+        // as UTF-8 turned Müller into M\uFFFDller on the wire with nothing to show for it.
+        string text;
+        try { text = new UTF8Encoding(false, throwOnInvalidBytes: true).GetString(File.ReadAllBytes(path)); }
+        catch (DecoderFallbackException)
+        {
+            throw new InvalidDataException($"{path} is not UTF-8 text. Save it as UTF-8 (in Excel: \"CSV UTF-8 (Comma delimited)\").");
+        }
         return Path.GetExtension(path).Equals(".json", StringComparison.OrdinalIgnoreCase)
             ? ParseJson(text) : ParseCsv(text);
     }
@@ -44,7 +51,7 @@ public static class DataSet
     {
         var fields = new List<string>();
         var sb = new StringBuilder();
-        bool inQuotes = false;
+        bool inQuotes = false, fieldWasQuoted = false;
         for (int i = 0; i < text.Length; i++)
         {
             char ch = text[i];
@@ -57,12 +64,14 @@ public static class DataSet
                 }
                 else sb.Append(ch);
             }
-            else if (ch == '"') inQuotes = true;
-            else if (ch == ',') { fields.Add(sb.ToString()); sb.Clear(); }
+            // A quote opens a quoted field only at the start of one; elsewhere (5" screen) it is
+            // just a character, as in RFC 4180 and every spreadsheet.
+            else if (ch == '"' && sb.Length == 0 && !fieldWasQuoted) inQuotes = fieldWasQuoted = true;
+            else if (ch == ',') { fields.Add(sb.ToString()); sb.Clear(); fieldWasQuoted = false; }
             else if (ch is '\r' or '\n')
             {
                 if (ch == '\r' && i + 1 < text.Length && text[i + 1] == '\n') i++;
-                fields.Add(sb.ToString()); sb.Clear();
+                fields.Add(sb.ToString()); sb.Clear(); fieldWasQuoted = false;
                 yield return fields;
                 fields = new List<string>();
             }

@@ -18,7 +18,7 @@ public static class SendCommand
           -H, --header "k: v"     Add a header (repeatable)
           -A, --user-agent <ua>   Set the User-Agent header
           --query name=value      Add a query parameter to the URL, percent-encoded (repeatable)
-          -d, --data <body>       Request body; -d @file reads it from a file, as in curl
+          -d, --data <body>       Request body (implies POST unless -X); -d @file reads it from a file, as in curl
                                   ( --data-file <file> reads a file without interpreting @ ).
                                   A file that is not UTF-8 text is sent byte for byte, with
                                   Content-Type application/octet-stream unless --content-type
@@ -188,8 +188,9 @@ public static class SendCommand
         var formSpecs = args.Values("-F", "--form");
         string? graphql = args.Value("--graphql");
         string? gqlVars = args.Value("--gql-variables");
-        // -F and --graphql imply a POST unless a method is given explicitly (curl's behaviour).
-        string method = methodOpt ?? (formSpecs.Count > 0 || graphql is not null ? "POST" : "GET");
+        // A body — -d, --data-file, -F, --graphql — implies a POST unless a method is given
+        // explicitly (curl's behaviour). A GET with a body is what servers refuse or ignore.
+        string method = methodOpt ?? (data is not null || dataFile is not null || formSpecs.Count > 0 || graphql is not null ? "POST" : "GET");
         string? contentType = args.Value("--content-type");
         string? bearer = args.Value("--bearer");
         string? basic = args.Value("--basic");
@@ -466,7 +467,7 @@ public static class SendCommand
             services.Log.Debug($"resolve: {pin.Host}:{pin.Port} -> {pin.Address}");
         // Attach any browser-captured session cookies for this origin (honors --no-auto-token
         // and the workspace's AutoCookies switch).
-        var cookieJar = new System.Net.CookieContainer();
+        var cookieJar = CookieJarFile.NewContainer();
         if (!noAutoToken) CookieService.SeedContainer(state, url, cookieJar);
         if (cookieJarPath is not null)
         {
@@ -521,7 +522,7 @@ public static class SendCommand
         if (cookieJarPath is not null)
         {
             try { services.Log.Debug($"cookie jar: saved {CookieJarFile.Save(cookieJarPath, cookieJar)} cookie(s) to {cookieJarPath}"); }
-            catch (IOException ex) { stderr.WriteLine($"warning: could not write --cookie-jar {cookieJarPath}: {ex.Message}"); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { stderr.WriteLine($"warning: could not write --cookie-jar {cookieJarPath}: {ex.Message}"); }
         }
         services.Log.Debug("result: " + (response.Error is null
             ? $"{response.StatusCode} {response.ReasonPhrase}".Trim()
@@ -800,7 +801,11 @@ public static class SendCommand
             try { return CliWorkspace.Load(null, services.LiveStatePath, stderr); }
             catch (CliDataException ex)
             {
-                stderr.WriteLine($"warning: could not read the live state ({ex.Message}) — continuing without saved tokens/environments");
+                // A captured token is saved back after the send; that save must not replace the
+                // workspace it could not read, so a copy of it is kept first.
+                string? kept = AppState.PreserveUnreadable(services.LiveStatePath);
+                stderr.WriteLine($"warning: could not read the live state ({ex.Message}) — continuing without saved tokens/environments" +
+                                 (kept is null ? "" : $"; the file was kept as {kept}"));
                 return new AppState();
             }
         }

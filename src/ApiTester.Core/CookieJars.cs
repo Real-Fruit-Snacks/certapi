@@ -16,7 +16,7 @@ namespace ApiTester.Core;
 /// something to write to disk by surprise.</para></summary>
 public sealed class GatewayCookieJar
 {
-    private readonly CookieContainer _container = new();
+    private readonly CookieContainer _container = CookieJarFile.NewContainer();
     private readonly object _gate = new();
 
     /// <summary>Store the response's cookies against the request they answered.</summary>
@@ -80,7 +80,7 @@ public sealed class GatewayCookieJar
             ?? throw new InvalidOperationException("The gateway cookie jar could not be encrypted for storage.");
         string? dir = Path.GetDirectoryName(Path.GetFullPath(path));
         if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
-        File.WriteAllText(path, stored);
+        CookieJarFile.WriteAtomically(path, stored);
     }
 
     /// <summary>Read a jar <see cref="Save"/> wrote. A missing file is an empty jar; a file this
@@ -104,6 +104,11 @@ public sealed class GatewayCookieJar
 /// a place they named, like curl's.</summary>
 public static class CookieJarFile
 {
+    /// <summary>A jar with a browser's room: .NET's default keeps only 20 cookies per domain (300
+    /// in all), so a single-sign-on login that sets more silently lost the oldest — and a saved jar
+    /// file was cut down to 20 on its next save.</summary>
+    public static CookieContainer NewContainer() => new(capacity: 3000, perDomainCapacity: 180, maxCookieSize: CookieContainer.DefaultCookieLengthLimit);
+
     private sealed record StoredCookie(
         string Name, string Value, string Domain, string Path,
         [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] DateTime? Expires,
@@ -130,7 +135,11 @@ public static class CookieJarFile
     {
         if (!File.Exists(path)) return 0;
         try { return Deserialize(File.ReadAllText(path), container); }
-        catch (JsonException ex) { throw new InvalidDataException($"--cookie-jar: {path} is not a cookie jar this tool wrote: {ex.Message}"); }
+        catch (Exception ex) when (ex is JsonException or ArgumentException or NullReferenceException or InvalidDataException)
+        {
+            // A hand-edited jar (an entry without Domain, a null) is a bad file, not a crash.
+            throw new InvalidDataException($"--cookie-jar: {path} is not a cookie jar this tool wrote: {ex.Message}");
+        }
     }
 
     internal static int Deserialize(string json, CookieContainer container)
@@ -139,6 +148,8 @@ public static class CookieJarFile
         int loaded = 0;
         foreach (var c in cookies ?? new())
         {
+            if (c is null || string.IsNullOrEmpty(c.Name) || string.IsNullOrEmpty(c.Domain))
+                throw new InvalidDataException("an entry has no name or no domain");
             if (c.Expires is { } exp && exp <= DateTime.UtcNow) continue;
             // A domain with a leading dot came from a Domain= attribute and covers subdomains; one
             // without is host-only, and must come back host-only — a Cookie built with a Domain is
@@ -170,8 +181,25 @@ public static class CookieJarFile
         string? dir = Path.GetDirectoryName(Path.GetFullPath(path));
         if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
         string json = Serialize(container, out int count);
-        File.WriteAllText(path, json);
+        // Beside the jar, then moved into place: a full disk or an interrupted write never leaves
+        // the session's cookies destroyed or half-written.
+        WriteAtomically(path, json);
         return count;
+    }
+
+    internal static void WriteAtomically(string path, string text)
+    {
+        string temp = path + ".tmp";
+        try
+        {
+            File.WriteAllText(temp, text);
+            File.Move(temp, path, overwrite: true);
+        }
+        catch
+        {
+            try { File.Delete(temp); } catch { /* best effort */ }
+            throw;
+        }
     }
 
     internal static string Serialize(CookieContainer container) => Serialize(container, out _);

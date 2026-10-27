@@ -169,7 +169,7 @@ public sealed class RequestModel : INotifyPropertyChanged
         Path = e.Url;
         Body = e.Body ?? "";
         ContentType = e.ContentType;
-        AuthType = e.AuthType switch { "Bearer" => "Bearer", "Basic" => "Basic", "None" => "None", _ => "Auto" };
+        AuthType = e.AuthType switch { "Bearer" => "Bearer", "Basic" => "Basic", "Windows" => "Windows", "None" => "None", _ => "Auto" };
         AuthUser = e.AuthUser;
         AuthSecret = e.AuthSecret;
         CertThumbprint = e.CertThumbprint;

@@ -14,8 +14,9 @@ public class RedirectCredentialTests
             : RawHttpServer.Response(200, "OK", "in");
 
     [Fact]
-    public async Task Windows_credentials_answer_the_origin_they_were_given_for()
+    public async Task Windows_credentials_never_answer_a_basic_challenge_even_from_the_origin()
     {
+        // Windows auth is Negotiate/NTLM; answering Basic would hand over the domain password.
         await using var a = new RawHttpServer(Challenge);
         var resp = await new ApiClient().SendAsync(new ApiRequest
         {
@@ -23,8 +24,8 @@ public class RedirectCredentialTests
             Url = a.BaseUrl + "/login",
             WindowsAuth = new WindowsAuthOptions(false, "CORP", "alice", "P@ssw0rd"),
         }, null);
-        Assert.Equal(200, resp.StatusCode);
-        Assert.Contains(a.Requests, r => r.Header("Authorization") is not null);
+        Assert.Equal(401, resp.StatusCode);
+        Assert.All(a.Requests, r => Assert.Null(r.Header("Authorization")));
     }
 
     [Fact]

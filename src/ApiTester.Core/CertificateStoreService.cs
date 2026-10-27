@@ -12,7 +12,16 @@ public sealed class CertificateStoreService
         var all = new X509Certificate2Collection();
         all.AddRange(ReadStore(StoreLocation.CurrentUser));
         if (includeLocalMachine)
-            all.AddRange(ReadStore(StoreLocation.LocalMachine));
+        {
+            // A certificate imported into both stores is one certificate: listed once (the
+            // CurrentUser copy), so --cert <thumbprint> --store LocalMachine is not "ambiguous".
+            var seen = new HashSet<string>(all.Cast<X509Certificate2>().Select(c => c.Thumbprint), StringComparer.OrdinalIgnoreCase);
+            foreach (var c in ReadStore(StoreLocation.LocalMachine))
+            {
+                if (seen.Add(c.Thumbprint)) all.Add(c);
+                else c.Dispose();
+            }
+        }
         return BuildCertificateInfos(all);
     }
 

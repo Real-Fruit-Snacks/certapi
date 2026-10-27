@@ -59,6 +59,22 @@ public static class LoopbackTlsBinding
                 appId = value;
         }
 
+        // netsh translates its labels (German: "Zertifikathash", "Anwendungs-ID"), so when the
+        // English ones are not there the values are recognised by shape instead: the only
+        // 40-hex-digit value is the certificate hash, the only {GUID} the application id.
+        if (thumbprint is null || appId is null)
+        {
+            foreach (var rawLine in output.Split('\n'))
+            {
+                int colon = rawLine.IndexOf(" : ", StringComparison.Ordinal);
+                string value = (colon >= 0 ? rawLine[(colon + 3)..] : rawLine).Trim();
+                if (thumbprint is null && System.Text.RegularExpressions.Regex.IsMatch(value, "^[0-9A-Fa-f]{40}$"))
+                    thumbprint = NormalizeThumbprint(value);
+                else if (appId is null && System.Text.RegularExpressions.Regex.IsMatch(value, "^\\{[0-9A-Fa-f-]{36}\\}$"))
+                    appId = value;
+            }
+        }
+
         return thumbprint is null ? null : new BoundCertificate(thumbprint, appId);
     }
 

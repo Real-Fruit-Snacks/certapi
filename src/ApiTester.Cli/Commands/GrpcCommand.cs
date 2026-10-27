@@ -486,11 +486,18 @@ public static class GrpcCommand
         // piping something into one of those can never hang the call or change its request.
         var messages = new List<string>(dataValues);
         if (dataFileContent is not null) messages.Add(dataFileContent);
-        string? line;
-        while ((line = input.ReadLine()) is not null)
+        // Only piped input: at a terminal there is nothing to read to the end of, and the call
+        // would wait for Ctrl+Z/Ctrl+D before doing anything (Ctrl+C cannot reach a blocked read).
+        if (!ReferenceEquals(input, Console.In) || Console.IsInputRedirected)
         {
-            if (!string.IsNullOrWhiteSpace(line)) messages.Add(line);
+            string? line;
+            while ((line = input.ReadLine()) is not null)
+            {
+                if (!string.IsNullOrWhiteSpace(line)) messages.Add(line);
+            }
         }
+        else if (messages.Count == 0)
+            throw new CliUsageException($"{service}/{methodName} takes a stream of messages: give them with -d (repeatable), --data-file, or pipe one per line on stdin.");
 
         return methodInfo.ServerStreaming
             ? await RunDuplexAsync(caller, service, methodName, messages, metadata, maxMessages, stdout, stderr, json, quiet, services, ct)
@@ -749,7 +756,9 @@ public static class GrpcCommand
             try { return CliWorkspace.Load(null, services.LiveStatePath, stderr); }
             catch (CliDataException ex)
             {
-                stderr.WriteLine($"warning: could not read the live state ({ex.Message}) — continuing without saved tokens/environments");
+                string? kept = AppState.PreserveUnreadable(services.LiveStatePath);
+                stderr.WriteLine($"warning: could not read the live state ({ex.Message}) — continuing without saved tokens/environments" +
+                                 (kept is null ? "" : $"; the file was kept as {kept}"));
                 return new AppState();
             }
         }
