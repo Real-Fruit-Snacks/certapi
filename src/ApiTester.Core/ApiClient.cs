@@ -923,8 +923,7 @@ public sealed class ApiClient : IDisposable
             message.VersionPolicy = HttpVersionPolicy.RequestVersionExact;
         }
 
-        foreach (var header in headers)
-            message.Headers.TryAddWithoutValidation(header.Key, header.Value);
+        var bodyHeaders = ContentHeaders.AddRequestHeaders(message, headers);
 
         // A redirect that drops the body drops the entity entirely — no content, and so no
         // Content-Type describing one.
@@ -962,6 +961,10 @@ public sealed class ApiClient : IDisposable
                 message.Content.Headers.ContentType = MediaTypeHeaderValue.Parse(request.ContentType);
         }
 
+        // A typed Content-Type header names the body's type when nothing else did; a multipart
+        // body's own type (it carries the boundary) is never replaced.
+        ContentHeaders.ApplyTo(message.Content, bodyHeaders,
+            keepContentType: request.ContentType is not null || request.Parts is { Count: > 0 });
         return message;
     }
 

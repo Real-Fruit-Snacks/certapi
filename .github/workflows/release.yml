@@ -18,8 +18,29 @@ jobs:
     runs-on: windows-latest
 
     steps:
+      # A manual run builds the tag it was given, not whatever branch it was dispatched from — the
+      # binaries, the source zip and SHA256SUMS published under a tag must be that tag's. A tag that
+      # does not exist fails here, before anything is built or created.
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          ref: ${{ github.ref_type == 'tag' && github.ref || format('refs/tags/{0}', inputs.tag) }}
+
+      # The exe reports the <Version> in its project; a tag that disagrees would make `certapi update`
+      # and the app see this release as newer than themselves forever.
+      - name: Check the projects carry the tag's version
+        shell: bash
+        env:
+          TAG: ${{ github.ref_type == 'tag' && github.ref_name || inputs.tag }}
+        run: |
+          VERSION="${TAG#v}"
+          for proj in src/ApiTester.App/ApiTester.App.csproj src/ApiTester.Cli/ApiTester.Cli.csproj; do
+            FOUND=$(sed -n 's:.*<Version>\(.*\)</Version>.*:\1:p' "$proj" | head -1)
+            if [ "$FOUND" != "$VERSION" ]; then
+              echo "::error file=$proj::<Version> is '$FOUND' but the tag is $TAG — bump it before releasing."
+              exit 1
+            fi
+          done
 
       - name: Set up .NET 9
         uses: actions/setup-dotnet@v6

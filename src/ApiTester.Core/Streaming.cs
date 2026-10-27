@@ -128,6 +128,10 @@ public sealed class WebSocketSession : IAsyncDisposable
 
     private HttpMessageInvoker? _invoker;
 
+    /// <summary>Why the stream stopped when the connection broke rather than closing — a reset, an
+    /// abort — so a caller can tell that from a clean close; null otherwise.</summary>
+    public string? Fault { get; private set; }
+
     public Task SendTextAsync(string text, CancellationToken ct = default) =>
         _ws.SendAsync(Encoding.UTF8.GetBytes(text), WebSocketMessageType.Text, endOfMessage: true, ct);
 
@@ -145,7 +149,7 @@ public sealed class WebSocketSession : IAsyncDisposable
             {
                 // yield can't appear inside try/catch, so a fault sets a flag and we break out to yield after.
                 try { result = await _ws.ReceiveAsync(buffer, ct); }
-                catch (WebSocketException) { faulted = true; }
+                catch (WebSocketException ex) { faulted = true; Fault = ex.Message; }
                 catch (OperationCanceledException) { faulted = true; }
                 if (faulted) break;
                 if (result!.MessageType == WebSocketMessageType.Close) break;

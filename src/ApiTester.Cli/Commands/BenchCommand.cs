@@ -189,6 +189,12 @@ public static class BenchCommand
             headerPairs.Add(new(R(raw[..colon].Trim()), R(raw[(colon + 1)..].Trim())));
         }
         if (bearer is not null) headerPairs.Add(new("Authorization", "Bearer " + R(bearer)));
+        // A Content-Type typed with -H describes the body, as it does on send (and in curl).
+        if (contentType is null && headerPairs.LastOrDefault(h => h.Key.Equals("Content-Type", StringComparison.OrdinalIgnoreCase)) is { Key: not null } typedType)
+        {
+            contentType = typedType.Value;
+            headerPairs.RemoveAll(h => h.Key.Equals("Content-Type", StringComparison.OrdinalIgnoreCase));
+        }
 
         ApiRequest request;
         TransportOptions baseline;

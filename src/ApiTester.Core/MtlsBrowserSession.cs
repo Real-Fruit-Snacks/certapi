@@ -56,12 +56,14 @@ public sealed class MtlsBrowserSession : IDisposable
         using var message = new HttpRequestMessage(new HttpMethod(method), uri);
 
         string? headerContentType = contentType;
+        var kept = new List<KeyValuePair<string, string>>();
         foreach (var h in headers)
         {
             if (h.Key.Equals("Content-Type", StringComparison.OrdinalIgnoreCase)) { headerContentType ??= h.Value; continue; }
             if (SkipRequestHeaders.Contains(h.Key)) continue;
-            message.Headers.TryAddWithoutValidation(h.Key, h.Value);
+            kept.Add(h);
         }
+        var bodyHeaders = ContentHeaders.AddRequestHeaders(message, kept);
 
         if (body is { Length: > 0 })
         {
@@ -69,6 +71,7 @@ public sealed class MtlsBrowserSession : IDisposable
             if (!string.IsNullOrEmpty(headerContentType) &&
                 MediaTypeHeaderValue.TryParse(headerContentType, out var mt))
                 message.Content.Headers.ContentType = mt;
+            ContentHeaders.ApplyTo(message.Content, bodyHeaders, keepContentType: true);
         }
 
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();

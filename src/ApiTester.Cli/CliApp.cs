@@ -153,18 +153,29 @@ public static class CliApp
         services ??= new CliServices();
         // Commands that read stdin (mcp/fuzz/ws/grpc) or stream to stdout (sse) run through here so
         // they get the reader; everything else falls through to the reader-less overload below.
-        if (args.Length > 0 && IsStreamingCommand(args[0]))
+        // The command is the first word that is not a global option, wherever those sit: global
+        // options work anywhere on the line, before the command included.
+        (string[] Remaining, bool Debug, string? LogFile, string? Config, string? Profile, bool NoConfig,
+         bool Trace, string? TraceFile, IReadOnlyList<string> TraceFilters, bool TraceVerbose, bool TraceIncludeSecrets) g = default;
+        bool streaming = false;
+        if (args.Length > 0 && args[0] != "__complete")
         {
-            string cmd = args[0].ToLowerInvariant();
-            (string[] Remaining, bool Debug, string? LogFile, string? Config, string? Profile, bool NoConfig,
-             bool Trace, string? TraceFile, IReadOnlyList<string> TraceFilters, bool TraceVerbose, bool TraceIncludeSecrets) g;
-            try { g = GlobalOptions.ExtractEverything(args.Skip(1).ToArray()); }
-            catch (CliUsageException ex) { stderr.WriteLine(ex.Message); return ExitCodes.Usage; }
+            try
+            {
+                g = GlobalOptions.ExtractEverything(args);
+                streaming = g.Remaining.Length > 0 && IsStreamingCommand(g.Remaining[0]);
+            }
+            catch (CliUsageException) { /* the overload below reports it */ }
+        }
+        if (streaming)
+        {
+            string cmd = g.Remaining[0].ToLowerInvariant();
+            g.Remaining = g.Remaining[1..];
 
             using var log = CliLog.Create(g.Debug, g.LogFile, stderr);
             services.Log = log;
-            var err = log.WrapStderr(stderr);
-        TransportFlags.Warn = err.WriteLine;
+                var err = log.WrapStderr(stderr);
+            TransportFlags.Warn = err.WriteLine;
             // The streaming commands trace too: a hanging WebSocket handshake is exactly the case
             // this exists for, and a flag that worked on `send` but not `ws` would be a trap.
             using var trace = StartTrace(g.Trace, g.TraceVerbose, g.TraceFilters, g.TraceFile, g.TraceIncludeSecrets, err);
@@ -181,7 +192,7 @@ public static class CliApp
                     "ws"   => Commands.WsCommand.Run(new Args(g.Remaining), input, stdout, err, services),
                     "sse"  => Commands.SseCommand.Run(new Args(g.Remaining), stdout, err, services),
                     "grpc" => Commands.GrpcCommand.Run(new Args(g.Remaining), input, stdout, err, services),
-                    _      => throw new CliUsageException($"Unknown command '{args[0]}'.\n{Usage}")
+                    _      => throw new CliUsageException($"Unknown command '{cmd}'.\n{Usage}")
                 };
             }
             catch (CliUsageException ex) { err.WriteLine(ex.Message); return ExitCodes.Usage; }
@@ -216,6 +227,8 @@ public static class CliApp
         using var log = CliLog.Create(g.Debug, g.LogFile, stderr);
         services.Log = log;
         var err = log.WrapStderr(stderr);
+        // Every command names the NO_PROXY entries it cannot honour, not only the streaming ones.
+        TransportFlags.Warn = err.WriteLine;
         // Started before anything connects, so the very first DNS lookup and handshake are seen.
         using var trace = StartTrace(g.Trace, g.TraceVerbose, g.TraceFilters, g.TraceFile, g.TraceIncludeSecrets, err);
         try
@@ -228,7 +241,8 @@ public static class CliApp
             // Before the profile is resolved: help must work even when the configuration is broken.
             if (PrintedHelp(command, rest, stdout)) return ExitCodes.Ok;
             // `config init` writes a configuration, so it must work when the current one is broken.
-            bool writesConfig = command == "config" && rest.FirstOrDefault()?.Equals("init", StringComparison.OrdinalIgnoreCase) == true;
+            bool writesConfig = command == "config" &&
+                rest.FirstOrDefault(a => !a.StartsWith('-'))?.Equals("init", StringComparison.OrdinalIgnoreCase) == true;
             if (!writesConfig) services.Profile = ResolveProfile(g.Config, g.Profile, g.NoConfig, services, log);
             else services.ExplicitConfigPath = g.Config;
             return command switch

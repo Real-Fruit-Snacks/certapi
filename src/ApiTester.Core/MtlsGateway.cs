@@ -496,12 +496,15 @@ public sealed class MtlsGateway : IDisposable
         using var message = new HttpRequestMessage(new HttpMethod(request.Method), uri!);
 
         string? contentType = request.ContentType;
+        var forwarded = new List<KeyValuePair<string, string>>();
         foreach (var h in request.Headers)
         {
             if (HopByHop.Is(h.Key)) continue;
             if (h.Key.Equals("Content-Type", StringComparison.OrdinalIgnoreCase)) { contentType ??= h.Value; continue; }
-            message.Headers.TryAddWithoutValidation(h.Key, h.Value);
+            forwarded.Add(h);
         }
+        // Content-Encoding, Content-Language, Content-Disposition … travel with the body.
+        var bodyHeaders = ContentHeaders.AddRequestHeaders(message, forwarded);
 
         if (MethodAllowsBody(request.Method))
         {
@@ -520,6 +523,7 @@ public sealed class MtlsGateway : IDisposable
             }
             if (!string.IsNullOrEmpty(contentType) && MediaTypeHeaderValue.TryParse(contentType, out var mt))
                 message.Content.Headers.ContentType = mt;
+            ContentHeaders.ApplyTo(message.Content, bodyHeaders, keepContentType: true);
         }
 
         // The per-request timeout covers the wait for the upstream's headers only; the body streams

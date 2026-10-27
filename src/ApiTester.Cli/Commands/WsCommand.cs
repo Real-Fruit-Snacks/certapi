@@ -85,10 +85,16 @@ public static class WsCommand
         if (!noAutoToken && TokenService.AutoAttach(state, url, headerPairs, out _) is not null && !quiet)
             stderr.WriteLine($"using captured token for {TokenService.HostOf(url)}");
 
-        // Outgoing messages: explicit --message values first, then any lines piped on stdin.
+        // Outgoing messages: explicit --message values first, then any lines piped on stdin. Only
+        // piped: at a terminal, reading to the end first would wait for Ctrl+Z/Ctrl+D before even
+        // connecting — there, each typed line is sent as it is entered instead.
         var toSend = new List<string>(messages);
-        string? line;
-        while ((line = input.ReadLine()) is not null) toSend.Add(line);
+        bool interactive = ReferenceEquals(input, Console.In) && !Console.IsInputRedirected;
+        if (!interactive)
+        {
+            string? line;
+            while ((line = input.ReadLine()) is not null) toSend.Add(line);
+        }
 
         return RunAsync().GetAwaiter().GetResult();
 
@@ -116,6 +122,21 @@ public static class WsCommand
                 if (!quiet) stderr.WriteLine($"> {m}");
             }
 
+            if (interactive)
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        while (!services.Cancel.IsCancellationRequested &&
+                               await input.ReadLineAsync(services.Cancel) is { } typed)
+                        {
+                            await session.SendTextAsync(typed, services.Cancel);
+                            if (!quiet) stderr.WriteLine($"> {typed}");
+                        }
+                    }
+                    catch { /* the session ended or Ctrl+C: nothing more to send */ }
+                });
+
             int want = expect ?? int.MaxValue;   // no --expect ⇒ listen until close or Ctrl+C
             int got = 0;
             try
@@ -140,6 +161,12 @@ public static class WsCommand
             }
 
             await session.CloseAsync(CancellationToken.None);
+            if (session.Fault is { } fault && !services.Cancel.IsCancellationRequested)
+            {
+                // A reset is not a close: a script waiting on --expect must be able to tell.
+                stderr.WriteLine($"error: the connection broke after {got} message{(got == 1 ? "" : "s")}: {fault}");
+                return ExitCodes.Failure;
+            }
             if (!quiet) stderr.WriteLine($"closed ({got} message{(got == 1 ? "" : "s")} received).");
             return ExitCodes.Ok;
         }

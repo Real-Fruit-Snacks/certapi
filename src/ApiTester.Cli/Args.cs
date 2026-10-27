@@ -14,6 +14,7 @@ public sealed class Args
     public Args(IReadOnlyList<string> tokens)
     {
         var split = new List<string?>(tokens.Count);
+        var attached = new HashSet<int>();
         int literalFrom = int.MaxValue;
         foreach (var t in tokens)
         {
@@ -24,6 +25,7 @@ public sealed class Args
                 t[2..eq].All(c => char.IsLetterOrDigit(c) || c == '-' || c == '.'))
             {
                 split.Add(t[..eq]);
+                attached.Add(split.Count);   // this value was written --name=value: it is a value, whatever it looks like
                 split.Add(t[(eq + 1)..]);
                 continue;
             }
@@ -31,9 +33,14 @@ public sealed class Args
         }
         _tokens = split.ToArray();
         _literalFrom = literalFrom;   // tokens from here on are never option-shaped
+        _attached = attached;
     }
 
     private readonly int _literalFrom;
+    private readonly HashSet<int> _attached;
+
+    /// <summary>Where options can be: everything after a bare "--" is positional, whatever it looks like.</summary>
+    private int OptionEnd => Math.Min(_tokens.Length, _literalFrom);
     private readonly HashSet<string> _seen = new(StringComparer.OrdinalIgnoreCase);
     // Every option name a command asked about, aliases included: what "did you mean" picks from.
     private readonly HashSet<string> _asked = new(StringComparer.Ordinal);
@@ -90,7 +97,7 @@ public sealed class Args
     public bool Flag(params string[] names)
     {
         names = Expand(names);
-        for (int i = 0; i < _tokens.Length; i++)
+        for (int i = 0; i < OptionEnd; i++)
             if (_tokens[i] is { } t && AnyMatches(t, names))
             {
                 _tokens[i] = null;
@@ -130,7 +137,7 @@ public sealed class Args
     public string? Value(params string[] names)
     {
         names = Expand(names);
-        for (int i = 0; i < _tokens.Length; i++)
+        for (int i = 0; i < OptionEnd; i++)
         {
             if (_tokens[i] is not { } t || !AnyMatches(t, names)) continue;
             if (i + 1 >= _tokens.Length || _tokens[i + 1] is null)
@@ -139,7 +146,7 @@ public sealed class Args
             // "--cert --insecure" is a missing value, not a certificate called "--insecure". Only
             // a long-option shape is refused: a single-dash value ("-d -1", "-d -body") has always
             // been accepted adjacent to its option and still is.
-            if (i + 1 < _literalFrom && value.StartsWith("--", StringComparison.Ordinal) && value.Length > 2)
+            if (i + 1 < _literalFrom && !_attached.Contains(i + 1) && value.StartsWith("--", StringComparison.Ordinal) && value.Length > 2)
                 throw new CliUsageException($"Option {t} needs a value, but the next token is '{value}' (write {t}=... if the value really starts with a dash).");
             _tokens[i] = _tokens[i + 1] = null;
             _seen.Add(t);
@@ -155,13 +162,13 @@ public sealed class Args
     {
         value = null;
         names = Expand(names);
-        for (int i = 0; i < _tokens.Length; i++)
+        for (int i = 0; i < OptionEnd; i++)
         {
             if (_tokens[i] is not { } t || !AnyMatches(t, names)) continue;
             _tokens[i] = null;
             // The next token belongs to this option only when it could not be an option itself —
             // the same shape rule Positionals() uses — so "--cors --insecure" leaves --insecure be.
-            if (i + 1 < _tokens.Length && _tokens[i + 1] is { } next && !IsOptionShaped(i + 1, next))
+            if (i + 1 < _tokens.Length && _tokens[i + 1] is { } next && (_attached.Contains(i + 1) || !IsOptionShaped(i + 1, next)))
             {
                 value = next;
                 _tokens[i + 1] = null;

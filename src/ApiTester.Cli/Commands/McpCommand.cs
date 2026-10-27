@@ -179,6 +179,12 @@ public static class McpCommand
                 return new ToolResult(JsonSerializer.Serialize(new { error = refused }), true);
 
             var headerList = headers.ToList();
+            // A Content-Type given among the headers names the body's type, as on `certapi send`.
+            if (contentType is null && headerList.LastOrDefault(h => h.Key.Equals("Content-Type", StringComparison.OrdinalIgnoreCase)) is { Key: not null } typedType)
+            {
+                contentType = typedType.Value;
+                headerList.RemoveAll(h => h.Key.Equals("Content-Type", StringComparison.OrdinalIgnoreCase));
+            }
             var notes = new List<string>();
             if (!noAutoToken)
             {
