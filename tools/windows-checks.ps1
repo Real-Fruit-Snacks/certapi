@@ -315,8 +315,13 @@ Write-Host ""
 Write-Host "== Build and test suite" -ForegroundColor White
 
 function Invoke-Tests([string]$Filter, [string]$Trx) {
-    $r = Invoke-Exe $Dotnet.Source @('test', (Join-Path $Repo 'ApiTester.sln'), '--disable-build-servers', '-c', 'Release', '--no-build', '--filter', $Filter,
-        '--results-directory', (Join-Path $Work 'tests'), '--logger', "trx;LogFileName=$Trx") -TimeoutSec 3600 -WorkingDirectory $Repo
+    # The suite runs as CI runs it: the empty configuration set for the exe checks is not passed on
+    # (tests that build their own configuration would otherwise find this one instead).
+    Remove-Item Env:\CERTAPI_CONFIG -ErrorAction SilentlyContinue
+    try {
+        $r = Invoke-Exe $Dotnet.Source @('test', (Join-Path $Repo 'ApiTester.sln'), '--disable-build-servers', '-c', 'Release', '--no-build', '--filter', $Filter,
+            '--results-directory', (Join-Path $Work 'tests'), '--logger', "trx;LogFileName=$Trx") -TimeoutSec 3600 -WorkingDirectory $Repo
+    } finally { $env:CERTAPI_CONFIG = $NoConfig }
     [IO.File]::WriteAllText((Join-Path $Work "$Trx.log"), $r.Out + $r.Err)
     $path = Join-Path (Join-Path $Work 'tests') $Trx
     if (-not (Test-Path $path)) { return [pscustomobject]@{ Ran = $false; Code = $r.Code; Log = (Tail ($r.Out + $r.Err)) } }
@@ -387,8 +392,8 @@ Invoke-Check 'Publish the CLI and the app exactly as release.yml does' {
     New-Item -ItemType Directory -Path $released | Out-Null
     Copy-Item (Join-Path $PublishCli 'certapi.exe') $released
     $script:Exe = Join-Path $released 'certapi.exe'
-    $extraCli = @(Get-ChildItem $PublishCli -File | Where-Object { $_.Name -ne 'certapi.exe' -and $_.Extension -ne '.pdb' } | ForEach-Object { $_.Name })
-    $extraApp = @(Get-ChildItem $PublishApp -File | Where-Object { $_.Name -ne 'ApiTester.App.exe' -and $_.Extension -ne '.pdb' } | ForEach-Object { $_.Name })
+    $extraCli = @(Get-ChildItem $PublishCli -File | Where-Object { $_.Name -ne 'certapi.exe' -and $_.Extension -notin @('.pdb', '.xml') } | ForEach-Object { $_.Name })
+    $extraApp = @(Get-ChildItem $PublishApp -File | Where-Object { $_.Name -ne 'ApiTester.App.exe' -and $_.Extension -notin @('.pdb', '.xml') } | ForEach-Object { $_.Name })
     $note = "the checks below use certapi.exe alone, as a release user gets it"
     if ($extraCli.Count -gt 0) { $note += "`nleft beside certapi.exe (not in the release): " + ($extraCli -join ', ') }
     if ($extraApp.Count -gt 0) { $note += "`nleft beside ApiTester.App.exe (not in the release): " + ($extraApp -join ', ') }
@@ -630,11 +635,35 @@ if (-not $Network) {
     Invoke-Check 'HTTP/3, doctor through your proxy, update' { Skip 'run with -Network' }
 } else {
     Invoke-Check 'HTTP/3 from certapi.exe alone (as released)' {
-        $r = Invoke-Exe $script:Exe @('send', 'https://cloudflare.com/cdn-cgi/trace', '--http3') -TimeoutSec 60
-        $folder = Invoke-Exe (Join-Path $PublishCli 'certapi.exe') @('send', 'https://cloudflare.com/cdn-cgi/trace', '--http3') -TimeoutSec 60
-        $inFolder = $(if ($folder.Out -match 'http=http/3') { 'works' } else { 'fails too: ' + (Tail $folder.Err 2) })
-        if ($r.Out -match 'http=http/3') { Pass "answered over HTTP/3 (from the publish folder: $inFolder)" }
-        else { Fail ("no HTTP/3 from the exe alone: " + (Tail ($r.Out + $r.Err) 3) + "`nfrom the publish folder, with its other files: $inFolder`n(HTTP/3 is UDP and does not go through an HTTP proxy)") }
+        # Two public HTTP/3 servers; --http3 is exact, so exit 0 means QUIC was negotiated.
+        $targets = @('https://cloudflare.com/cdn-cgi/trace', 'https://www.google.com/generate_204')
+        function Try-H3([string]$Exe, [string[]]$Prefix = @()) {
+            foreach ($u in $targets) {
+                $r = Invoke-Exe $Exe ($Prefix + @('send', $u, '--http3')) -TimeoutSec 60
+                if ($r.Code -eq 0) { return "works ($u)" }
+                $last = Tail $r.Err 1
+            }
+            "fails: $last"
+        }
+        $alone = Try-H3 $script:Exe
+        $notes = @("certapi.exe alone: $alone")
+        # The same code, framework-dependent, on the installed .NET runtime: if this works and
+        # the exe does not, the single-file packaging is what lost QUIC.
+        $dll = Join-Path $Repo 'src\ApiTester.Cli\bin\Release\net9.0-windows\certapi.dll'
+        if (Test-Path $dll) { $notes += "the same build on the installed .NET (dotnet certapi.dll): " + (Try-H3 $Dotnet.Source @($dll)) }
+        $runtimeQuic = @(Get-ChildItem (Join-Path $env:ProgramFiles 'dotnet\shared\Microsoft.NETCore.App') -Recurse -Filter 'msquic.dll' -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName })
+        $notes += "msquic.dll in the installed .NET runtime: " + $(if ($runtimeQuic.Count) { $runtimeQuic -join ', ' } else { 'none' })
+        $notes += "msquic.dll in Windows: " + $(if (Test-Path (Join-Path $env:SystemRoot 'System32\msquic.dll')) { 'System32\msquic.dll' } else { 'none' })
+        $notes += "msquic.dll beside the published exe: " + $(if (Test-Path (Join-Path $PublishCli 'msquic.dll')) { 'yes' } else { 'no' })
+        # The suite's loopback HTTP/3 tests skip, saying so, where QUIC is not available at all.
+        $trx = Join-Path (Join-Path $Work 'tests') 'suite.trx'
+        if (Test-Path $trx) {
+            [xml]$x = Get-Content -Raw -Encoding UTF8 $trx
+            $h3 = @($x.TestRun.Results.UnitTestResult | Where-Object { $_.testName -like '*Http3Tests.A_pinned_*' } | ForEach-Object { $_.outcome })
+            $notes += "the suite's loopback HTTP/3 tests: " + $(if ($h3.Count) { ($h3 | Sort-Object -Unique) -join ', ' } else { 'not found' })
+        }
+        if ($alone -like 'works*') { Pass ($notes -join "`n") }
+        else { Fail (($notes + '(HTTP/3 is UDP: a firewall that blocks outbound UDP 443, or a proxy-only network, stops it)') -join "`n") }
     }
 
     Invoke-Check 'doctor https://github.com through this machine''s network' {

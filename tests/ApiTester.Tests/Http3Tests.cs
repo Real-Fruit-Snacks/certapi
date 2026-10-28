@@ -13,9 +13,9 @@ namespace ApiTester.Tests;
 /// <summary>Pins the `--http3` contract. The wire test runs against a Kestrel endpoint that speaks
 /// HTTP/3 ONLY, so a client that did not actually negotiate QUIC cannot pass it — success IS the
 /// proof, with no version field to trust. Guarded by <see cref="System.Net.Quic.QuicListener.IsSupported"/>:
-/// on an OS without msquic the wire test records that it could not run and passes vacuously — the
-/// one sanctioned soft-pass in this suite, because failing on hardware the feature honestly
-/// documents as unsupported would teach nothing.</summary>
+/// on an OS without msquic the wire tests are reported as skipped, with the reason — failing on a
+/// machine the feature documents as unsupported would teach nothing, and passing would claim a
+/// check that never ran.</summary>
 public class Http3Tests
 {
     // ---------------------------------------------------------------- validation (pure, always runs)
@@ -50,12 +50,9 @@ public class Http3Tests
 
     // ---------------------------------------------------------------- the wire (QUIC-gated)
 
-    [Fact]
+    [QuicFact]
     public async Task A_pinned_http3_request_reaches_an_h3_only_server()
     {
-        if (!System.Net.Quic.QuicListener.IsSupported)
-            return;   // no msquic on this OS — the guard the feature's own docs promise
-
         using var ca = SelfSignedCertificateFactory.CreateCertificateAuthority("CA");
         using var serverCert = SelfSignedCertificateFactory.CreateSignedCertificate(
             "localhost", ca, true, false, new[] { "localhost" });
@@ -93,12 +90,9 @@ public class Http3Tests
         finally { await app.StopAsync(); await app.DisposeAsync(); }
     }
 
-    [Fact]
+    [QuicFact]
     public async Task A_pinned_http2_request_fails_loudly_against_an_h3_only_server()
     {
-        if (!System.Net.Quic.QuicListener.IsSupported)
-            return;   // same guard, same reason
-
         using var ca = SelfSignedCertificateFactory.CreateCertificateAuthority("CA");
         using var serverCert = SelfSignedCertificateFactory.CreateSignedCertificate(
             "localhost", ca, true, false, new[] { "localhost" });
@@ -132,5 +126,16 @@ public class Http3Tests
             Assert.False(response.IsSuccess);
         }
         finally { await app.StopAsync(); await app.DisposeAsync(); }
+    }
+}
+
+/// <summary>A test that needs QUIC (msquic). Reported as skipped, with the reason, where the
+/// machine has none, rather than passing without having run.</summary>
+public sealed class QuicFactAttribute : FactAttribute
+{
+    public QuicFactAttribute()
+    {
+        if (!System.Net.Quic.QuicListener.IsSupported)
+            Skip = "QUIC (msquic) is not available on this machine, so HTTP/3 cannot be tested here.";
     }
 }

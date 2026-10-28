@@ -240,9 +240,9 @@ public static class CompletionCommand
     private static IEnumerable<string> ProfileNames(CliServices services) => Safe(() =>
     {
         var source = ConfigLoader.Discover(null, services.WorkingDirectory, services.UserConfigPath,
-            environment: null, fileExists: services.FileExists);
+            environment: services.Environment, fileExists: services.FileExists);
         if (source is null) return [];
-        return ConfigLoader.Parse(File.ReadAllText(source.Path), source).Profiles.Keys;
+        return ConfigLoader.Parse(File.ReadAllText(source.Path), source, services.Environment).Profiles.Keys;
     });
 
     private static IEnumerable<string> CollectionNames(CliServices services) => Safe(() =>

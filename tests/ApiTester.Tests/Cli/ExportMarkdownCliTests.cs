@@ -18,6 +18,8 @@ public class ExportMarkdownCliTests : IDisposable
     {
         WorkingDirectory = _dir,
         UserConfigPath = null,
+        // A CERTAPI_CONFIG set on the machine running the suite must not reach these tests.
+        Environment = name => name == ConfigLoader.EnvironmentVariable ? null : System.Environment.GetEnvironmentVariable(name),
         LiveStatePath = Path.Combine(_dir, "state.json"),
         FileExists = path => path.StartsWith(_dir, StringComparison.OrdinalIgnoreCase) && File.Exists(path)
     };

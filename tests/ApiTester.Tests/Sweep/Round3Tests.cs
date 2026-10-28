@@ -172,4 +172,21 @@ public class Round3Tests
         Assert.Contains(tls.Detail, d => d.Contains("asked for one without naming", StringComparison.Ordinal) ||
                                          d.Contains("accepts client certificates from", StringComparison.Ordinal));
     }
+
+    [Fact]
+    public void Configuration_discovery_reads_the_environment_through_the_services()
+    {
+        // CERTAPI_CONFIG comes from CliServices.Environment, the seam every other variable uses,
+        // so a test (or a host) decides what it sees instead of the machine's own environment.
+        string missing = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName() + ".json");
+        var err = new StringWriter();
+        int code = CliApp.Run(["--version"], new StringWriter(), err, new MemoryStream(), new CliServices
+        {
+            LiveStatePath = TempFile(".json"), UserConfigPath = null,
+            WorkingDirectory = Path.GetTempPath(),
+            Environment = name => name == ConfigLoader.EnvironmentVariable ? missing : null,
+        });
+        Assert.Equal(ExitCodes.Data, code);
+        Assert.Contains(ConfigLoader.EnvironmentVariable, err.ToString());
+    }
 }

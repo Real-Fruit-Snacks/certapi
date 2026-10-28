@@ -337,7 +337,7 @@ public static class CliApp
         {
             source = ConfigLoader.Discover(
                 configPath, services.WorkingDirectory, services.UserConfigPath,
-                environment: null, fileExists: services.FileExists);
+                environment: services.Environment, fileExists: services.FileExists);
         }
         catch (ConfigException ex) { throw new CliDataException(ex.Message); }
 
@@ -356,7 +356,7 @@ public static class CliApp
 
         try
         {
-            var config = ConfigLoader.Parse(File.ReadAllText(source.Path), source);
+            var config = ConfigLoader.Parse(File.ReadAllText(source.Path), source, services.Environment);
             var profile = config.Resolve(profileName);
             if (profile is not null)
                 log.Debug($"configuration: {source.Path} ({source.Rule}), profile '{profileName ?? config.DefaultProfile}'");

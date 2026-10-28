@@ -11,6 +11,8 @@ public class CompletionTests
     {
         LiveStatePath = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName() + ".json"),
         UserConfigPath = null,
+        // A CERTAPI_CONFIG set on the machine running the suite must not reach these tests.
+        Environment = name => name == ConfigLoader.EnvironmentVariable ? null : System.Environment.GetEnvironmentVariable(name),
         WorkingDirectory = workingDirectory ?? Path.Combine(Path.GetTempPath(), Path.GetRandomFileName()),
         ListCertificates = _ => new[]
         {
