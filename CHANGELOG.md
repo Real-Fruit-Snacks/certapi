@@ -6,6 +6,12 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.95.0] - 2026-10-28
+
+HTTP/3 works in the released exes, and the release is checked on a real Windows machine. Two
+sweeps for bugs and for the accuracy of the docs: credentials kept out of exports, logs and MCP
+resources, data that could be lost now kept, and Windows behaviour checked rather than assumed.
+
 ### Added
 - **`tools\windows-checks.ps1`**, for checking a build on a real Windows machine: the test suite,
   then the `certapi.exe` a release ships, run alone against local test servers (console encoding,
@@ -3036,7 +3042,8 @@ Initial release.
 - Save any response (including binary) to a file.
 - Self-contained single-file executable — no installer, no admin rights, no runtime dependency.
 
-[Unreleased]: https://github.com/Real-Fruit-Snacks/certapi/compare/v1.94.0...HEAD
+[Unreleased]: https://github.com/Real-Fruit-Snacks/certapi/compare/v1.95.0...HEAD
+[1.95.0]: https://github.com/Real-Fruit-Snacks/certapi/compare/v1.94.0...v1.95.0
 [1.94.0]: https://github.com/Real-Fruit-Snacks/certapi/compare/v1.93.0...v1.94.0
 [1.93.0]: https://github.com/Real-Fruit-Snacks/certapi/compare/v1.92.3...v1.93.0
 [1.92.3]: https://github.com/Real-Fruit-Snacks/certapi/compare/v1.92.2...v1.92.3
