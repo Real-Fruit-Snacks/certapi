@@ -216,7 +216,7 @@ same applies to [`--wire`](#send), which needs the direct path.
 |---|---|---|
 | `--http1.1` | negotiated | Pin the request to HTTP/1.1 |
 | `--http2` | negotiated | Pin the request to HTTP/2. Required by [`--frames`](#send) |
-| `--http3` | negotiated | Pin the request to HTTP/3 (QUIC, over UDP). Needs Windows 11 or Server 2022 or later. **Cannot** be combined with a proxy or `--resolve`, and the command refuses the combination rather than silently ignoring one of them |
+| `--http3` | negotiated | Pin the request to HTTP/3 (QUIC, over UDP). Needs Windows 11 or Server 2022 or later, and `msquic.dll` (part of each release) beside `certapi.exe`; without it the request is refused with a message saying where to put it. **Cannot** be combined with a proxy or `--resolve`, and the command refuses the combination rather than silently ignoring one of them |
 | `--no-decompress` | off | Relay compressed bytes exactly as received instead of decoding `gzip`/`deflate`/`br`. What you want when the *encoding* is the thing under test |
 | `--resolve <host:port:ip>` | none | Pin a hostname to an address — test one node behind a load balancer, or an endpoint whose DNS is not updated yet. Repeatable. Not valid with a proxy, which does its own resolving |
 
@@ -1316,7 +1316,9 @@ certapi update [--check] [--version <tag>] [--no-app] [--force] [transport optio
 
 Looks up the latest [release](https://github.com/Real-Fruit-Snacks/certapi/releases) and, when it is
 newer than the copy you are running, downloads it and replaces `certapi.exe` — and
-`ApiTester.App.exe` too, when the desktop app sits in the same folder. Every file is checked against
+`ApiTester.App.exe` too, when the desktop app sits in the same folder — with `msquic.dll`, the
+library [`--http3`](#protocol) needs, beside them. A copy that is already current
+but has no `msquic.dll` (the exe downloaded on its own) gets just that file. Every file is checked against
 the SHA-256 GitHub publishes for it (the asset's digest, or the release's `SHA256SUMS.txt`) before
 anything is replaced. A file that does not match is discarded, nothing changes, and the exit code is 1.
 

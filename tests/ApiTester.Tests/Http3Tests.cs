@@ -41,6 +41,28 @@ public class Http3Tests
     }
 
     [Fact]
+    public void A_single_file_windows_build_without_msquic_says_where_to_put_it()
+    {
+        string? why = ApiClient.Http3Unavailable(quicAvailable: false, isWindows: true, singleFile: true,
+            @"C:\Tools\certapi\", _ => false);
+        Assert.NotNull(why);
+        Assert.Contains("msquic.dll beside this program, in C:\\Tools\\certapi.", why);
+        Assert.Contains("certapi update", why);
+    }
+
+    [Fact]
+    public void Http3_availability_is_reported_for_each_reason()
+    {
+        // QUIC loaded: nothing to say.
+        Assert.Null(ApiClient.Http3Unavailable(true, isWindows: true, singleFile: true, @"C:\x\", _ => false));
+        // msquic.dll is beside the exe but would not load: an OS too old for it.
+        Assert.Contains("Windows 11", ApiClient.Http3Unavailable(false, isWindows: true, singleFile: true, @"C:\x\", _ => true));
+        // Not a single file (dotnet certapi.dll): the runtime's own msquic is what failed.
+        Assert.Contains("Windows 11", ApiClient.Http3Unavailable(false, isWindows: true, singleFile: false, @"C:\x\", _ => false));
+        Assert.Contains("libmsquic", ApiClient.Http3Unavailable(false, isWindows: false, singleFile: false, "/opt/x/", _ => false));
+    }
+
+    [QuicFact]   // where QUIC is missing, validation rightly refuses --http3 itself
     public void Http3_direct_with_no_proxy_in_play_passes_validation()
     {
         Assert.Null(ApiClient.ValidateTransport(

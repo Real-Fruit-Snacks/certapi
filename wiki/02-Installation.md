@@ -16,14 +16,16 @@ Grab the latest release from the repository's **Releases** page. Each release at
 |---|---|
 | `ApiTester.App.exe` | The desktop app (self-contained, x64) |
 | `certapi.exe` | The command-line client (self-contained, x64) |
+| `msquic.dll` | The QUIC library HTTP/3 needs. Keep it in the same folder as the `.exe` files; everything else works without it |
 | `common-api-endpoints.txt` | A starter wordlist for [endpoint discovery](14-Endpoint-Discovery.md) |
 | `certapi-source-<tag>.zip` | The full repository source at that tag |
 | `SHA256SUMS.txt` | The SHA-256 of each file |
 | `certapi.json` | A [Scoop](https://scoop.sh) manifest: `scoop install https://github.com/Real-Fruit-Snacks/certapi/releases/latest/download/certapi.json` |
 
 Both `.exe` files are **portable** — no installer, no admin rights. Put them anywhere (a USB
-(Universal Serial Bus) stick, a locked-down VM (virtual machine)) and run them. To use `certapi` from
-any prompt, drop `certapi.exe` in a folder that's on your `PATH`.
+(Universal Serial Bus) stick, a locked-down VM (virtual machine)) and run them, with `msquic.dll`
+beside them if you want `--http3`. To use `certapi` from any prompt, drop `certapi.exe` (and
+`msquic.dll`) in a folder that's on your `PATH`.
 
 ## First run
 

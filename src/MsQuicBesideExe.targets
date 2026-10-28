@@ -1,0 +1,24 @@
+<Project>
+  <!--
+    HTTP/3 needs msquic.dll, and a single-file publish leaves it out: the .NET runtime pack marks it
+    DropFromSingleFile, so it is neither bundled nor copied. System.Net.Quic, in a single-file app,
+    then looks for it in exactly one place, beside the exe (AppContext.BaseDirectory), and finds
+    nothing: every HTTP/3 request fails. This puts it back in the publish folder, beside the exe
+    and outside the bundle, where the release, certapi update and Scoop pick it up.
+  -->
+  <Target Name="KeepMsQuicBesideSingleFileExe"
+          AfterTargets="ComputeResolvedFilesToPublishList"
+          Condition="'$(PublishSingleFile)' == 'true' and $(RuntimeIdentifier.StartsWith('win'))">
+    <ItemGroup>
+      <_MsQuicDroppedFromSingleFile Include="@(_FilesToDrop)" Condition="'%(Filename)%(Extension)' == 'msquic.dll'" />
+      <ResolvedFileToPublish Include="@(_MsQuicDroppedFromSingleFile)">
+        <DropFromSingleFile>false</DropFromSingleFile>
+        <ExcludeFromSingleFile>true</ExcludeFromSingleFile>
+        <RelativePath>msquic.dll</RelativePath>
+        <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+      </ResolvedFileToPublish>
+    </ItemGroup>
+    <Error Condition="'@(_MsQuicDroppedFromSingleFile)' == ''"
+           Text="msquic.dll is not among the files a single-file publish drops, so it cannot be kept beside the exe and HTTP/3 may not work. The .NET runtime pack has changed: check how this .NET version ships msquic.dll before releasing." />
+  </Target>
+</Project>

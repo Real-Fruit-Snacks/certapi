@@ -15,6 +15,7 @@ public class UpdateCommandTests
 {
     private const string NewCli = "new certapi.exe bytes";
     private const string NewApp = "new ApiTester.App.exe bytes";
+    private const string NewQuic = "new msquic.dll bytes";
 
     private static string Sha(string text) => Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(text)));
 
@@ -28,13 +29,14 @@ public class UpdateCommandTests
     }
 
     /// <summary>A releases API with one release, its assets served by the same server.</summary>
-    private static MockServer Feed(int port, string tag, bool digests = true, string? cliBody = null, bool sums = false)
+    private static MockServer Feed(int port, string tag, bool digests = true, string? cliBody = null, bool sums = false, bool quic = false)
     {
         string dl = $"http://127.0.0.1:{port}/dl";
         object Asset(string name, string body) => digests
             ? new { name, browser_download_url = $"{dl}/{name}", size = body.Length, digest = (string?)("sha256:" + Sha(body)) }
             : new { name, browser_download_url = $"{dl}/{name}", size = body.Length, digest = (string?)null };
         var assets = new List<object> { Asset("certapi.exe", NewCli), Asset("ApiTester.App.exe", NewApp) };
+        if (quic) assets.Add(Asset("msquic.dll", NewQuic));
         if (sums) assets.Add(Asset("SHA256SUMS.txt", $"{Sha(NewCli)}  certapi.exe\n{Sha(NewApp)} *ApiTester.App.exe\n"));
         string release = JsonSerializer.Serialize(new { tag_name = tag, html_url = $"https://example.invalid/{tag}", assets });
         var routes = new object[]
@@ -44,6 +46,7 @@ public class UpdateCommandTests
             new { match = new { path = "/releases/tags/*" }, respond = new { status = 404, body = "{}" } },
             new { match = new { path = "/dl/certapi.exe" }, respond = new { status = 200, body = cliBody ?? NewCli } },
             new { match = new { path = "/dl/ApiTester.App.exe" }, respond = new { status = 200, body = NewApp } },
+            new { match = new { path = "/dl/msquic.dll" }, respond = new { status = 200, body = NewQuic } },
             new { match = new { path = "/dl/SHA256SUMS.txt" }, respond = new { status = 200, body = $"{Sha(NewCli)}  certapi.exe\n{Sha(NewApp)} *ApiTester.App.exe\n" } },
         };
         var scenario = MockScenario.Parse(JsonSerializer.Serialize(new { routes }));
@@ -293,5 +296,66 @@ public class UpdateCommandTests
         Assert.Equal(new string('a', 64), map["certapi.exe"]);
         Assert.Equal(new string('b', 64), map["App.exe"]);
         Assert.Equal(2, map.Count);
+    }
+
+    [Fact]
+    public async Task An_update_installs_msquic_beside_the_exes_when_the_release_has_it()
+    {
+        int port = FreePort();
+        await using var feed = Feed(port, "v99.0.0", quic: true);
+        using var i = Installed();
+        var r = Run(i, port);
+        Assert.True(r.Code == 0, r.Err);
+        Assert.Equal(NewQuic, File.ReadAllText(Path.Combine(i.Dir, "msquic.dll")));
+        Assert.Equal(NewCli, File.ReadAllText(i.Exe));
+        Assert.Equal(NewApp, File.ReadAllText(i.App));
+    }
+
+    [Fact]
+    public async Task A_current_copy_without_msquic_gets_only_msquic()
+    {
+        int port = FreePort();
+        await using var feed = Feed(port, "v" + CliApp.ProductVersion, quic: true);
+        using var i = Installed();
+        var r = Run(i, port);
+        Assert.True(r.Code == 0, r.Err);
+        Assert.Equal(NewQuic, File.ReadAllText(Path.Combine(i.Dir, "msquic.dll")));
+        Assert.Equal("old cli", File.ReadAllText(i.Exe));      // the exes are already this release
+        Assert.Equal("old app", File.ReadAllText(i.App));
+        Assert.Contains("added what it was missing (msquic.dll", r.Out);
+    }
+
+    [Fact]
+    public async Task A_current_copy_with_msquic_is_left_alone()
+    {
+        int port = FreePort();
+        await using var feed = Feed(port, "v" + CliApp.ProductVersion, quic: true);
+        using var i = Installed();
+        File.WriteAllText(Path.Combine(i.Dir, "msquic.dll"), "installed msquic");
+        var r = Run(i, port);
+        Assert.Equal(0, r.Code);
+        Assert.Contains("is already the latest release", r.Out);
+        Assert.Equal("installed msquic", File.ReadAllText(Path.Combine(i.Dir, "msquic.dll")));
+    }
+
+    [Fact]
+    public async Task A_release_without_msquic_still_updates_and_leaves_none()
+    {
+        int port = FreePort();
+        await using var feed = Feed(port, "v99.0.0", quic: false);
+        using var i = Installed();
+        var r = Run(i, port);
+        Assert.True(r.Code == 0, r.Err);
+        Assert.Equal(NewCli, File.ReadAllText(i.Exe));
+        Assert.False(File.Exists(Path.Combine(i.Dir, "msquic.dll")));
+    }
+
+    [Fact]
+    public void Start_up_cleanup_removes_an_old_msquic()
+    {
+        using var i = Installed();
+        File.WriteAllText(Path.Combine(i.Dir, "msquic.dll.old"), "left behind");
+        UpdateCommand.CleanUpPrevious(i.Exe);
+        Assert.False(File.Exists(Path.Combine(i.Dir, "msquic.dll.old")));
     }
 }

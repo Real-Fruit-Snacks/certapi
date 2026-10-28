@@ -27,6 +27,11 @@ All notable changes to this project are documented here. The format follows
   `postData`) instead of turning it into replacement characters.
 
 ### Changed
+- **Each release ships `msquic.dll`**, the QUIC library `--http3` needs, to keep beside
+  `certapi.exe` and `ApiTester.App.exe`. It is in `SHA256SUMS.txt` and the Scoop manifest, and
+  `certapi update` and the app's updater install it with the exes (a copy that is already current
+  but has no `msquic.dll` gets just that). Without it, `--http3` is refused with a message saying
+  where to put it.
 - CI and release workflows use `actions/checkout@v7`, `actions/setup-dotnet@v6` and
   `actions/upload-artifact@v7`, which run on Node 24; GitHub had warned that the `@v4` versions
   were being forced off the deprecated Node 20.
@@ -166,6 +171,9 @@ All notable changes to this project are documented here. The format follows
   - A mock server stopped accepting after one connection was reset in its backlog.
   - Progress counters on `bench` and `fuzz` could print after the final line.
 - **Windows.**
+  - `--http3` never worked in the released exes: the .NET runtime leaves `msquic.dll` out of a
+    single-file build, and a single-file app looks for it only beside the exe, so every HTTP/3
+    request failed with "unable to establish HTTP/3 connection". The release now ships it (above).
   - `--pac` passed WinHTTP two wrong flag values (they meant "keep host case" and "lowercase host").
   - `certapi proxy <url>` said DIRECT for a manual (static) system proxy, and then that the two
     engines disagreed.

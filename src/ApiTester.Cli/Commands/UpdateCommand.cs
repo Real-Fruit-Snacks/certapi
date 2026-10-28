@@ -12,8 +12,10 @@ public static class UpdateCommand
 
         Looks up the latest release of certapi on GitHub and, when it is newer than this copy,
         downloads it and replaces this certapi.exe — and ApiTester.App.exe too, when the desktop
-        app sits in the same folder. Every file is checked against the SHA-256 GitHub publishes for
-        it before anything is replaced; a file that does not match is discarded and nothing changes.
+        app sits in the same folder — with msquic.dll, the library --http3 needs, beside them. A copy
+        that is current but has no msquic.dll gets just that. Every file is checked against the
+        SHA-256 GitHub publishes for it before anything is replaced; a file that does not match is
+        discarded and nothing changes.
 
           --check           Only say whether a newer release exists. Exit 0 when this copy is
                             current, 1 when an update is available
@@ -69,6 +71,13 @@ public static class UpdateCommand
             int order = CompareVersions(release.Version, current);
             string? appPath = exe is null ? null : Path.Combine(Path.GetDirectoryName(exe) ?? ".", AppAsset);
             bool app = !noApp && appPath is not null && File.Exists(appPath);
+            // msquic.dll (HTTP/3) beside the exe: installed with every update, and on its own when
+            // this copy is current but arrived without it.
+            var companions = exe is null ? new List<(string Name, string Target)>()
+                : ReleaseUpdater.CompanionAssets(release)
+                    .Select(name => (Name: name, Target: Path.Combine(Path.GetDirectoryName(exe) ?? ".", name))).ToList();
+            bool companionMissing = companions.Any(c => !File.Exists(c.Target));
+            bool onlyCompanions = false;
 
             if (checkOnly)
             {
@@ -84,8 +93,13 @@ public static class UpdateCommand
 
             if (order == 0 && !force)
             {
-                stdout.WriteLine($"certapi {current} is already {(wanted is null ? "the latest release" : release.Tag)}. --force reinstalls it.");
-                return ExitCodes.Ok;
+                if (!companionMissing)
+                {
+                    stdout.WriteLine($"certapi {current} is already {(wanted is null ? "the latest release" : release.Tag)}. --force reinstalls it.");
+                    return ExitCodes.Ok;
+                }
+                onlyCompanions = true;
+                app = false;
             }
             if (order < 0 && wanted is null && !force)
             {
@@ -103,19 +117,22 @@ public static class UpdateCommand
                 throw new CliDataException("The desktop app is running. Close it and run update again (or use the app's own Help › About › Check for updates), or add --no-app to update only the command line.");
 
             // ---- download and verify everything before replacing anything ----
+            // In the order they are replaced: msquic.dll and the app first, the running command line
+            // last, so that if anything refuses, the command line is still the old, consistent one.
+            var plan = new List<(string Name, string Target)>(companions);
+            if (!onlyCompanions)
+            {
+                if (app) plan.Add((AppAsset, appPath!));
+                plan.Add((CliAsset, exe));
+            }
             var downloads = new List<(string Target, byte[] Bytes)>();
-            foreach (var (name, target) in app
-                         ? new[] { (CliAsset, exe), (AppAsset, appPath!) }
-                         : new[] { (CliAsset, exe) })
+            foreach (var (name, target) in plan)
             {
                 var bytes = updater.DownloadVerifiedAsync(release, name, services.Cancel).GetAwaiter().GetResult();
                 stderr.WriteLine($"downloaded {name} ({bytes.Length / 1048576.0:0.0} MB) from {release.Tag}; SHA-256 matches");
                 downloads.Add((target, bytes));
             }
 
-            // The app first: it is not running, so if anything is going to refuse, it is the one more
-            // likely to — and then the command line is still the old, consistent one.
-            downloads.Reverse();
             var done = new List<string>();
             foreach (var (target, bytes) in downloads)
             {
@@ -128,7 +145,9 @@ public static class UpdateCommand
                 done.Add(target);
                 stdout.WriteLine($"replaced {target}");
             }
-            stdout.WriteLine($"certapi {current} -> {release.Version}. Release notes: {release.Page}");
+            stdout.WriteLine(onlyCompanions
+                ? $"certapi {current} is already {(wanted is null ? "the latest release" : release.Tag)}; added what it was missing ({string.Join(", ", companions.Select(c => c.Name))}, for --http3)."
+                : $"certapi {current} -> {release.Version}. Release notes: {release.Page}");
             return ExitCodes.Ok;
         }
         catch (ReleaseUpdateException ex) when (ex.Problem is ReleaseProblem.NotFound or ReleaseProblem.MissingAsset)

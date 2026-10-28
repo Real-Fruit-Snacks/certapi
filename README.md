@@ -68,7 +68,7 @@ Body goes to stdout, diagnostics to stderr. Exit codes: 0 success Â· 1 failure Â
 - The Rendered view needs the Edge WebView2 runtime. Windows 11 ships it; without it that one tab says so and everything else works.
 - `certapi serve` does not proxy gRPC.
 - `--protoset` needs a descriptor set you already have. certapi does not compile `.proto` files.
-- `--http3` is Windows 11 / Server 2022 and direct connections only.
+- `--http3` is Windows 11 / Server 2022 and direct connections only, and needs the release's `msquic.dll` beside the exe (`certapi update` and Scoop install it).
 - Through a proxy, the TLS version, cipher and certificate-presented details are not visible. `--no-proxy` brings them back.
 - Over the plaintext gateway, `__Host-`/`__Secure-` cookies cannot work; `serve --tls` is the fix.
 - `serve --rewrite-body` rewrites a page's absolute URLs only when they are in a body it can read: UTF-8 text up to 32 MB. URLs a script builds at run time from pieces are out of its reach; `--vhost` gives each upstream its own origin and needs no rewriting.

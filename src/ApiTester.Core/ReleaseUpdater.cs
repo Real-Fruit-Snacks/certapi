@@ -53,6 +53,14 @@ public sealed class ReleaseUpdater
     public const string DefaultFeed = "https://api.github.com/repos/" + Repository + "/releases";
     public const string CliAsset = "certapi.exe";
     public const string AppAsset = "ApiTester.App.exe";
+    /// <summary>The QUIC library a single-file build loads HTTP/3 from, shipped beside the exes
+    /// (the .NET runtime leaves it out of a single-file publish). Older releases do not have it.</summary>
+    public const string QuicAsset = "msquic.dll";
+
+    /// <summary>The files to install beside the exes from <paramref name="release"/>: msquic.dll
+    /// when the release has it, so moving to an older release (which has none) still works.</summary>
+    public static IEnumerable<string> CompanionAssets(ReleaseInfo release) =>
+        release.Assets.Any(a => a.Name.Equals(QuicAsset, StringComparison.OrdinalIgnoreCase)) ? [QuicAsset] : [];
 
     private readonly ApiClient _client;
     private readonly TransportOptions _transport;
@@ -203,7 +211,7 @@ public sealed class ReleaseUpdater
         if (exe is null) return;
         string? dir = Path.GetDirectoryName(exe);
         if (dir is null) return;
-        foreach (var asset in new[] { CliAsset, AppAsset })
+        foreach (var asset in new[] { CliAsset, AppAsset, QuicAsset })
         {
             // .old, the .old-<id> copies moved aside while still running, and a .new left by an
             // update that stopped half way — only a stale one: a fresh .new may be an update in

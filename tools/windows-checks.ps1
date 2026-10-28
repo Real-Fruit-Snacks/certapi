@@ -387,14 +387,20 @@ Invoke-Check 'Publish the CLI and the app exactly as release.yml does' {
         if ($r.Code -ne 0) { Fail ("dotnet publish $($pair[0]) failed:`n" + (Tail ($r.Out + $r.Err))); return }
     }
     if (-not (Test-Path (Join-Path $PublishCli 'certapi.exe'))) { Fail 'publish produced no certapi.exe'; return }
-    # The release uploads certapi.exe and ApiTester.App.exe and nothing else.
+    # The release uploads certapi.exe, ApiTester.App.exe and the msquic.dll that HTTP/3 needs beside them.
+    $quicCli = Join-Path $PublishCli 'msquic.dll'
+    $quicApp = Join-Path $PublishApp 'msquic.dll'
+    if (-not (Test-Path $quicCli) -or -not (Test-Path $quicApp)) { Fail 'publish left out msquic.dll (see src\MsQuicBesideExe.targets): --http3 cannot work'; return }
+    if ((Get-FileHash $quicCli).Hash -ne (Get-FileHash $quicApp).Hash) { Fail 'the app and the command line were published with different msquic.dll files'; return }
     $released = Join-Path $Work 'released'
     New-Item -ItemType Directory -Path $released | Out-Null
     Copy-Item (Join-Path $PublishCli 'certapi.exe') $released
+    Copy-Item $quicCli $released
     $script:Exe = Join-Path $released 'certapi.exe'
-    $extraCli = @(Get-ChildItem $PublishCli -File | Where-Object { $_.Name -ne 'certapi.exe' -and $_.Extension -notin @('.pdb', '.xml') } | ForEach-Object { $_.Name })
-    $extraApp = @(Get-ChildItem $PublishApp -File | Where-Object { $_.Name -ne 'ApiTester.App.exe' -and $_.Extension -notin @('.pdb', '.xml') } | ForEach-Object { $_.Name })
-    $note = "the checks below use certapi.exe alone, as a release user gets it"
+    $shipped = @('certapi.exe', 'ApiTester.App.exe', 'msquic.dll')
+    $extraCli = @(Get-ChildItem $PublishCli -File | Where-Object { $_.Name -notin $shipped -and $_.Extension -notin @('.pdb', '.xml') } | ForEach-Object { $_.Name })
+    $extraApp = @(Get-ChildItem $PublishApp -File | Where-Object { $_.Name -notin $shipped -and $_.Extension -notin @('.pdb', '.xml') } | ForEach-Object { $_.Name })
+    $note = "the checks below use certapi.exe and msquic.dll on their own, as a release user gets them"
     if ($extraCli.Count -gt 0) { $note += "`nleft beside certapi.exe (not in the release): " + ($extraCli -join ', ') }
     if ($extraApp.Count -gt 0) { $note += "`nleft beside ApiTester.App.exe (not in the release): " + ($extraApp -join ', ') }
     Pass $note
@@ -424,6 +430,16 @@ Invoke-Check 'Start-up cleanup removes what an update left (the patched exe)' {
     if ($r.Code -ne 0) { Fail ("exit $($r.Code)`n" + $r.Err) }
     elseif (($left -join ',') -eq 'certapi.exe.new') { Pass 'removed .old and .old-1234abcd; kept the fresh .new' }
     else { Fail ("left: " + $(if ($left.Count) { $left -join ', ' } else { 'nothing (the fresh .new should have stayed)' })) }
+}
+
+Invoke-Check 'certapi.exe without msquic.dll refuses --http3 and says where the file goes' {
+    $dir = Join-Path $Work 'without-msquic'
+    New-Item -ItemType Directory -Path $dir | Out-Null
+    $alone = Join-Path $dir 'certapi.exe'
+    Copy-Item $script:Exe $alone
+    $r = Invoke-Exe $alone @('send', 'https://127.0.0.1:9/', '--http3', '--no-proxy') -WorkingDirectory $dir
+    if ($r.Code -ne 0 -and $r.Err -match 'msquic\.dll beside this program') { Pass (Tail $r.Err 2) }
+    else { Fail ("exit $($r.Code)`n" + (Tail ($r.Out + $r.Err))) }
 }
 
 Write-Host ""
@@ -634,7 +650,7 @@ Write-Host "== Needs the internet (-Network)" -ForegroundColor White
 if (-not $Network) {
     Invoke-Check 'HTTP/3, doctor through your proxy, update' { Skip 'run with -Network' }
 } else {
-    Invoke-Check 'HTTP/3 from certapi.exe alone (as released)' {
+    Invoke-Check 'HTTP/3 from certapi.exe with msquic.dll beside it (as released)' {
         # Two public HTTP/3 servers; --http3 is exact, so exit 0 means QUIC was negotiated.
         $targets = @('https://cloudflare.com/cdn-cgi/trace', 'https://www.google.com/generate_204')
         function Try-H3([string]$Exe, [string[]]$Prefix = @()) {
@@ -646,7 +662,7 @@ if (-not $Network) {
             "fails: $last"
         }
         $alone = Try-H3 $script:Exe
-        $notes = @("certapi.exe alone: $alone")
+        $notes = @("certapi.exe with msquic.dll beside it: $alone")
         # The same code, framework-dependent, on the installed .NET runtime: if this works and
         # the exe does not, the single-file packaging is what lost QUIC.
         $dll = Join-Path $Repo 'src\ApiTester.Cli\bin\Release\net9.0-windows\certapi.dll'
@@ -654,7 +670,7 @@ if (-not $Network) {
         $runtimeQuic = @(Get-ChildItem (Join-Path $env:ProgramFiles 'dotnet\shared\Microsoft.NETCore.App') -Recurse -Filter 'msquic.dll' -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName })
         $notes += "msquic.dll in the installed .NET runtime: " + $(if ($runtimeQuic.Count) { $runtimeQuic -join ', ' } else { 'none' })
         $notes += "msquic.dll in Windows: " + $(if (Test-Path (Join-Path $env:SystemRoot 'System32\msquic.dll')) { 'System32\msquic.dll' } else { 'none' })
-        $notes += "msquic.dll beside the published exe: " + $(if (Test-Path (Join-Path $PublishCli 'msquic.dll')) { 'yes' } else { 'no' })
+        $notes += "msquic.dll beside the exe: " + $(if (Test-Path (Join-Path (Split-Path $script:Exe) 'msquic.dll')) { 'yes' } else { 'no' })
         # The suite's loopback HTTP/3 tests skip, saying so, where QUIC is not available at all.
         $trx = Join-Path (Join-Path $Work 'tests') 'suite.trx'
         if (Test-Path $trx) {

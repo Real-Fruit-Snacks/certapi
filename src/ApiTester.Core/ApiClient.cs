@@ -1025,6 +1025,28 @@ public sealed class ApiClient : IDisposable
     /// <summary>Null when these options can be used for this URL; otherwise the reason they cannot.
     /// Callers that own a user interface (the CLI) turn a non-null result into a usage error before
     /// sending; SendAsync itself refuses the request rather than silently ignoring a setting.</summary>
+    /// <summary>Whether QUIC can be used in this process (msquic loaded). Asked only on the
+    /// platforms System.Net.Quic exists on.</summary>
+    private static bool QuicAvailable() =>
+        (OperatingSystem.IsWindows() || OperatingSystem.IsLinux() || OperatingSystem.IsMacOS()) &&
+        System.Net.Quic.QuicConnection.IsSupported;
+
+    /// <summary>Why a --http3 request cannot be sent here, or null when it can. A single-file
+    /// Windows build loads msquic.dll from exactly one place, beside the exe, and the .NET runtime
+    /// leaves it out of a single-file publish: the release ships it as a file of its own.</summary>
+    internal static string? Http3Unavailable(bool quicAvailable, bool isWindows, bool singleFile,
+                                             string baseDirectory, Func<string, bool> fileExists)
+    {
+        if (quicAvailable) return null;
+        if (isWindows && singleFile && !fileExists(Path.Combine(baseDirectory, "msquic.dll")))
+            return $"--http3 needs msquic.dll beside this program, in {baseDirectory.TrimEnd('\\', '/')}. " +
+                   "It is part of every release (certapi update and Scoop install it); download it from " +
+                   "the release into that folder, or drop the pin.";
+        return isWindows
+            ? "--http3 is not available here: QUIC (msquic) could not be loaded. It needs Windows 11 or Windows Server 2022 or later."
+            : "--http3 is not available here: QUIC needs libmsquic, which is not installed.";
+    }
+
     public static string? ValidateTransport(TransportOptions transport, string url)
     {
         if (transport.MaxRedirects < 1)
@@ -1057,6 +1079,12 @@ public sealed class ApiClient : IDisposable
         if (transport.Version is HttpVersionMode.Http3 && transport.Resolve.Count > 0)
             return "--resolve cannot be used with --http3: QUIC connects inside the handler, so " +
                    "there is no dial this product could re-point.";
+
+        if (transport.Version is HttpVersionMode.Http3 &&
+            Http3Unavailable(QuicAvailable(), OperatingSystem.IsWindows(),
+                             singleFile: string.IsNullOrEmpty(typeof(ApiClient).Assembly.Location),
+                             AppContext.BaseDirectory, File.Exists) is { } noQuic)
+            return noQuic;
 
         // The proxy path's TLS is negotiated by the HTTP stack from the URL, which has no setting for
         // another server name; refusing beats sending the URL's name while the user believes otherwise.

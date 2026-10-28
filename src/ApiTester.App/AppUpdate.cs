@@ -60,6 +60,9 @@ public static class AppUpdate
         // better that the app — the copy this install is running from — is still the old one, so
         // the next attempt starts from a consistent state.
         var targets = new List<(string Asset, string Path)>();
+        // msquic.dll (HTTP/3) first: nothing has it open unless a request used HTTP/3.
+        foreach (var companion in ReleaseUpdater.CompanionAssets(release))
+            targets.Add((companion, Path.Combine(dir, companion)));
         string cli = Path.Combine(dir, ReleaseUpdater.CliAsset);
         if (File.Exists(cli)) targets.Add((ReleaseUpdater.CliAsset, cli));
         targets.Add((ReleaseUpdater.AppAsset, exe));

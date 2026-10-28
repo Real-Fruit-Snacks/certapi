@@ -25,5 +25,6 @@
     <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
   </PropertyGroup>
 
-</Project>
+  <Import Project="..\MsQuicBesideExe.targets" />
 
+</Project>

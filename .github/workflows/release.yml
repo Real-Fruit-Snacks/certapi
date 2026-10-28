@@ -54,6 +54,9 @@ jobs:
         run: |
           dotnet publish src/ApiTester.App -c Release -r win-x64 --self-contained -o publish
           dotnet publish src/ApiTester.Cli -c Release -r win-x64 --self-contained -o publish-cli
+          # HTTP/3 needs msquic.dll beside each exe (a single-file publish leaves it out; see
+          # src/MsQuicBesideExe.targets). Both exes are built from one runtime, so one file serves both.
+          if ((Get-FileHash publish/msquic.dll).Hash -ne (Get-FileHash publish-cli/msquic.dll).Hash) { throw 'the app and the command line were published with different msquic.dll files' }
 
       - name: Bundle the full repository source
         shell: bash
@@ -70,10 +73,12 @@ jobs:
           BASE="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}"
           CLI_SHA=$(sha256sum publish-cli/certapi.exe | cut -d' ' -f1)
           APP_SHA=$(sha256sum publish/ApiTester.App.exe | cut -d' ' -f1)
+          QUIC_SHA=$(sha256sum publish-cli/msquic.dll | cut -d' ' -f1)
           WORDS_SHA=$(sha256sum wordlists/common-api-endpoints.txt | cut -d' ' -f1)
           {
             echo "${CLI_SHA}  certapi.exe"
             echo "${APP_SHA}  ApiTester.App.exe"
+            echo "${QUIC_SHA}  msquic.dll"
             echo "${WORDS_SHA}  common-api-endpoints.txt"
           } > SHA256SUMS.txt
           # Installed with: scoop install https://github.com/<repo>/releases/latest/download/certapi.json
@@ -85,8 +90,8 @@ jobs:
             "license": "MIT",
             "architecture": {
               "64bit": {
-                "url": ["${BASE}/certapi.exe", "${BASE}/ApiTester.App.exe"],
-                "hash": ["${CLI_SHA}", "${APP_SHA}"]
+                "url": ["${BASE}/certapi.exe", "${BASE}/ApiTester.App.exe", "${BASE}/msquic.dll"],
+                "hash": ["${CLI_SHA}", "${APP_SHA}", "${QUIC_SHA}"]
               }
             },
             "bin": "certapi.exe",
@@ -97,7 +102,8 @@ jobs:
                 "64bit": {
                   "url": [
                     "https://github.com/${GITHUB_REPOSITORY}/releases/download/v\$version/certapi.exe",
-                    "https://github.com/${GITHUB_REPOSITORY}/releases/download/v\$version/ApiTester.App.exe"
+                    "https://github.com/${GITHUB_REPOSITORY}/releases/download/v\$version/ApiTester.App.exe",
+                    "https://github.com/${GITHUB_REPOSITORY}/releases/download/v\$version/msquic.dll"
                   ]
                 }
               },
@@ -137,6 +143,7 @@ jobs:
           gh release create "$TAG" \
             "publish/ApiTester.App.exe#certapi desktop app (Windows x64, self-contained)" \
             "publish-cli/certapi.exe#certapi command line (Windows x64, self-contained)" \
+            "publish-cli/msquic.dll#HTTP/3 (QUIC) library: keep it beside certapi.exe and ApiTester.App.exe" \
             "wordlists/common-api-endpoints.txt#Starter wordlist for certapi fuzz" \
             "certapi-source-${TAG}.zip#Source at this tag" \
             "SHA256SUMS.txt#SHA-256 of each file (certapi update checks against these)" \
