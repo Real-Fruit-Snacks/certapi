@@ -7,6 +7,11 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **`tools\windows-checks.ps1`**, for checking a build on a real Windows machine: the test suite,
+  then the `certapi.exe` a release ships, run alone against local test servers (console encoding,
+  Windows sign-in, certificates from the store, proxy detection, doctor), and with `-Admin`,
+  `-Network` or `-State` the checks that need an elevated terminal, the internet or the live
+  workspace. It writes a `results.txt` to send back when something fails.
 - **Binary request bodies.** A body file (`-d @file`, `--data-file`) that is not UTF-8 text is sent
   byte for byte, as `application/octet-stream` unless `--content-type` says otherwise, so an image
   or an archive can be PUT as it is. Text files (UTF-8, or UTF-16/32 with a byte-order mark) behave
@@ -90,6 +95,9 @@ All notable changes to this project are documented here. The format follows
   - A token captured after a redirect was stored for the host the request started at.
   - `send --diff known-good` found no saved request whose URL uses `{{variables}}`.
   - `doctor` ignored `--connect-timeout` and `--tls-min`.
+  - `doctor` said a server "did not ask" for a client certificate when it asked without naming
+    any authority (a server that takes any certificate and decides after seeing it), and said
+    the same after a failed handshake, where it cannot know.
   - `grpc` ignored the profile's proxy and revocation settings.
 - **The command line.**
   - Global options before `mcp`, `ws` or `sse` made the command unknown, and `fuzz -w -` and `grpc`

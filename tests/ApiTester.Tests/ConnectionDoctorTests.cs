@@ -160,10 +160,12 @@ public class ConnectionDoctorTests
         var tls = Stage(report, "tls");
         // Whether the loopback server sends an issuer list is the platform's business; what must
         // hold is that the report SAYS which of the two situations it found, rather than staying
-        // silent about the single most useful fact in an mTLS diagnosis.
+        // silent about the single most useful fact in an mTLS diagnosis — and that a server which
+        // requires a certificate is never reported as not asking for one.
         Assert.Contains(tls.Detail, d =>
-            d.Contains("did not ask for one", StringComparison.Ordinal) ||
+            d.Contains("asked for one without naming", StringComparison.Ordinal) ||
             d.Contains("accepts client certificates from", StringComparison.Ordinal));
+        Assert.DoesNotContain(tls.Detail, d => d.Contains("did not ask for one", StringComparison.Ordinal));
     }
 
     [Fact]

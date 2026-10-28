@@ -333,7 +333,8 @@ public static class ConnectionDoctor
                     detail.Add(ssl.LocalCertificate is not null
                         ? $"client certificate presented: {ssl.LocalCertificate.Subject}"
                         : "client certificate presented: none");
-                    detail.AddRange(DescribeIssuerRequest(acceptableIssuers, storeCertificates, clientCertificate));
+                    detail.AddRange(DescribeIssuerRequest(acceptableIssuers, storeCertificates, clientCertificate,
+                        asked: handshakeAskedForCertificate ? true : clientCertificate is not null ? false : null));
 
                     string? note = InterceptionNoteFor(seenChain);
                     seenChainNotTimeValid = seenChain?.NotTimeValid == true;
@@ -345,7 +346,7 @@ public static class ConnectionDoctor
                 }
                 catch (Exception ex)
                 {
-                    detail.AddRange(DescribeIssuerRequest(acceptableIssuers, storeCertificates, clientCertificate));
+                    detail.AddRange(DescribeIssuerRequest(acceptableIssuers, storeCertificates, clientCertificate, asked: null));
                     detail.AddRange(DescribeChain(seenChain));
                     stages.Add(DoctorStage.Fail("tls", "handshake failed — " + ex.Message, clock.Elapsed - start,
                         detail, AdviseOnHandshake(acceptableIssuers, storeCertificates, clientCertificate)));
@@ -641,11 +642,24 @@ public static class ConnectionDoctor
 
     /// <summary>The client-certificate request, described against what this machine actually has.
     /// This is the single most useful line doctor prints for an mTLS problem.</summary>
+    /// <param name="asked">Whether the finished handshake carried a client certificate: true when it
+    /// did, false when one was offered and not taken, null when that cannot be told (a failed
+    /// handshake, or no certificate to offer).</param>
     private static IReadOnlyList<string> DescribeIssuerRequest(
-        string[] acceptableIssuers, IReadOnlyList<X509Certificate2> store, X509Certificate2? chosen)
+        string[] acceptableIssuers, IReadOnlyList<X509Certificate2> store, X509Certificate2? chosen, bool? asked)
     {
+        // An empty list is not "no request": a server that takes any certificate and decides after
+        // seeing it (common behind gateways) asks while naming no authority at all.
         if (acceptableIssuers.Length == 0)
-            return new[] { "client certificate: the server did not ask for one" };
+            return new[]
+            {
+                asked switch
+                {
+                    true => "client certificate: the server asked for one without naming any authority it accepts",
+                    false => "client certificate: the server did not ask for one",
+                    null => "client certificate: the server named no authority it accepts (or did not ask for a certificate)",
+                }
+            };
 
         var lines = new List<string> { $"the server accepts client certificates from {acceptableIssuers.Length} authority/authorities:" };
         foreach (var issuer in acceptableIssuers.Take(10)) lines.Add("  " + issuer);

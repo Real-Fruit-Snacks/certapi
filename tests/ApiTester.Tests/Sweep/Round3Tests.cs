@@ -146,4 +146,30 @@ public class Round3Tests
         Assert.Contains("\n\n" + TransportFlags.Help.Replace("\r\n", "\n") + "\n\n", help);
         Assert.DoesNotContain("Transport (", help);
     }
+
+    [Fact]
+    public async Task Doctor_does_not_say_a_server_that_requires_a_certificate_did_not_ask_for_one()
+    {
+        // The mock takes any client certificate, so it asks for one naming no authority at all.
+        using var ca = SelfSignedCertificateFactory.CreateCertificateAuthority("Doctor CA");
+        // Both through a .pfx, as the mock and --cert-file load them: a freshly generated key
+        // cannot take part in a TLS handshake on Linux.
+        static System.Security.Cryptography.X509Certificates.X509Certificate2 ViaPfx(System.Security.Cryptography.X509Certificates.X509Certificate2 c)
+        {
+            using (c) return System.Security.Cryptography.X509Certificates.X509CertificateLoader.LoadPkcs12(
+                c.Export(System.Security.Cryptography.X509Certificates.X509ContentType.Pfx), (string?)null);
+        }
+        using var serverCert = ViaPfx(SelfSignedCertificateFactory.CreateSignedCertificate("localhost", ca, true, false, new[] { "localhost" }));
+        using var clientCert = ViaPfx(SelfSignedCertificateFactory.CreateSignedCertificate("Doctor Client", ca, false, true));
+        await using var mock = MockServer.Start(0, MockTlsMode.Mtls, serverCert);
+
+        var report = await ConnectionDoctor.RunAsync(mock.BaseUrl, clientCert, new[] { clientCert },
+            new TransportOptions { IgnoreServerCertificateErrors = true });
+
+        var tls = Assert.Single(report.Stages, s => s.Name == "tls");
+        Assert.True(tls.Ok, tls.Summary);
+        Assert.DoesNotContain(tls.Detail, d => d.Contains("did not ask for one", StringComparison.Ordinal));
+        Assert.Contains(tls.Detail, d => d.Contains("asked for one without naming", StringComparison.Ordinal) ||
+                                         d.Contains("accepts client certificates from", StringComparison.Ordinal));
+    }
 }

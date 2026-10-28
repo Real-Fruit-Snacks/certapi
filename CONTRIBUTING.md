@@ -8,6 +8,12 @@ Issues and pull requests are welcome. This is a one-maintainer project, so small
   `dotnet build -warnaserror` then `dotnet test --filter "Category!=StoreRoundTrip"`.
 - `StoreRoundTrip` tests touch the real certificate store and `TlsBinding` tests touch `netsh` bindings; both are opt-in and must stay that way.
 - The `serve --vhost` tests skip themselves in a prompt that cannot bind `http://+:<port>/`; run elevated to include them (CI always does). Mark a new test that binds every interface `[WildcardBindingFact]`.
+- Before a release, or after a change to anything Windows-specific (console, certificate stores,
+  proxy detection, Windows sign-in, the updater), run `tools\windows-checks.ps1`. It builds and
+  runs the suite, publishes the exes as `release.yml` does, and checks the lone `certapi.exe`
+  against local test servers; `-Admin`, `-Network` and `-State` add the checks that need an
+  elevated terminal, the internet, or the live workspace. It prints PASS / FAIL and writes a
+  `results.txt`, and lists what still needs a person: the desktop app, and typing at a console.
 - Every behaviour lives in `ApiTester.Core` with a test. The app and `certapi` are thin layers over it.
 - Anything that writes an archive, export or log must route credentials through the existing redaction (`SecretHeaders` for headers). A test fails if new code builds a HAR request without passing its URL through `RecordedUrl`; other writers are covered only by their own tests, so add one for a new writer.
 - Add a `CHANGELOG.md` entry under `[Unreleased]` in the house style: what changed, what broke, nothing else.
