@@ -128,13 +128,15 @@ public class ConsoleBodyTests
 
         var r = Send(console: true, server.Url, "--pretty");
         Assert.Equal(0, r.Code);
-        int lines = r.Out.Split('\n', StringSplitOptions.RemoveEmptyEntries).Length;
-        Assert.Equal(ConsoleBody.MaxHexBytes / 16, lines);
+        Assert.Equal(ConsoleBody.MaxHexBytes / 16, Lines(r.Out));
         Assert.Contains("first 64 KB of this 293.0 KB binary body as hex", r.Err);
 
         var pipe = Send(console: false, server.Url, "--pretty");
-        Assert.Equal(blob.Length / 16 + (blob.Length % 16 == 0 ? 0 : 1),
-                     pipe.Out.Split('\n', StringSplitOptions.RemoveEmptyEntries).Length);
+        Assert.Equal(blob.Length / 16 + (blob.Length % 16 == 0 ? 0 : 1), Lines(pipe.Out));
+
+        // Lines with text in them, however they end: the dump's own lines end in \n, and the
+        // line after it in the platform's newline (\r\n on Windows).
+        static int Lines(string text) => text.Split('\n').Count(l => l.TrimEnd('\r').Length > 0);
     }
 
     [Fact]
