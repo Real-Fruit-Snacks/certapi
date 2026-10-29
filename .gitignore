@@ -4,6 +4,8 @@
 [Oo]ut/
 publish/
 artifacts/
+# The temporary project a WPF build writes beside the real one while it compiles XAML
+*_wpftmp.csproj
 
 # Test results
 [Tt]est[Rr]esults/
