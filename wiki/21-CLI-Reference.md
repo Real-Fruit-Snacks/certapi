@@ -388,13 +388,23 @@ size and equality only.
 
 | Option | Default | What it does |
 |---|---|---|
-| `-o, --output <file>` | stdout | Write the body to a file |
+| `-o, --output <file>` | stdout | Write the body to a file. `-o -` writes all of it to stdout, even to a console window |
 | `-i, --include` | off | Print the status line and headers before the body |
 | `--pretty` | off | Pretty-print the body: JSON and XML reformatted, binary as hex |
 | `--json` | off | Print a JSON result envelope — status, headers, timing, body — instead of the raw body |
 | `-f, --fail` | off | Exit 1 when the HTTP status is 400 or higher |
 | `-q, -s, --quiet` | off | No metadata line on stderr |
 | `--timing` | off | Where the time went, on stderr: `timing: dns 2.1 ms · connect 1.4 ms · tls 14 ms · wait 31 ms · first byte 52 ms · download 1.0 ms · total 54 ms`. A phase that did not happen is left out (`tls` on plain HTTP, `dns` for an IP address, all three on a reused connection, which says `connection reused`). Through a proxy, `connect` is to the proxy and `tls` is the handshake with the site inside the tunnel. After redirects or retries the phases describe the last request. With `--json` the same numbers are a `timing` object in the envelope (`dnsMs`, `connectMs`, `tlsMs`, `waitMs`, `firstByteMs`, `downloadMs`, `totalMs`, `reused`, `requests`). Printed even with `--quiet`. Not with `--all-ips` |
+
+**To a console window**, `send` prints only what a console can draw. A binary body is not printed
+(`note: the body is binary (2.4 MB, application/pdf), so it was not printed to the console`), and a
+text body stops after 1 MB, with a note on stderr saying how large it was. `--pretty` shows the
+first 64 KB of a binary body as hex and the first 1 MB of formatted text, and prints a body over
+4 MB as received instead of formatting it. A console draws every byte it is given, so a large
+export keeps the window busy for as long as that takes, and on a remote desktop the whole session
+with it. Binary bytes include control codes that change the console's own state. Redirected
+output (`> file`, a pipe), `-o <file>` and `-o -` get every byte. `--json` is never cut. Before
+1.96.0, `-o -` wrote a file named `-`; write `-o ./-` for that now.
 
 ### Capturing the exchange
 

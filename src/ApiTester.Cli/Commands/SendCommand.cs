@@ -95,7 +95,8 @@ public static class SendCommand
           --diff-ignore-header <n>  Header to ignore on top of the volatile defaults (repeatable)
 
         Output:
-          -o, --output <file>     Write the body to a file instead of stdout
+          -o, --output <file>     Write the body to a file instead of stdout (-o - writes all of
+                                  it to stdout, even to a console)
           -i, --include           Print status line and headers before the body
           --pretty                Pretty-print the body (JSON/XML; hex for binary)
           --json                  Print a JSON result envelope instead of the raw body
@@ -168,8 +169,10 @@ public static class SendCommand
           certapi send https://api.example.com/users --har baseline.har
           certapi send https://api.example.com/users --diff baseline.har --diff-fail --diff-ignore data.generatedAt
 
-        The body goes to stdout; everything else goes to stderr. Exit 0 on a delivered
-        response (any status unless --fail), 1 on transport errors, 2/3 on usage/data errors.
+        The body goes to stdout; everything else goes to stderr. To a console window, a binary
+        body is not printed and a text body stops after 1 MB, with a note saying so; a file, a
+        pipe or -o - gets every byte. Exit 0 on a delivered response (any status unless --fail),
+        1 on transport errors, 2/3 on usage/data errors.
         """;
 
     public static int Run(Args args, TextWriter stdout, TextWriter stderr, Stream bodyOut, CliServices services)
@@ -622,10 +625,14 @@ public static class SendCommand
         if (stateDirty) SaveState(state, workspace, services, stderr);
 
         // ---- output ----
+        // "-o -" is stdout, asked for by name: every byte, console or not. Without -o, a console
+        // gets what it can draw (ConsoleBody); a file or a pipe gets every byte.
+        string? bodyFile = outFile == "-" ? null : outFile;
+        bool consoleLimits = services.StdoutIsTerminal && outFile is null;
         if (json)
         {
-            if (outFile is not null && response.Error is null) File.WriteAllBytes(outFile, response.Body);
-            stdout.WriteLine(BuildEnvelope(response, includeBody: outFile is null, diff: diff, timing: timing ? phases : null));
+            if (bodyFile is not null && response.Error is null) File.WriteAllBytes(bodyFile, response.Body);
+            stdout.WriteLine(BuildEnvelope(response, includeBody: bodyFile is null, diff: diff, timing: timing ? phases : null));
         }
         else if (response.Error is null)
         {
@@ -635,8 +642,21 @@ public static class SendCommand
                 foreach (var h in response.Headers) stdout.WriteLine($"{h.Key}: {h.Value}");
                 stdout.WriteLine();
             }
-            if (outFile is not null) File.WriteAllBytes(outFile, response.Body);
-            else if (pretty) stdout.WriteLine(new ResponseFormatter().Format(response).Text);
+            if (bodyFile is not null) File.WriteAllBytes(bodyFile, response.Body);
+            else if (pretty) WritePretty(response, consoleLimits, stdout, stderr, bodyOut);
+            else if (consoleLimits && ConsoleBody.LooksBinary(response.Body, response.ContentType))
+                stderr.WriteLine($"note: the body is binary ({OutputText.Size(response.Body.LongLength)}" +
+                                 (string.IsNullOrEmpty(response.ContentType) ? "" : $", {response.ContentType}") +
+                                 "), so it was not printed to the console. -o <file> saves it; -o - prints it here anyway.");
+            else if (consoleLimits && response.Body.Length > ConsoleBody.MaxBytes)
+            {
+                stdout.Flush();
+                bodyOut.Write(response.Body, 0, ConsoleBody.CutAt(response.Body, ConsoleBody.MaxBytes));
+                bodyOut.Flush();
+                stdout.WriteLine();
+                stderr.WriteLine($"note: the console shows the first 1 MB of this {OutputText.Size(response.Body.LongLength)} body. " +
+                                 "-o <file> saves all of it; -o - prints all of it here.");
+            }
             else { stdout.Flush(); bodyOut.Write(response.Body); bodyOut.Flush(); }
         }
 
@@ -769,6 +789,49 @@ public static class SendCommand
             stderr.WriteLine($"wrote the wire transcript to {file}");
         }
         catch (Exception ex) { stderr.WriteLine("warning: could not write the wire transcript: " + ex.Message); }
+    }
+
+    /// <summary>--pretty. To a console a binary body's hex dump covers its first 64 KB, and
+    /// formatted text is cut at 1 MB; anywhere else all of it is written.</summary>
+    private static void WritePretty(ApiResponse response, bool consoleLimits, TextWriter stdout, TextWriter stderr, Stream bodyOut)
+    {
+        // A NUL never parses as JSON or XML, so the formatter would dump this as hex: dump only
+        // what will be shown instead of building the whole dump (several times the body) first.
+        if (consoleLimits && response.Body.Length > ConsoleBody.MaxHexBytes && ConsoleBody.HasNul(response.Body))
+        {
+            stdout.Write(ResponseFormatter.HexDump(response.Body[..ConsoleBody.MaxHexBytes]));
+            stderr.WriteLine($"note: the console shows the first 64 KB of this {OutputText.Size(response.Body.LongLength)} " +
+                             "binary body as hex. -o <file> saves all of it.");
+            return;
+        }
+        // Formatting a body this large would take a while only to show its first megabyte.
+        if (consoleLimits && response.Body.Length > ConsoleBody.MaxFormatBytes)
+        {
+            if (ConsoleBody.LooksBinary(response.Body, response.ContentType))
+            {
+                stderr.WriteLine($"note: the body is binary ({OutputText.Size(response.Body.LongLength)}), so it was not printed " +
+                                 "to the console. -o <file> saves it; -o - prints it here anyway.");
+                return;
+            }
+            stdout.Flush();
+            bodyOut.Write(response.Body, 0, ConsoleBody.CutAt(response.Body, ConsoleBody.MaxBytes));
+            bodyOut.Flush();
+            stdout.WriteLine();
+            stderr.WriteLine($"note: this {OutputText.Size(response.Body.LongLength)} body is too large to format on the console; " +
+                             "the first 1 MB is shown as received. -o <file> saves all of it; -o - --pretty formats all of it here.");
+            return;
+        }
+        string text = new ResponseFormatter().Format(response).Text;
+        if (consoleLimits && text.Length > ConsoleBody.MaxBytes)
+        {
+            int cut = ConsoleBody.MaxBytes;
+            if (char.IsHighSurrogate(text[cut - 1])) cut--;
+            stdout.WriteLine(text[..cut]);
+            stderr.WriteLine("note: the console shows the first 1 MB of the formatted body. " +
+                             "-o <file> saves the body; -o - --pretty prints all of it here.");
+            return;
+        }
+        stdout.WriteLine(text);
     }
 
     private static string HarCreatorVersion()
