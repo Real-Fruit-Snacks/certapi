@@ -16,7 +16,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>certapi</AssemblyName>
     <RootNamespace>ApiTester.Cli</RootNamespace>
-    <Version>1.95.0</Version>
+    <Version>1.96.0</Version>
     <Product>certapi</Product>
     <Description>mTLS API client for the Windows certificate store</Description>
     <Authors>RFS</Authors>

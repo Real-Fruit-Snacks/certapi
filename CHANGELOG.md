@@ -6,6 +6,132 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.96.0] - 2026-10-29
+
+The command line and the desktop app ask far less of a remote desktop (a VDI, Citrix, RDP) and of
+the security software running on it, the gateway keeps a record of its load, and the released exes
+carry the newest .NET 9 runtime.
+
+### Security
+- **The exes bundle .NET runtime 9.0.22**, which fixes CVE-2026-111497, CVE-2026-70197 and
+  CVE-2026-114148. 1.95.0 was built with 9.0.21. `global.json` keeps the build on a .NET 9 SDK
+  (9.0.320 or later), so a newer SDK on the build machine cannot choose an older 9.0 runtime. The
+  release workflow stops when the runtime it would bundle is older than the newest 9.0 patch, and
+  CI warns about it on every push.
+
+### Changed
+- **`serve` keeps answering while its console window is busy.** The request log is written by a
+  background thread, so no request waits for the console. Before, a click in a classic console
+  window (a QuickEdit selection) held every write, and with it the gateway and every page relayed
+  through it. Now:
+  - QuickEdit is off while the gateway runs and back on when it stops, even when stdin is
+    redirected.
+  - A console window shows at most 20 request lines a second and counts the rest
+    (`… and 140 more requests in that second`). Warnings, 5xx answers and failed requests have
+    a limit of their own, 100 a second, so ordinary traffic does not crowd them out. `2> file`
+    and `--log-file` keep every line.
+  - Lines the console cannot take are counted and reported, not waited for. The log has a thread
+    of its own, so busy request handlers cannot delay it.
+  - Each request starts on the thread pool instead of the thread that accepts connections, so a
+    slow proxy lookup for one no longer delays accepting the next.
+- **The gateway bounds what it asks of the machine.** On a managed work machine every
+  connection it opens goes through the security software under the network stack, and some of
+  what it did leaned on parts of Windows that every program shares:
+  - At most 16 connections per site at once for requests (`--max-connections`, or
+    `maxConnections` in a profile's `serve` section); a request past that waits for one to come
+    free, within `--timeout`. Each WebSocket has a connection of its own. Before, many requests at
+    once (a page over HTTP/2 with `--tls`, several tabs, a script) got a connection each, each with
+    its own TLS handshake.
+  - At most 256 requests at once, WebSockets included (`--max-requests`, `maxRequests`); one more
+    is answered `503` with `Retry-After: 1`. `/_certapi/` and CORS preflights reach no site, so
+    they do not count and are always answered.
+  - An address that fails 5 connection attempts within 30 seconds is left alone for 10 seconds;
+    its requests get `502` saying so. Then one attempt is let through as a trial (another if it
+    runs past the connect limit below): if it fails the pause doubles, up to a minute, and a
+    success ends it. Through a proxy, the proxy's address is the one watched; a site the proxy
+    refuses gets the proxy's answer each time, counted among the failed connections. Before, the
+    gateway dialled an unreachable host again for every request the browser retried.
+  - A connect waits at most 15 seconds for the name lookup and for each address it tries, then
+    moves on to the next address (`504` when none answers), unless `--connect-timeout` says
+    otherwise (which, as before, bounds the TLS handshake too). Windows waits about 21 seconds an
+    address, and a connect that security software holds can wait for ever.
+  - With a PAC script or WPAD, the system proxy is asked once per site: a proxy answer is reused
+    for five minutes, "no proxy" for 30 seconds. .NET asked before every request, each time a
+    blocking call into the WinHTTP auto-proxy service the whole machine shares. A site whose
+    answer is a failover list keeps .NET's own lookup, so failover keeps working.
+  - With `--insecure` (or a site's `insecure`), nothing is downloaded for the server's
+    certificate chain: no missing intermediate, no Automatic Root Update for a root Windows does
+    not know (every internal CA `--insecure` is used for), no revocation list. On a network
+    without internet each of those waited about 15 seconds per connection, for a result
+    `--insecure` then ignores.
+- **Requests through a proxy no longer look your user name up in lsass, on every command.** With
+  the signed-in user's credentials for the proxy, .NET read the name from Windows for each request
+  (to keep different users' connections apart). certapi now hands over the same credentials in a
+  form that skips that.
+- **A health line once a minute** while the gateway has traffic, under `-q` too: requests,
+  connections (open, new, failed, paused), threads, handles, memory, and the machine's TCP
+  connections, with the time. Warnings when the machine passes 10,000 TCP connections (Windows has
+  about 16,000 ports for new ones), and when the gateway's connection failures, connections,
+  threads, handles or memory grow past what it should need. `/_certapi/health` carries the same
+  figures under `load`. Kept in a file that survives a restart
+  (`2> "$env:LOCALAPPDATA\certapi-gateway.log"`), it is the record of the minutes before a
+  freeze.
+- **`serve -q` still prints warnings**, such as a recording or a cookie jar that could not be
+  written, or `--allow *` making the gateway an open relay. It used to silence them too.
+- **`serve --record` keeps at most 32 MB per body, and its bodies take at most about 128 MB of
+  memory together**, counting the requests still in flight. It copies bodies as they stream
+  through instead of reading each whole one first. An exchange past either limit is recorded with
+  an empty body and a `comment` saying why, and the gateway says how many were left out when it
+  stops. Replaying such an exchange answers with an empty body and no `Content-Encoding`. The
+  recording is written to disk without first being built as one string.
+- **`send` prints to a console window only what it can draw.** A binary body is not printed, and
+  a text body stops after 1 MB, each with a note on stderr. `--pretty` shows the first 64 KB of a
+  binary body as hex and the first 1 MB of formatted text, and prints a body over 4 MB as
+  received instead of formatting it. A file, a pipe and `-o -` get every byte.
+- **The desktop app shows the start of a large body.**
+  - Raw shows the first 1 MB and Pretty the first 512 KB. A body over 4 MB is shown as received,
+    without formatting, and the hex view covers the first 64 KB. Copy and Save… still take the
+    whole body, and Find says when a match is past the part shown.
+  - JSON and XML are coloured up to 64,000 characters (was 150,000). Beyond that they are shown in
+    one colour, because each coloured token is laid out separately.
+  - The stream and mock-server windows keep about the last 256–512 KB of their logs, and cut a
+    single message over 64 KB.
+  - A request, a chain run and a fuzz probe start off the UI thread. A proxy lookup that waits on
+    a PAC script no longer holds the window still.
+- **The app's WebView2** (the Rendered tab and Capture session) keeps its profile in
+  `%LOCALAPPDATA%\CertApiTester\WebView2`. It was in an `ApiTester.App.exe.WebView2` folder beside
+  the exe, which on a VDI may be a network share; that old folder can be deleted. In a remote
+  session it starts with `--disable-gpu` (`CERTAPI_WEBVIEW2_GPU=1` keeps the GPU). When one of its
+  processes ends or hangs, the window says which. On the Rendered tab, Reload starts it again; the
+  Capture session window keeps what it captured for Finish & save.
+
+### Fixed
+- A certificate loaded from a file (`--cert-file`, a site's `certFile`) is disposed when the
+  command ends, with the pooled connections that kept a copy of it. Windows imports the key of a
+  .pfx or PEM into the user's profile (through the key isolation service in lsass) and deletes it
+  only then, so every run left one key file behind.
+- Saving the workspace re-encrypts only what changed. Each DPAPI call goes through lsass, and a
+  save used to encrypt every token, cookie, credential header and known-good body again. Two
+  fields holding the same value still get different encrypted forms, and values over about
+  1.5 MB are encrypted afresh each time rather than kept in memory.
+- Tab completion (environment and collection names) reads the workspace without decrypting its
+  secrets; each Tab press decrypted every one of them. The desktop app decrypts the workspace
+  once when it starts, not twice (reading the theme did it again).
+- A request body sent through the gateway could not be sent a second time, which the HTTP stack
+  needs when a site using Windows sign-in (`--windows-auth`, NTLM or Negotiate) answers the first
+  send with 401, or when it retries on a connection the server had just closed. The gateway now
+  reads a body of up to 1 MB with a declared length before forwarding it, so it can be sent
+  again. Larger and chunked bodies stream through as before.
+
+### Upgrading
+- The gateway opens at most 16 connections per site at once. A site that needs more at once (a
+  page holding many long-lived streams open) waits for one to come free; raise it with
+  `--max-connections`.
+- `send -o -` now writes the body to stdout. It used to create a file named `-`; write `-o ./-`
+  for that.
+- From 1.94.0, run `certapi update` twice. The 1.94.0 updater does not know about `msquic.dll`
+  (needed by `--http3`); the second run, made by the new version, adds it.
+
 ## [1.95.0] - 2026-10-28
 
 HTTP/3 works in the released exes, and the release is checked on a real Windows machine. Two
@@ -3042,7 +3168,8 @@ Initial release.
 - Save any response (including binary) to a file.
 - Self-contained single-file executable — no installer, no admin rights, no runtime dependency.
 
-[Unreleased]: https://github.com/Real-Fruit-Snacks/certapi/compare/v1.95.0...HEAD
+[Unreleased]: https://github.com/Real-Fruit-Snacks/certapi/compare/v1.96.0...HEAD
+[1.96.0]: https://github.com/Real-Fruit-Snacks/certapi/compare/v1.95.0...v1.96.0
 [1.95.0]: https://github.com/Real-Fruit-Snacks/certapi/compare/v1.94.0...v1.95.0
 [1.94.0]: https://github.com/Real-Fruit-Snacks/certapi/compare/v1.93.0...v1.94.0
 [1.93.0]: https://github.com/Real-Fruit-Snacks/certapi/compare/v1.92.3...v1.93.0
