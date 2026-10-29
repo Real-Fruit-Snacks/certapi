@@ -28,7 +28,6 @@ public partial class MainWindow : Window
     // _state's field initializer has run (see below), rather than inline here.
     private readonly TrustPredicates _trustPredicates;
     private readonly System.Net.CookieContainer _cookieJar = CookieJarFile.NewContainer();   // browser-like session cookies across sends
-    private readonly ResponseFormatter _formatter = new();
     private readonly AppState _state = AppState.Load();
 
     private readonly ObservableCollection<RequestTab> _tabs = new();
@@ -45,6 +44,9 @@ public partial class MainWindow : Window
     private MtlsBrowserSession? _browserSession;
     private CancellationTokenSource? _browserCts;
     private bool _browserReady;
+    // The CoreWebView2 the Rendered tab is using. Kept, not read from Browser: after the browser
+    // process crashes, Browser.CoreWebView2 throws instead of answering.
+    private CoreWebView2? _browserCore;
     private RequestTab? _renderTraceTarget;   // the tab whose Network trace a render populates
     private string? _renderCertSubject;       // the client cert the browser session offers
 
@@ -1626,12 +1628,14 @@ public partial class MainWindow : Window
         if (_browserReady) return true;
         try
         {
-            await Browser.EnsureCoreWebView2Async();
+            await Browser.EnsureCoreWebView2Async(await AppWebView.EnvironmentAsync());
             var core = Browser.CoreWebView2;
             core.Settings.AreDevToolsEnabled = false;
             core.Settings.AreDefaultContextMenusEnabled = false;
             core.AddWebResourceRequestedFilter("*", CoreWebView2WebResourceContext.All);
             core.WebResourceRequested += Browser_WebResourceRequested;
+            core.ProcessFailed += Browser_ProcessFailed;
+            _browserCore = core;
             _browserReady = true;
             return true;
         }
@@ -1642,6 +1646,41 @@ public partial class MainWindow : Window
             RenderHint.Visibility = Visibility.Visible;
             return false;
         }
+    }
+
+    /// <summary>A WebView2 process ended or hung. A page process is restarted by Reload; after the
+    /// browser process exits the control cannot be used again, so a new one takes its place and the
+    /// next render starts a new browser process.</summary>
+    private void Browser_ProcessFailed(object? sender, CoreWebView2ProcessFailedEventArgs e)
+    {
+        if (AppWebView.Describe(e) is not { } message) return;
+        // A late event from a control already replaced is about nothing on screen.
+        if (_browserCore is null || !ReferenceEquals(sender, _browserCore)) return;
+        if (e.ProcessFailedKind == CoreWebView2ProcessFailedKind.BrowserProcessExited)
+        {
+            var failed = Browser;
+            // Not from inside the control's own event: replaced once the handler has returned.
+            Dispatcher.BeginInvoke(() => ReplaceBrowser(failed));
+            RenderHint.Text = message + " Reload starts it again.";
+            RenderHint.Visibility = Visibility.Visible;
+        }
+        // The page covers the hint (WebView2 draws in its own window), so this goes in the bar above it.
+        RenderUrlText.Text = message + " Reload tries again.";
+    }
+
+    private void ReplaceBrowser(Microsoft.Web.WebView2.Wpf.WebView2 old)
+    {
+        if (!ReferenceEquals(old, Browser)) return;
+        if (old.Parent is not System.Windows.Controls.Panel host) return;
+        int at = host.Children.IndexOf(old);
+        host.Children.RemoveAt(at);
+        try { old.Dispose(); } catch (Exception ex) when (ex is InvalidOperationException or System.Runtime.InteropServices.COMException) { }
+        Browser = new Microsoft.Web.WebView2.Wpf.WebView2();
+        host.Children.Insert(at, Browser);
+        _browserReady = false;
+        _browserStart = null;
+        _browserCore = null;
+        AppWebView.Forget();
     }
 
     private void RebuildBrowserSession()
@@ -1665,11 +1704,14 @@ public partial class MainWindow : Window
         string uri = request.Uri;
         var headers = request.Headers.Select(h => new KeyValuePair<string, string>(h.Key, h.Value)).ToList();
         byte[]? body = ReadRequestContent(request.Content);
-        _ = HandleResourceAsync(session, cts.Token, e, deferral, method, uri, headers, body);
+        // Taken now: by the time the fetch returns, the control may have been replaced (its browser
+        // process exited), and the new one's CoreWebView2 is not this request's.
+        var environment = ((CoreWebView2)sender!).Environment;
+        _ = HandleResourceAsync(session, cts.Token, environment, e, deferral, method, uri, headers, body);
     }
 
     private async Task HandleResourceAsync(
-        MtlsBrowserSession session, CancellationToken ct,
+        MtlsBrowserSession session, CancellationToken ct, CoreWebView2Environment environment,
         CoreWebView2WebResourceRequestedEventArgs e, CoreWebView2Deferral deferral,
         string method, string uri, List<KeyValuePair<string, string>> headers, byte[]? body)
     {
@@ -1679,7 +1721,7 @@ public partial class MainWindow : Window
             var headerLines = string.Join("\r\n", result.Headers
                 .Where(h => Forwardable(h.Key))
                 .Select(h => $"{h.Key}: {h.Value}"));
-            e.Response = Browser.CoreWebView2.Environment.CreateWebResourceResponse(
+            e.Response = environment.CreateWebResourceResponse(
                 new MemoryStream(result.Body), result.StatusCode,
                 string.IsNullOrEmpty(result.ReasonPhrase) ? "OK" : result.ReasonPhrase, headerLines);
             RecordNetwork(_renderTraceTarget, new NetworkEntry
@@ -1706,7 +1748,7 @@ public partial class MainWindow : Window
                 $"<html><body style='font-family:'IBM Plex Mono',Consolas,monospace;background:{bg};color:{fg};padding:24px'>" +
                 "<h2>Could not load this resource</h2><pre>" +
                 System.Net.WebUtility.HtmlEncode(ex.Message) + "</pre></body></html>");
-            e.Response = Browser.CoreWebView2.Environment.CreateWebResourceResponse(
+            e.Response = environment.CreateWebResourceResponse(
                 new MemoryStream(bytes), 502, "Bad Gateway", "Content-Type: text/html; charset=utf-8");
             if (!ct.IsCancellationRequested)
                 RecordNetwork(_renderTraceTarget, new NetworkEntry
@@ -2483,11 +2525,17 @@ public partial class MainWindow : Window
             // Attach any browser-captured session cookies for this origin before sending.
             CookieService.SeedContainer(_state, request.Url, _cookieJar);
             string host = TokenService.HostOf(request.Url);
-            response = await _apiClient.SendAsync(
+            var transport = model.Transport.ToOptions(model.IgnoreServerCert);
+            var trust = _trustPredicates.For(host);
+            var token = _cts.Token;
+            // Off the UI thread from the start: what SendAsync does before its first await (the
+            // proxy lookup, which can wait seconds on a PAC script, and the handler setup) would
+            // otherwise hold the window still.
+            response = await Task.Run(() => _apiClient.SendAsync(
                 request, cert,
-                transport: model.Transport.ToOptions(model.IgnoreServerCert),
-                trustServerCertificate: _trustPredicates.For(host),
-                cookies: _cookieJar, cancellationToken: _cts.Token);
+                transport: transport,
+                trustServerCertificate: trust,
+                cookies: _cookieJar, cancellationToken: token));
             bool stillShown = sendingTab is not null && ReferenceEquals(ActiveTab, sendingTab);
             if (stillShown)
             {
@@ -2624,10 +2672,10 @@ public partial class MainWindow : Window
             return;
         }
 
-        var formatted = _formatter.Format(response);
+        var formatted = ResponseView.Pretty(response);
         SetPretty(formatted.Text, formatted.Kind);
         _lastRawText = Encoding.UTF8.GetString(response.Body);
-        RawBox.Text = _lastRawText;
+        RawBox.Text = ResponseView.Raw(_lastRawText);
         ResponseHeadersBox.Text = string.Join("\n", response.Headers.Select(h => $"{h.Key}: {h.Value}"));
 
         var tls = response.Connection?.TlsProtocol is { } p ? $"  •  {p}" : "";
@@ -2694,8 +2742,8 @@ public partial class MainWindow : Window
 
     private void FindNext_Click(object sender, RoutedEventArgs e) => FindInResponse();
 
-    /// <summary>Find the next occurrence of the search term in the response body (the Raw view holds
-    /// the full text), select it, and scroll it into view — wrapping around at the end.</summary>
+    /// <summary>Find the next occurrence of the search term in the Raw view (the first megabyte of the
+    /// body), select it, and scroll it into view — wrapping around at the end.</summary>
     private void FindInResponse()
     {
         var term = ResponseFindBox.Text;
@@ -2703,9 +2751,17 @@ public partial class MainWindow : Window
         var text = RawBox.Text;
         if (string.IsNullOrEmpty(text)) { StatusText.Text = "No response to search yet."; return; }
 
-        int from = RawBox.SelectionStart + Math.Max(RawBox.SelectionLength, 0);
-        int idx = text.IndexOf(term, Math.Min(from, text.Length), StringComparison.OrdinalIgnoreCase);
-        if (idx < 0) idx = text.IndexOf(term, 0, StringComparison.OrdinalIgnoreCase);   // wrap to the top
+        // Only the body: past the Raw view's limit the text ends with a note, which is not a match.
+        int bodyChars = _lastRawText.Length > ResponseView.MaxRawChars ? Math.Min(ResponseView.MaxRawChars, text.Length) : text.Length;
+        int from = Math.Min(RawBox.SelectionStart + Math.Max(RawBox.SelectionLength, 0), bodyChars);
+        int idx = text.IndexOf(term, from, bodyChars - from, StringComparison.OrdinalIgnoreCase);
+        if (idx < 0) idx = text.IndexOf(term, 0, bodyChars, StringComparison.OrdinalIgnoreCase);   // wrap to the top
+        if (idx < 0 && _lastRawText.Length > ResponseView.MaxRawChars &&
+            _lastRawText.IndexOf(term, Math.Max(0, ResponseView.MaxRawChars - term.Length + 1), StringComparison.OrdinalIgnoreCase) >= 0)
+        {
+            StatusText.Text = $"“{term}” is further into the body than the Raw view shows. Save… the body to search all of it.";
+            return;
+        }
         if (idx < 0) { StatusText.Text = $"“{term}” not found in the response."; return; }
 
         ResponseTabs.SelectedIndex = 1;   // the Raw view, where the selection is visible
@@ -2880,11 +2936,11 @@ public partial class MainWindow : Window
         }
         else
         {
-            var formatted = _formatter.Format(recon);
+            var formatted = ResponseView.Pretty(recon);
             SetPretty(formatted.Text, formatted.Kind);
             _lastRawText = Encoding.UTF8.GetString(s.Body);
         }
-        RawBox.Text = _lastRawText;
+        RawBox.Text = ResponseView.Raw(_lastRawText);
         ResponseHeadersBox.Text = string.Join("\n", recon.Headers.Select(h => $"{h.Key}: {h.Value}"));
         StatusText.Text = $"{s.StatusCode} {s.ReasonPhrase}  •  {s.Body.Length} bytes  •  {s.ElapsedMs:F0} ms{suffix}";
     }

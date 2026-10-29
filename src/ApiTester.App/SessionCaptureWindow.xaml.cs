@@ -37,6 +37,7 @@ public partial class SessionCaptureWindow : Window
         _controller.CallObserved += OnCall;
         _controller.ResponseBody += OnBodyForToken;
         _controller.Failed += msg => CaptureSummary.Text = $"Last request failed: {msg}";
+        _controller.Stopped += msg => CaptureSummary.Text = msg;
         Loaded += async (_, _) =>
         {
             if (!await _controller.InitializeAsync())
@@ -153,9 +154,10 @@ public partial class SessionCaptureWindow : Window
         return (loopback ? "http://" : "https://") + input;
     }
 
-    private void Back_Click(object sender, RoutedEventArgs e) { if (Browser.CanGoBack) Browser.GoBack(); }
-    private void Forward_Click(object sender, RoutedEventArgs e) { if (Browser.CanGoForward) Browser.GoForward(); }
-    private void Reload_Click(object sender, RoutedEventArgs e) => Browser.Reload();
+    // After the browser process exits the control cannot be used; the buttons then do nothing.
+    private void Back_Click(object sender, RoutedEventArgs e) { if (_controller.Ready && Browser.CanGoBack) Browser.GoBack(); }
+    private void Forward_Click(object sender, RoutedEventArgs e) { if (_controller.Ready && Browser.CanGoForward) Browser.GoForward(); }
+    private void Reload_Click(object sender, RoutedEventArgs e) { if (_controller.Ready) Browser.Reload(); }
     private void Cancel_Click(object sender, RoutedEventArgs e) { DialogResult = false; Close(); }
     private void Header_Drag(object sender, MouseButtonEventArgs e) { if (e.ButtonState == MouseButtonState.Pressed) DragMove(); }
 }

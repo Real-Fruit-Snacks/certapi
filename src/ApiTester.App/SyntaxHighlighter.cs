@@ -34,12 +34,17 @@ internal static class SyntaxHighlighter
         string.Equals((Application.Current as App)?.CurrentTheme, "Light", StringComparison.OrdinalIgnoreCase)
             ? Light : Dark;
 
+    /// <summary>Text longer than this is shown in one color: each token is a Run of its own, and a
+    /// RichTextBox lays out tens of thousands of them slowly enough to stall the window.</summary>
+    public const int MaxHighlightedChars = 64_000;
+
     public static FlowDocument Build(string text, BodyKind kind)
     {
         var pal = Current;
         var paragraph = new Paragraph { Margin = new Thickness(0) };
+        text = ResponseView.Cut(text, ResponseView.MaxPrettyChars);
 
-        if (text.Length > 150_000 || kind is not (BodyKind.Json or BodyKind.Xml))
+        if (text.Length > MaxHighlightedChars || kind is not (BodyKind.Json or BodyKind.Xml))
             paragraph.Inlines.Add(new Run(text) { Foreground = pal.Default });
         else if (kind == BodyKind.Json)
             HighlightJson(paragraph, text, pal);

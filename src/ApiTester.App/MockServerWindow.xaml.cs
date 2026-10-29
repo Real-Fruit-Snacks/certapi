@@ -173,9 +173,7 @@ public partial class MockServerWindow : Window
             AppendLine($"{DateTime.Now:HH:mm:ss}  {r.Method,-6} {r.Path} → {r.Status}{who}{matched}");
         });
 
-    private void AppendLine(string text)
-    {
-        LogBox.AppendText(text + Environment.NewLine);
-        LogBox.ScrollToEnd();
-    }
+    private BoundedTranscript? _log;
+
+    private void AppendLine(string text) => (_log ??= new BoundedTranscript(LogBox)).Append(text);
 }

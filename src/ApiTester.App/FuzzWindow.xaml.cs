@@ -191,9 +191,9 @@ public partial class FuzzWindow : Window
             var headers = request.Headers.ToList();
             lock (captureLock) TokenService.AutoAttach(_state, request.Url, headers, out _);
             var probe = request with { Headers = headers, Timeout = System.TimeSpan.FromSeconds(_timeout) };
-            var response = await _client.SendAsync(probe, cert,
-                transport: new TransportOptions { IgnoreServerCertificateErrors = _insecure, FollowRedirects = false },
-                cancellationToken: ct);
+            var transport = new TransportOptions { IgnoreServerCertificateErrors = _insecure, FollowRedirects = false };
+            // Off the UI thread: the proxy lookup before SendAsync's first await can take seconds.
+            var response = await Task.Run(() => _client.SendAsync(probe, cert, transport: transport, cancellationToken: ct));
             if (response.Error is null) lock (captureLock) TokenService.Capture(_state, response.FinalUrl(request.Url), response.Body, response.ContentType, response.Headers);
             return response;
         }

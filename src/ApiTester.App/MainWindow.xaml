@@ -787,7 +787,7 @@
                                      HorizontalScrollBarVisibility="Auto"/>
                     </TabItem>
                     <TabItem Header="Raw">
-                        <TextBox x:Name="RawBox" IsReadOnly="True" AcceptsReturn="True" BorderThickness="0"
+                        <TextBox x:Name="RawBox" IsReadOnly="True" AcceptsReturn="True" BorderThickness="0" IsUndoEnabled="False"
                                  Tag="The raw response body appears here after you send a request."
                                  VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto" FontFamily="Consolas" Padding="10"/>
                     </TabItem>

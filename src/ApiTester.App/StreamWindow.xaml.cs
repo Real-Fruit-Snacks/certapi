@@ -78,7 +78,7 @@ public partial class StreamWindow : Window
         if (e.Key == Key.Enter && SendButton.IsEnabled) { e.Handled = true; Send_Click(sender, e); }
     }
 
-    private void Clear_Click(object sender, RoutedEventArgs e) => Transcript.Clear();
+    private void Clear_Click(object sender, RoutedEventArgs e) => Log.Clear();
 
     private async void Connect_Click(object sender, RoutedEventArgs e)
     {
@@ -229,7 +229,9 @@ public partial class StreamWindow : Window
             _ => "  "       // info
         };
         string stamp = DateTime.Now.ToString("HH:mm:ss");
-        Transcript.AppendText($"{stamp}  {prefix}{text}{Environment.NewLine}");
-        Transcript.ScrollToEnd();
+        Log.Append($"{stamp}  {prefix}{text}");
     }
+
+    private BoundedTranscript? _log;
+    private BoundedTranscript Log => _log ??= new BoundedTranscript(Transcript);
 }

@@ -171,7 +171,7 @@ public partial class HelpWindow : Window
             "Choose a method and type a URL on the request line.",
             "Press Send (or Ctrl+Enter). The response appears in the panel below."),
         Sub("READING THE RESPONSE"),
-        P("Pretty formats JSON and XML with syntax highlighting; Raw shows the exact bytes; Headers lists the response headers; Diagnostics shows the TLS and certificate details; Rendered opens the URL as a web page; Network traces every HTTP call — the request you sent and every resource the Rendered view fetched."),
+        P("Pretty formats JSON and XML with syntax highlighting; Raw shows the exact bytes (of a large body, the first megabyte; Copy body and Save… take all of it); Headers lists the response headers; Diagnostics shows the TLS and certificate details; Rendered opens the URL as a web page; Network traces every HTTP call — the request you sent and every resource the Rendered view fetched."),
         P("Use the “find in response…” box above the response to locate text in the body — Enter (or Find next) jumps to the next match and wraps around."),
         P("The pop-out button above the response (next to Copy body) opens either the selected view or the whole response panel — tabs and all — in its own window. Detach the entire panel to give the request editor the full main window, or pop a single view to watch, say, the Network trace beside the Pretty body. Everything stays live, and closing a popped-out window puts its content back in place."),
         P("“Copy as ▾” turns the current request into a ready-to-run snippet — cURL, PowerShell (Invoke-RestMethod), Python (requests), or C# (HttpClient) — with {{variables}} resolved and headers and body included."),

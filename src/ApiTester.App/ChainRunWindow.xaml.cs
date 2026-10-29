@@ -149,7 +149,10 @@ public partial class ChainRunWindow : Window
             System.Windows.Data.BindingOperations.EnableCollectionSynchronization(env.Variables, env.Variables);
         try
         {
-            var result = await ChainRunner.RunAsync(steps, ctx, vars, progress, _cts.Token);
+            // The runner already reports through progress and takes notes under a lock; starting it
+            // off the UI thread keeps each step's proxy lookup and setup from holding the window.
+            var token = _cts.Token;
+            var result = await Task.Run(() => ChainRunner.RunAsync(steps, ctx, vars, progress, token));
 
             foreach (var label in result.SkippedLabels)
             {
@@ -253,7 +256,7 @@ public partial class ChainRunWindow : Window
             ? response.Error.Message
             : $"{response.StatusCode} {response.ReasonPhrase} · {response.Body.LongLength} bytes · {response.Elapsed.TotalMilliseconds:F0} ms";
 
-        var formatted = new ResponseFormatter().Format(response);
+        var formatted = ResponseView.Pretty(response);
         BodyRich.Document = SyntaxHighlighter.Build(formatted.Text, formatted.Kind);
 
         var sb = new StringBuilder();

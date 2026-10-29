@@ -36,16 +36,37 @@ public sealed class SessionCaptureController : IDisposable
     {
         try
         {
-            await _browser.EnsureCoreWebView2Async();
+            await _browser.EnsureCoreWebView2Async(await AppWebView.EnvironmentAsync());
             var core = _browser.CoreWebView2;
             core.Settings.AreDevToolsEnabled = false;
             core.AddWebResourceRequestedFilter("*", CoreWebView2WebResourceContext.All);
             core.WebResourceRequested += OnResourceRequested;
+            core.ProcessFailed += OnProcessFailed;
             _ready = true;
             return true;
         }
         catch { return false; }
     }
+
+    /// <summary>Raised on the UI thread when the browser view's process exits or hangs, with what to
+    /// tell the user.</summary>
+    public event Action<string>? Stopped;
+
+    private void OnProcessFailed(object? sender, CoreWebView2ProcessFailedEventArgs e)
+    {
+        if (AppWebView.Describe(e) is not { } message) return;
+        if (e.ProcessFailedKind == CoreWebView2ProcessFailedKind.BrowserProcessExited)
+        {
+            // This control cannot be used again; the next window starts a new browser process.
+            _ready = false;
+            AppWebView.Forget();
+            Stopped?.Invoke(message + " Finish & save keeps what was captured; open the window again to go on.");
+        }
+        else Stopped?.Invoke(message + " Reload the page to try again.");
+    }
+
+    /// <summary>False before the browser has started and after its process has exited.</summary>
+    public bool Ready => _ready;
 
     public void Navigate(string url)
     {
@@ -60,10 +81,13 @@ public sealed class SessionCaptureController : IDisposable
         string uri = request.Uri;
         var headers = request.Headers.Select(h => new KeyValuePair<string, string>(h.Key, h.Value)).ToList();
         byte[]? body = ReadContent(request.Content);
-        _ = HandleAsync(e, deferral, method, uri, headers, body);
+        // Taken now, while the control is alive: the answer is built from it after the fetch.
+        var environment = ((CoreWebView2)sender!).Environment;
+        _ = HandleAsync(environment, e, deferral, method, uri, headers, body);
     }
 
     private async Task HandleAsync(
+        CoreWebView2Environment environment,
         CoreWebView2WebResourceRequestedEventArgs e, CoreWebView2Deferral deferral,
         string method, string uri, List<KeyValuePair<string, string>> headers, byte[]? body)
     {
@@ -72,7 +96,7 @@ public sealed class SessionCaptureController : IDisposable
             var result = await _session.FetchAsync(method, new Uri(uri), headers, body, null, _cts.Token);
             var headerLines = string.Join("\r\n", result.Headers
                 .Where(h => Forwardable(h.Key)).Select(h => $"{h.Key}: {h.Value}"));
-            e.Response = _browser.CoreWebView2.Environment.CreateWebResourceResponse(
+            e.Response = environment.CreateWebResourceResponse(
                 new MemoryStream(result.Body), result.StatusCode,
                 string.IsNullOrEmpty(result.ReasonPhrase) ? "OK" : result.ReasonPhrase, headerLines);
 
@@ -85,7 +109,7 @@ public sealed class SessionCaptureController : IDisposable
         }
         catch (Exception ex)
         {
-            e.Response = _browser.CoreWebView2.Environment.CreateWebResourceResponse(
+            e.Response = environment.CreateWebResourceResponse(
                 new MemoryStream(Array.Empty<byte>()), 502, "Bad Gateway", "");
             var msg = ex.Message;
             _browser.Dispatcher.Invoke(() => Failed?.Invoke(msg));
