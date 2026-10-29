@@ -4,7 +4,10 @@ Prefer to compile it yourself, or want to contribute? Here's the layout and the 
 
 ## Prerequisites
 
-- **.NET 9 SDK** (software development kit) (Windows).
+- **.NET 9 SDK** (software development kit), 9.0.320 or later (Windows). `global.json` asks for
+  it, so a machine that has only a newer major version (.NET 10) says so instead of building. The
+  exes are self-contained and carry the runtime of the SDK that built them, so build releases
+  with the newest 9.0 SDK: that is what gives them the runtime's latest security fixes.
 - Windows 10 / 11 (the app is WPF — Windows Presentation Foundation; the tests use the Windows
   certificate APIs — application programming interfaces).
 

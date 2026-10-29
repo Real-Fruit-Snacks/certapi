@@ -58,7 +58,7 @@ Body goes to stdout, diagnostics to stderr. Exit codes: 0 success · 1 failure �
 
 ## Tested on
 
-- Windows 11 23H2 · .NET 9 SDK 9.0.x
+- Windows 11 23H2 · .NET 9 SDK 9.0.320 or later
 - Windows Server 2022 · headless `certapi` only
 - GitHub Actions `windows-latest` on every push: build with warnings as errors, then `dotnet test`
 - *Not* tested: Windows 10 before 22H2, ARM64 Windows. Probably works, no promises.

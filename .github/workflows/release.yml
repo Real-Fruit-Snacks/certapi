@@ -42,10 +42,37 @@ jobs:
             fi
           done
 
+      # The newest .NET 9 SDK. global.json keeps the build on a 9.0 SDK (9.0.320 or later): without
+      # it, a newer SDK preinstalled on the runner builds the exes with whatever 9.0 runtime that SDK
+      # knew of when it shipped.
       - name: Set up .NET 9
         uses: actions/setup-dotnet@v6
         with:
           dotnet-version: "9.0.x"
+
+      # A self-contained exe carries its own runtime, so it has the runtime's security fixes only
+      # if it was built with the newest one. v1.95.0 went out with 9.0.21 three days after 9.0.22
+      # fixed three CVEs. Stop when the runtime about to be bundled is older than the newest 9.0 patch.
+      - name: Check the exes bundle the newest .NET 9 runtime
+        shell: pwsh
+        run: |
+          $meta = Invoke-RestMethod https://builds.dotnet.microsoft.com/dotnet/release-metadata/9.0/releases.json
+          $latest = [version]$meta.'latest-runtime'
+          foreach ($proj in 'src/ApiTester.App/ApiTester.App.csproj', 'src/ApiTester.Cli/ApiTester.Cli.csproj') {
+            $out = dotnet msbuild $proj -nologo -t:ProcessFrameworkReferences -getItem:RuntimePack `
+              -p:Configuration=Release -p:RuntimeIdentifier=win-x64 -p:SelfContained=true | Out-String
+            $start = $out.IndexOf('{'); $end = $out.LastIndexOf('}')
+            if ($LASTEXITCODE -ne 0 -or $start -lt 0 -or $end -lt $start) { Write-Host $out; throw "could not read the runtime pack for $proj" }
+            $pack = @(($out.Substring($start, $end - $start + 1) | ConvertFrom-Json).Items.RuntimePack |
+              Where-Object Identity -eq 'Microsoft.NETCore.App.Runtime.win-x64')
+            if ($pack.Count -ne 1) { Write-Host $out; throw "expected one Microsoft.NETCore.App runtime pack for $proj, found $($pack.Count)" }
+            $bundled = [version]$pack[0].NuGetPackageVersion
+            Write-Host "$proj bundles .NET runtime $bundled (newest 9.0 patch: $latest, SDK $(dotnet --version))"
+            if ($bundled -lt $latest) {
+              Write-Host "::error file=$proj::bundles .NET runtime $bundled but $latest is out. Re-run once the runner's newest 9.0 SDK carries $latest."
+              exit 1
+            }
+          }
 
       - name: Test
         run: dotnet test --configuration Release --filter "Category!=StoreRoundTrip"
