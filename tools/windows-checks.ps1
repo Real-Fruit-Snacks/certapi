@@ -541,6 +541,38 @@ Invoke-Check 'send --windows-auth answers an NTLM challenge with your sign-in (m
     else { Fail ("exit $($r.Code)`n" + (Tail ($r.Out + $r.Err))) }
 }
 
+Invoke-Check 'serve --windows-auth relays a POST to a site that answers NTLM (the body is sent twice)' {
+    $port = Get-FreePort
+    $null = Start-Background 'serve-ntlm' @('serve', $Echo, '--port', "$port", '--windows-auth') $port
+    $r = Invoke-Exe $script:Exe @('send', "http://127.0.0.1:$port/windows-auth", '-X', 'POST', '-d', '{"probe":1}')
+    if ($r.Err -match '(?m)^200 ' -and $r.Out -match '"authenticated":"(NTLM|Negotiate)"') { Pass ("the POST was answered with " + $Matches[1] + " through the gateway") }
+    else { Fail ("exit $($r.Code)`n" + (Tail ($r.Out + $r.Err))) }
+}
+
+Invoke-Check 'send, ws and sse --cert-file leave no key file behind in your profile' {
+    $pfx = Join-Path $Work 'mock-mtls-certs\mock-client.pfx'
+    if (-not (Test-Path $pfx)) { Skip 'the mTLS mock wrote no client .pfx'; return }
+    $keyDirs = @((Join-Path $env:APPDATA 'Microsoft\Crypto\Keys'), (Join-Path $env:APPDATA 'Microsoft\Crypto\RSA'))
+    $countKeys = { @($keyDirs | Where-Object { Test-Path $_ } | ForEach-Object { Get-ChildItem $_ -Recurse -File -Force -ErrorAction SilentlyContinue }).Count }
+    # A port nothing listens on: ws and sse load the certificate, fail to connect, and end.
+    $probe = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
+    $probe.Start(); $closedPort = $probe.LocalEndpoint.Port; $probe.Stop()
+    # An empty stdin of their own: ws reads piped input to the end before it connects, and an
+    # inherited stdin that never ends (this script run from another program) would hold it there.
+    $none = [byte[]]@()
+    $before = & $countKeys
+    $slow = @()
+    foreach ($i in 1..5) { $r = Invoke-Exe $script:Exe @('send', "$Mtls/", '--cert-file', $pfx, '--insecure', '-q') -Stdin $none; if ($r.TimedOut) { $slow += 'send' } }
+    foreach ($i in 1..2) {
+        $r = Invoke-Exe $script:Exe @('ws', "ws://127.0.0.1:$closedPort/", '--cert-file', $pfx) -Stdin $none -TimeoutSec 30; if ($r.TimedOut) { $slow += 'ws' }
+        $r = Invoke-Exe $script:Exe @('sse', "http://127.0.0.1:$closedPort/", '--cert-file', $pfx) -Stdin $none -TimeoutSec 30; if ($r.TimedOut) { $slow += 'sse' }
+    }
+    $after = & $countKeys
+    if ($slow.Count -gt 0) { Fail ("ended by the timeout, which leaves a key behind: " + ($slow -join ', ')) }
+    elseif ($after -le $before) { Pass "5 sends, 2 ws and 2 sse: $before key file(s) in the profile before, $after after" }
+    else { Fail "they left $($after - $before) key file(s) in $($keyDirs -join ' / ')" }
+}
+
 Invoke-Check 'A client certificate from CurrentUser\My over mTLS' {
     $script:TestCert = New-SelfSignedCertificate -Subject "CN=certapi-check-$id" -CertStoreLocation 'Cert:\CurrentUser\My' `
         -KeyUsage DigitalSignature -KeyExportPolicy Exportable -NotAfter (Get-Date).AddDays(2) `
