@@ -437,6 +437,50 @@ The Rendered view needs the **WebView2** runtime (ships with Windows 11 / curren
 unavailable, the tab says so; the rest of the app is unaffected. Install the Evergreen WebView2 Runtime
 from Microsoft if you need it.
 
+If the view stops, the bar above it says which WebView2 process ended or hung; **Reload** starts it
+again. WebView2 keeps its profile in `%LOCALAPPDATA%\CertApiTester\WebView2`. Before 1.96.0 it was
+a `ApiTester.App.exe.WebView2` folder beside the exe, which you can delete.
+
+## The command line or the app freezes a remote desktop (VDI, Citrix, RDP)
+
+A remote desktop has little spare CPU and usually no GPU, and the console window and the app are
+drawn over the network. From 1.96.0, certapi avoids the things that froze such sessions:
+
+- **`serve`** writes its request log from a background thread. It shows at most 20 requests a
+  second in a console window and turns QuickEdit off while it runs (a click in the window no
+  longer stops the gateway). `--record` keeps at most 32 MB per body and about 128 MB of memory
+  for all of them.
+  [The request log](19-Local-Gateway.md#the-request-log) has the details.
+- **`send`** does not print a binary body to a console window, and stops a text body after 1 MB.
+- **The app** shows the first 1 MB of a body (Copy and Save… still take all of it), keeps the
+  stream and mock-server logs bounded, sends off the UI thread, and starts WebView2 with
+  `--disable-gpu` in a remote session.
+
+If a session still slows down while certapi runs, these are worth checking:
+
+1. **Send the log to a file.** Run `certapi serve … 2> gateway.log` (or `-q`), so the console
+   draws nothing per request. `--trace` writes from each request as it happens; on a remote
+   desktop give it `--trace-file`.
+2. **Many connections.** Each new TLS connection with a client certificate is a signature made
+   by `lsass.exe`. Watch its CPU in Task Manager while pages load. The gateway reuses connections
+   per site; `certapi connections` shows whether `send` and `run` do. If the machine runs out of
+   ephemeral ports, the System event log has Tcpip events 4227 or 4231, and
+   `(Get-NetTCPConnection -State TimeWait).Count` is in the thousands.
+3. **Security and Citrix software in the process.** Antivirus scanning and Citrix's API hooks
+   (which Citrix lets an administrator turn off per program with the `UviProcessExcludes` value)
+   run inside certapi.exe and ApiTester.App.exe. If the freeze stops with them excluded, that is
+   the cause; the exclusion is for your administrator to make.
+4. **Memory trimming.** Citrix Workspace Environment Management can trim an idle program's memory.
+   An idle gateway then pages back in on the next request. Ask for certapi.exe to be excluded.
+5. **Copying a large body.** On Citrix the clipboard is copied to your own computer too. Use
+   Save… for anything large.
+6. **WebView2 settings.** An administrator's `WEBVIEW2_USER_DATA_FOLDER` and
+   `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS` take precedence over the app's choices. Set
+   `CERTAPI_WEBVIEW2_GPU=1` to keep the GPU in a remote session that has one.
+
+When reporting a freeze, note what Task Manager showed for certapi.exe (CPU, memory, handles,
+threads) and for `lsass.exe`, and attach the gateway log written with `2>`.
+
 ## Headless runs don't save results
 
 While the app is open, `certapi run` against the **live** workspace deliberately skips writing results
