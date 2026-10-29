@@ -678,7 +678,7 @@ public sealed class ApiClient : IDisposable
             // Use the machine's configured proxy — including "Automatically detect settings"
             // (WPAD) and a "Use automatic configuration script" (PAC) from Internet Options —
             // authenticating with the signed-in user's Windows credentials when required.
-            DefaultProxyCredentials = CredentialCache.DefaultCredentials
+            DefaultProxyCredentials = ProxyConfiguration.SignedInUser
         };
         ProxyConfiguration.Apply(handler, transport, destination);
         // Never let the handler follow redirects: it does so internally, so the intermediate

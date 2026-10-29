@@ -160,8 +160,8 @@ certapi serve --profile corp
 
 `serve` takes `port`, `vhost` (`true` or a suffix), `browser`, `cors` (`true`, an origin or a list),
 `token`, `allow` (a host or a list), `listen`, `cookieJar` (`true` or a file), `autoToken`,
-`windowsAuth`, `windowsUser`, `windowsPassword`, `forwarded`, `maxBody`, `timeout`, `tls`,
-`rewriteBody` and `sites` (exactly the `--routes` format). The certificate, `insecure`, proxy, CA files, revocation,
+`windowsAuth`, `windowsUser`, `windowsPassword`, `forwarded`, `maxBody`, `timeout`,
+`maxConnections`, `maxRequests`, `tls`, `rewriteBody` and `sites` (exactly the `--routes` format). The certificate, `insecure`, proxy, CA files, revocation,
 `tlsMin` and `connectTimeout` come from the profile's top-level fields, as for every command; the
 top-level `timeout`, `workspace`, `retry` and `headers` do not apply to `serve`. Options with no field
 (`--check`, `--quiet`, the individual browser flags, header rules, `--record`/`--replay`) are typed on
@@ -191,7 +191,7 @@ secret masked.
 | `--cert-pin <pin>` | Smart-card / HSM PIN, supplied ahead of the prompt (or `CERTAPI_CERT_PIN`). Windows only |
 | `--cert-file <path>` / `--cert-password` / `--key-file` | Certificate from a file instead |
 | `--store <location>` | `CurrentUser` (default) or `LocalMachine` |
-| `--insecure` | Ignore the upstream's server-certificate errors (a site can turn this back off) |
+| `--insecure` | Ignore the upstream's server-certificate errors (a site can turn this back off). Nothing is then downloaded for the chain ([limits](#limits-and-health)) |
 | `--ca-file <pem>` | Trust the root(s) in this file on top of the Windows store. Repeatable |
 | `--revocation none\|offline\|online` | Check whether the upstream's certificate has been revoked by its issuer (default `none`) |
 | `--revocation-strict` | Treat an undeterminable revocation status as fatal; needs `--revocation offline` or `online` |
@@ -201,9 +201,11 @@ secret masked.
 | `--listen <address>` | Also answer on this address: an IP address, `0.0.0.0`, `::`, `+`, `*` or `localhost`. A loopback address (`127.0.0.1`, `::1`, `localhost`) needs no token and stays loopback-only, even under `--vhost`. Any other address needs `--token`. With `--tls` only `127.0.0.1` or `::1` is accepted |
 | `--timeout <seconds>` | How long to wait for the upstream's **response headers** (default 100). A body that streams longer is not cut off |
 | `--max-body <bytes>` | Refuse a request body over the limit with 413 (`k`/`m`/`g` suffixes) |
+| `--max-connections <n>` | Connections the gateway may open to one site at once for requests (default 16; each WebSocket has one of its own); a request past it waits for one to come free, within `--timeout` ([limits](#limits-and-health)) |
+| `--max-requests <n>` | Requests the gateway handles at once, WebSockets included (default 256); one more is answered 503 at once. `/_certapi/` and CORS preflights do not count and are always answered ([limits](#limits-and-health)) |
 | `--forwarded` | Add `X-Forwarded-For/Proto/Host` and `Via: 1.1 certapi` to forwarded requests |
 | `--workspace <file>` | Resolve a saved-website `<upstream>` from a workspace file |
-| `-q, --quiet` | No startup table or per-request log ([the log](#the-request-log)) |
+| `-q, --quiet` | No startup table, per-request log or notes; warnings and the health line still print ([the log](#the-request-log)) |
 | `--tls` | Serve the gateway itself over HTTPS on 127.0.0.1 with a generated gateway certificate, so `Secure` and `__Host-`/`__Secure-` cookies work. The certificate is cached in `%AppData%\CertApiTester\gateway-tls` and reused. Binding the port needs an elevated prompt the first time; the exact `netsh` command is printed if it isn't available. With `--vhost` the certificate also names the suffix, every site under it and each `--allow` host on its default https port. It is regenerated within 7 days of expiry, or when it lacks a name the run needs; that run moves the `127.0.0.1:<port>` binding to the new certificate (from an elevated prompt; otherwise it prints the `netsh` commands and stops). With `--tls-trust` the new root is installed and then the old one removed; without it, a note says to add `--tls-trust` once |
 | `--tls-trust` | Also install that certificate into `CurrentUser\Root` so the browser accepts it silently — explicit, logged, and reversible. Only with `--tls` |
 | `--tls-untrust` | Remove the current gateway certificate, and every earlier one this tool generated, from `CurrentUser\Root`, then exit; a standalone action. It does not remove the HTTP.sys port binding |
@@ -227,7 +229,8 @@ secret masked.
 
 The proxy options (`--proxy`, `--no-proxy`, `--noproxy`, `--pac`, `--no-env-proxy`, `--proxy-user`),
 `--resolve`, `--tls-min`, `--connect-timeout`, `--offline` and `-4`/`-6` apply to the gateway's
-connections exactly as they do on [`send`](21-CLI-Reference.md#transport-options). The redirect,
+connections exactly as they do on [`send`](21-CLI-Reference.md#transport-options); without
+`--connect-timeout` the name lookup and each address still get at most 15 seconds here ([limits](#limits-and-health)). The redirect,
 decompression, HTTP-version and retry options are accepted but do not apply. `--sni` names the server
 in every site's handshake (a site's own `"sni"` wins), direct connections only. The gateway answers
 `/_certapi/health` (state as JSON) and `/_certapi/routes` (sites, settings, allow list) itself, on
@@ -253,8 +256,76 @@ never waits for the console:
   counted and reported (`… 312 log lines not written: the console could not keep up`), not waited
   for. With `--log-file`, they still reach the file.
 - **To a file or a pipe**, every line is written: `certapi serve … 2> gateway.log`. `-q` turns the
-  log off. `--trace` is different: it writes each network event as it happens, on the request's
+  startup table, the request lines and the gateway's notes off; warnings and the health line still print. `--trace` is different: it writes each network event as it happens, on the request's
   own thread, so on a remote desktop send it to a file (`--trace-file`).
+
+## Limits and health
+
+On a managed work machine every connection the gateway opens goes through software that sits
+under the network stack: antivirus and endpoint protection, data-loss and web filters, the VDI's
+own drivers. So the gateway keeps what it asks of the machine bounded:
+
+- **At most 16 connections per site at once** (`--max-connections`). A request past that waits
+  for a connection to come free, and the wait counts toward `--timeout`. Many requests at once (a
+  busy page over HTTP/2 with `--tls`, several tabs, a script) then cost at most 16 TLS handshakes
+  per site. Each relayed WebSocket has a connection of its own, outside the 16.
+- **At most 256 requests at once** (`--max-requests`). One more is answered `503` straight away,
+  with `Retry-After: 1`. A relayed WebSocket counts as one for as long as it is open. The
+  gateway's own `/_certapi/` endpoints and CORS preflights reach no upstream, so they do not count
+  and are always answered: `/_certapi/health` still answers when the gateway is full.
+- **An address that keeps failing is left alone for a while.** After 5 failed connection attempts
+  to a host and port within 30 seconds, the gateway stops dialling it for 10 seconds, and its
+  requests get `502` with the reason (`certapi paused new connections for 10 s after 5 failed
+  attempts in a row (app.corp:443)`). Then one attempt goes through as a trial while the others
+  still wait (another, if it takes longer than the connect limit below: 15 seconds, or
+  `--connect-timeout`): if it fails, the pause starts again, twice as long, up to a minute; if it
+  succeeds, or any connection to that address does, the pause is over. Attempts that fail
+  together, a whole page at once, pause the address once. Without this, an unreachable site made
+  the gateway dial again for every request the browser retried, and a burst of failing
+  connections is what endpoint protection reads as a scan.
+- **Through a proxy**, the gateway connects to the proxy, so the proxy's address is the one paused
+  when it cannot be reached, and every site behind it waits. A site the proxy refuses (it answers
+  the CONNECT with an error, or a sign-in to the proxy fails) gets the proxy's answer in a `502`
+  each time, and each refusal counts as a failed connection in the health line. The gateway does
+  not refuse such a site in the proxy's place: with a failover list (`PROXY a; PROXY b`), .NET
+  would take that for proxy `a` failing and avoid it for half an hour.
+- **A connect waits at most 15 seconds at each step**: the name lookup, then each address the
+  name has, in turn. When none answers, the request gets `504` naming the address. A connect held by
+  security software, or sent down a route that drops it, gives up then, instead of after Windows'
+  own timeout (about 21 seconds an address) or, held, never; and a name whose first address goes
+  nowhere (an IPv6 route that drops everything) still reaches the next one. `--connect-timeout`
+  sets another limit, and then also bounds the whole connection setup: TCP, a proxy tunnel and the
+  TLS handshake. Without it the handshake has no limit of its own, so a smart card's PIN prompt is
+  not cut short.
+- **With a PAC script or WPAD, the system proxy is asked once per site.** Otherwise .NET asks before
+  every request, and with automatic configuration each lookup is a blocking call into the WinHTTP
+  auto-proxy service that every program on the machine shares. A proxy answer is reused for five
+  minutes, and a "no proxy" answer for 30 seconds, because a lookup that fails also answers "no
+  proxy". A site whose answer is a failover list (`PROXY a; PROXY b`), or that has no answer when
+  its first request comes, keeps .NET's own lookup, so failover keeps working. A manual proxy, or
+  none, is left as it is: .NET answers those without WinHTTP.
+- **With `--insecure`, nothing is downloaded for the server's certificate chain.** Windows otherwise
+  looks for a missing intermediate (its AIA address), runs Automatic Root Update for a root it does
+  not know (a fetch from windowsupdate.com), and under `--revocation` fetches revocation lists.
+  `--insecure` accepts the certificate whatever they say, and on a network without the internet
+  each of those waits about 15 seconds per connection. On such a network, `--offline` keeps the
+  AIA and revocation fetches away from a gateway that checks certificates.
+
+Once a minute, while there is traffic, the gateway writes a **health line**, under `-q` too:
+
+```text
+health 14:03:12: 312 requests in the last minute (4 now) · connections 9 open, 3 new, 0 failed · 41 threads · 512 handles · 96 MB · machine 1,204 TCP (310 closing)
+```
+
+The last figure is the whole machine's: Windows has about 16,000 ports for outgoing
+connections, and when they run out every program's new connections fail. The gateway warns when
+the machine passes 10,000, and when its own connection failures, open connections, threads,
+handles or memory pass what relaying a browser's pages needs. `/_certapi/health` carries the same
+figures as JSON, under `load`. If a session ever freezes, these lines are the record of what the
+gateway held in the minutes before. Keep them in a file that survives a restart:
+`certapi serve … 2> "$env:LOCALAPPDATA\certapi-gateway.log"`, or a folder IT says is kept on a
+remote desktop. On a network drive such as `H:`, the last lines may never arrive when the network
+is what stops.
 
 ## Revocation checking
 

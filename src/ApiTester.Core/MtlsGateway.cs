@@ -135,6 +135,27 @@ public sealed class MtlsGateway : IDisposable
 
     private UpstreamAllowlist? _dynamic;
     private WindowsAuthOptions? _windowsAuth;
+    private readonly GatewayConnectionGuard _guard = new();
+    private readonly ProxyConfiguration.CachedSystemProxy? _systemProxy = ProxyConfiguration.CachedSystemProxy.ForThisMachine();
+
+    /// <summary>How long the gateway waits for the name lookup, and for each address it tries, when it
+    /// connects to an upstream or its proxy and --connect-timeout does not say: a connect that hangs
+    /// holds a port, and whatever the security software under the network stack keeps for it, until
+    /// it gives up (see GatewayConnectionGuard.ConnectSocketAsync). Only the TCP connect: a TLS
+    /// handshake can wait on a smart card's PIN prompt.</summary>
+    public static readonly TimeSpan DefaultConnectTimeout = TimeSpan.FromSeconds(15);
+
+    /// <summary>The most connections one site may have open at once for relayed requests. A request
+    /// beyond it waits for one to come free (the wait counts toward --timeout) instead of opening
+    /// another, so many requests at once — a busy page over HTTP/2 with --tls, several tabs, a
+    /// script — cost at most this many TLS handshakes per site. A relayed WebSocket has a connection
+    /// of its own, outside this number. Set before the first request.</summary>
+    public int MaxConnectionsPerSite { get; set; } = DefaultMaxConnectionsPerSite;
+
+    public const int DefaultMaxConnectionsPerSite = 16;
+
+    /// <summary>Counts the gateway's connections and pauses an endpoint that keeps failing.</summary>
+    public GatewayConnectionGuard Guard => _guard;
 
     /// <summary>A single upstream mounted at the root — the shape the gateway had before it could
     /// carry several upstreams at once.</summary>
@@ -227,7 +248,7 @@ public sealed class MtlsGateway : IDisposable
         string key = Authority(upstream) + "|" + (cert?.Thumbprint ?? "") + "|" + (route.Settings?.PoolKey ?? "");
         string host = upstream.Host;
         return _clients.GetOrAdd(key, _ => new Lazy<HttpClient>(() => new HttpClient(
-            CreateHandler(cert, insecure, transport, _trustForHost?.Invoke(host), windowsAuth, upstream),
+            CreateHandler(cert, insecure, transport, _trustForHost?.Invoke(host), windowsAuth, upstream, _guard, MaxConnectionsPerSite, _systemProxy),
             disposeHandler: true)
         {
             // Infinite on the client: the per-request timeout below covers the wait for headers,
@@ -243,7 +264,8 @@ public sealed class MtlsGateway : IDisposable
     internal static SocketsHttpHandler CreateHandler(X509Certificate2? clientCertificate,
         bool ignoreServerCertificateErrors, TransportOptions? transport,
         Func<X509Certificate2?, bool>? trustServerCertificate, WindowsAuthOptions? windowsAuth = null,
-        Uri? destination = null)
+        Uri? destination = null, GatewayConnectionGuard? guard = null, int? maxConnectionsPerServer = null,
+        ProxyConfiguration.CachedSystemProxy? systemProxy = null)
     {
         // A gateway built without transport options gets the defaults, which is RevocationMode.None —
         // exactly the behavior this gateway had before revocation checking existed.
@@ -253,7 +275,7 @@ public sealed class MtlsGateway : IDisposable
         {
             AllowAutoRedirect = false,                       // the caller's app decides on 3xx
             AutomaticDecompression = DecompressionMethods.None, // relay bytes exactly as received
-            DefaultProxyCredentials = CredentialCache.DefaultCredentials,
+            DefaultProxyCredentials = ProxyConfiguration.SignedInUser,
             SslOptions = new SslClientAuthenticationOptions
             {
                 // The same shared table ApiClient and GrpcChannelFactory use: a revocation setting
@@ -276,10 +298,25 @@ public sealed class MtlsGateway : IDisposable
             }
         };
         RevocationCheck.Apply(handler.SslOptions, options);
+        // With certificate errors ignored, whatever the chain says is accepted (revocation included:
+        // see RevocationCheck.Decide), so it is built from what this machine has: no download of a
+        // missing intermediate, no Automatic Root Update, no revocation list. Each of those is a fetch
+        // that, on a network without the internet, waits about 15 seconds per connection for an
+        // answer the gateway then ignores.
+        if (ignoreServerCertificateErrors)
+            handler.SslOptions.CertificateChainPolicy = new X509ChainPolicy
+            {
+                RevocationMode = X509RevocationMode.NoCheck,
+                DisableCertificateDownloads = true
+            };
         TlsPolicy.Apply(handler.SslOptions, options with { Sni = null });
         if (clientCertificate is not null)
             handler.SslOptions.ClientCertificates = new X509CertificateCollection { clientCertificate };
-        if (options.ConnectTimeout is { } connect) handler.ConnectTimeout = connect;
+        // --connect-timeout bounds the whole connection setup (TCP, a proxy tunnel, the TLS
+        // handshake), as on every other command. Without it, only the TCP connect is bounded
+        // (connectLimit below): a handshake may wait on a smart card's PIN prompt.
+        if (options.ConnectTimeout is { } setupLimit) handler.ConnectTimeout = setupLimit;
+        var connectLimit = options.ConnectTimeout ?? DefaultConnectTimeout;
 
         // Windows Integrated Auth to the upstream, on the browser's behalf: the gateway's own
         // connection answers the 401 Negotiate/NTLM challenge, exactly as `send --windows-auth`
@@ -292,9 +329,19 @@ public sealed class MtlsGateway : IDisposable
             handler.PreAuthenticate = true;
         }
 
-        if (transport is not null) ApplyTransport(handler, transport, destination);
+        if (transport is not null) ApplyTransport(handler, transport, destination, connectLimit);
+        // The system proxy, asked once per site rather than before every request (see CachedSystemProxy).
+        if (systemProxy is not null && destination is { Scheme: "http" or "https" } site &&
+            handler.UseProxy && handler.Proxy is null && options.Proxy == ProxyMode.System &&
+            options.PacUrl is null && systemProxy.Takes(site))
+            handler.Proxy = systemProxy;
+        if (maxConnectionsPerServer is > 0) handler.MaxConnectionsPerServer = maxConnectionsPerServer.Value;
+        // Around the TCP connect, whatever the steps above installed for it, and inside the --sni
+        // handshake below: a TLS handshake that fails (or waits on a smart card's PIN prompt) is not
+        // a connection failure, and must not hold a paused site's trial.
+        guard?.Install(handler, connectLimit);
         if (options.Sni is { } sni && destination is { } dest && dest.Scheme is "https" or "wss")
-            SendServerName(handler, sni, dest);
+            SendServerName(handler, sni, dest, connectLimit);
 
         return handler;
     }
@@ -305,22 +352,17 @@ public sealed class MtlsGateway : IDisposable
     /// certificate, protocols and validation; a stream that is already TLS is used as it is. A
     /// connection to anything else — a proxy — is handed back untouched (the command line refuses
     /// --sni through a proxy; this is the belt to that brace).</summary>
-    private static void SendServerName(SocketsHttpHandler handler, string sni, Uri destination)
+    private static void SendServerName(SocketsHttpHandler handler, string sni, Uri destination, TimeSpan connectLimit)
     {
         var inner = handler.ConnectCallback;
         var tls = handler.SslOptions;
         int port = destination.IsDefaultPort ? 443 : destination.Port;
         handler.ConnectCallback = async (context, ct) =>
         {
-            Stream network;
-            if (inner is not null) network = await inner(context, ct);
-            else
-            {
-                var socket = new Socket(SocketType.Stream, ProtocolType.Tcp) { NoDelay = true };
-                try { await socket.ConnectAsync(context.DnsEndPoint, ct); }
-                catch { socket.Dispose(); throw; }
-                network = new NetworkStream(socket, ownsSocket: true);
-            }
+            Stream network = inner is not null
+                ? await inner(context, ct)
+                : new NetworkStream(await GatewayConnectionGuard.ConnectSocketAsync(
+                    context.DnsEndPoint.Host, context.DnsEndPoint.Port, connectLimit, null, ct), ownsSocket: true);
             if (!context.DnsEndPoint.Host.Equals(destination.Host, StringComparison.OrdinalIgnoreCase) ||
                 context.DnsEndPoint.Port != port)
                 return network;
@@ -345,7 +387,7 @@ public sealed class MtlsGateway : IDisposable
     /// <summary>The transport controls that make sense for a relay: how to reach the upstream.
     /// Decompression and redirects are deliberately not among them — the gateway hands the browser
     /// the bytes and the 3xx the upstream sent.</summary>
-    private static void ApplyTransport(SocketsHttpHandler handler, TransportOptions transport, Uri? destination)
+    private static void ApplyTransport(SocketsHttpHandler handler, TransportOptions transport, Uri? destination, TimeSpan connectLimit)
     {
         // One client per upstream authority, so the destination is known: the system proxy's
         // failover list survives for an upstream the bypass list does not match.
@@ -356,32 +398,21 @@ public sealed class MtlsGateway : IDisposable
         if (transport.Resolve.Count == 0 && transport.AddressFamily == AddressFamilyPreference.Any) return;
         handler.ConnectCallback = async (context, ct) =>
         {
-            var socket = new Socket(SocketType.Stream, ProtocolType.Tcp) { NoDelay = true };
             // A --resolve override replaces the address dialled and nothing else: the TLS server
             // name and the Host header still carry the hostname the route names.
             var pinned = transport.Resolve.FirstOrDefault(r =>
                 r.Port == context.DnsEndPoint.Port &&
                 string.Equals(r.Host, context.DnsEndPoint.Host, StringComparison.OrdinalIgnoreCase));
-            try
-            {
-                if (pinned is not null)
-                    await socket.ConnectAsync(new IPEndPoint(IPAddress.Parse(pinned.Address), context.DnsEndPoint.Port), ct);
-                else if (transport.AddressFamily == AddressFamilyPreference.Any)
-                    await socket.ConnectAsync(context.DnsEndPoint, ct);
-                else
-                    await socket.ConnectAsync(
-                        await AddressSelection.ResolveAsync(context.DnsEndPoint.Host, transport.AddressFamily, ct),
-                        context.DnsEndPoint.Port, ct);
-                // Hand back the plain stream: the handler still applies its own SslOptions — the
-                // client certificate and the validation callback — on top of it, so mutual TLS is
-                // exactly what it is without a pinned address.
-                return new NetworkStream(socket, ownsSocket: true);
-            }
-            catch
-            {
-                socket.Dispose();
-                throw;
-            }
+            var socket = await GatewayConnectionGuard.ConnectSocketAsync(
+                pinned?.Address ?? context.DnsEndPoint.Host, context.DnsEndPoint.Port, connectLimit,
+                transport.AddressFamily == AddressFamilyPreference.Any
+                    ? null
+                    : (host, t) => AddressSelection.ResolveAsync(host, transport.AddressFamily, t),
+                ct);
+            // Hand back the plain stream: the handler still applies its own SslOptions — the
+            // client certificate and the validation callback — on top of it, so mutual TLS is
+            // exactly what it is without a pinned address.
+            return new NetworkStream(socket, ownsSocket: true);
         };
     }
 
@@ -488,7 +519,8 @@ public sealed class MtlsGateway : IDisposable
     public SocketsHttpHandler CreateHandlerFor(Uri upstream)
     {
         var (cert, insecure, transport, windowsAuth) = Effective(SiteFor(upstream));
-        return CreateHandler(cert, insecure, transport, _trustForHost?.Invoke(upstream.Host), windowsAuth, upstream);
+        return CreateHandler(cert, insecure, transport, _trustForHost?.Invoke(upstream.Host), windowsAuth, upstream, _guard,
+            systemProxy: _systemProxy);
     }
 
     public async Task<GatewayResponse> ForwardAsync(GatewayRequest request, CancellationToken ct)
@@ -539,9 +571,27 @@ public sealed class MtlsGateway : IDisposable
             // ResponseHeadersRead: return as soon as headers arrive; the body streams lazily.
             response = await http.SendAsync(message, HttpCompletionOption.ResponseHeadersRead, headerTimeout.Token);
         }
+        // A tunnel the proxy refused: its answer is passed on, and the refusal counted (see
+        // GatewayConnectionGuard for why it is not paused).
+        catch (HttpRequestException ex) when (ex.HttpRequestError == HttpRequestError.ProxyTunnelError)
+        {
+            _guard.CountRefusedTunnel();
+            throw;
+        }
+        catch (HttpRequestException ex) when (Find<GatewayConnectTimeoutException>(ex) is not null)
+        {
+            // "The connection attempt got no answer within 15 s (app.corp:443)": a timeout, so 504.
+            throw new TimeoutException(ex.Message + ".", ex);
+        }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {
-            throw new TimeoutException($"The upstream did not answer within {_timeout.TotalSeconds:0} s.");
+            if (headerTimeout.IsCancellationRequested)
+                throw new TimeoutException($"The upstream did not answer within {_timeout.TotalSeconds:0} s.");
+            // Nothing else cancels a send: the handler's own connect timeout (--connect-timeout) ran
+            // out, on the TCP connect, a proxy tunnel or the TLS handshake.
+            var limit = Effective(route).Transport?.ConnectTimeout;
+            throw new TimeoutException($"No connection to {uri!.Authority} within " +
+                (limit is { } l ? $"{l.TotalSeconds:0.#} s (--connect-timeout)." : "the connect timeout."));
         }
 
         try
@@ -565,6 +615,13 @@ public sealed class MtlsGateway : IDisposable
             response.Dispose();
             throw;
         }
+    }
+
+    private static T? Find<T>(Exception? ex) where T : Exception
+    {
+        for (; ex is not null; ex = ex.InnerException)
+            if (ex is T found) return found;
+        return null;
     }
 
     private static bool MethodAllowsBody(string method) =>

@@ -34,7 +34,7 @@ public sealed class MtlsBrowserSession : IDisposable
         var handler = new SocketsHttpHandler
         {
             AutomaticDecompression = DecompressionMethods.All,
-            DefaultProxyCredentials = CredentialCache.DefaultCredentials,
+            DefaultProxyCredentials = ProxyConfiguration.SignedInUser,
             SslOptions = new SslClientAuthenticationOptions
             {
                 RemoteCertificateValidationCallback = (_, _, _, errors) =>

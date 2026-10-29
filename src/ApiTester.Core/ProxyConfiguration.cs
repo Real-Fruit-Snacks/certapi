@@ -10,6 +10,15 @@ namespace ApiTester.Core;
 /// up applying on one path and not another.</summary>
 public static class ProxyConfiguration
 {
+    /// <summary>The signed-in user's Windows credentials for a proxy's Negotiate/NTLM challenge:
+    /// <see cref="CredentialCache.DefaultCredentials"/>, behind an object of its own.
+    /// <para>When a handler's proxy credentials are that object itself, .NET keys its connection
+    /// pools by the user's name, and reads the name for every request
+    /// (<c>WindowsIdentity.GetCurrent().Name</c>, a lookup in lsass). This process only ever runs as
+    /// one user, so the same credentials behind another object answer the same challenges without
+    /// that. Basic and Digest get nothing, as with the object itself: it has no password to give.</para></summary>
+    public static readonly ICredentials SignedInUser = new IntegratedOnlyCredentials(CredentialCache.DefaultCredentials);
+
     /// <summary>Configure how this handler reaches a server: the three-way proxy mode, narrowed by
     /// the bypass list when there is one.</summary>
     public static void Apply(SocketsHttpHandler handler, TransportOptions transport) =>
@@ -61,7 +70,7 @@ public static class ProxyConfiguration
                 var explicitProxy = new WebProxy(url)
                 {
                     Credentials = user is null
-                        ? CredentialCache.DefaultCredentials
+                        ? SignedInUser
                         : new NetworkCredential(user, password)
                 };
                 // Only wrapped when there is something to narrow: an empty list has nothing to add
@@ -89,6 +98,124 @@ public static class ProxyConfiguration
         }
     }
 
+    /// <summary>The system proxy for the gateway when it is configured automatically (a PAC script
+    /// or WPAD): asked once per site, and the answer remembered, instead of asked before every
+    /// request.
+    /// <para>The handler asks its proxy before every request, and with automatic configuration
+    /// .NET's system proxy answers by calling <c>WinHttpGetProxyForUrl</c>: a blocking call into
+    /// the WinHTTP auto-proxy service that every program on the machine shares (.NET skips it for
+    /// two minutes after WPAD finds no script, and not otherwise). When that service is slow — a PAC
+    /// address it cannot reach, a script that waits on DNS — every request through the gateway
+    /// blocked a thread on it, and a busy page piled up hundreds. Here the first request for a site
+    /// asks; a proxy is then remembered for <see cref="Lifetime"/>, and "no proxy" for
+    /// <see cref="DirectLifetime"/>, because a lookup that fails also answers "no proxy".</para>
+    /// <para>A manual proxy, or none, is answered by .NET without WinHTTP, so
+    /// <see cref="ForThisMachine"/> leaves those alone. A site whose PAC answer is a failover list
+    /// (<c>PROXY a; PROXY b</c>), or whose answer could not be told, is left to .NET's own proxy,
+    /// which fails over and which a wrapper cannot: <see cref="Takes"/> says no for it.</para></summary>
+    public sealed class CachedSystemProxy : IWebProxy
+    {
+        public static readonly TimeSpan Lifetime = TimeSpan.FromMinutes(5);
+        public static readonly TimeSpan DirectLifetime = TimeSpan.FromSeconds(30);
+
+        private sealed record Answer(Uri? Proxy, bool Bypassed, long Expires);
+
+        private readonly IWebProxy _inner;
+        private readonly Func<Uri, bool> _isFailoverList;
+        private readonly Func<long> _now;
+        private readonly System.Collections.Concurrent.ConcurrentDictionary<string, Lazy<Answer>> _answers = new(StringComparer.OrdinalIgnoreCase);
+        private readonly System.Collections.Concurrent.ConcurrentDictionary<string, bool> _takes = new(StringComparer.OrdinalIgnoreCase);
+        private ICredentials? _credentials;
+        private long _asked;
+
+        /// <param name="inner">The system proxy (<see cref="HttpClient.DefaultProxy"/>).</param>
+        /// <param name="isFailoverList">Whether Windows' answer for a URL names more than one proxy;
+        /// it should say yes when the answer cannot be had at all.</param>
+        /// <param name="now">Milliseconds on a monotonic clock, for tests.</param>
+        public CachedSystemProxy(IWebProxy inner, Func<Uri, bool> isFailoverList, Func<long>? now = null)
+        {
+            _inner = inner;
+            _isFailoverList = isFailoverList;
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            _now = now ?? (() => clock.ElapsedMilliseconds);
+        }
+
+        /// <summary>How many times the system proxy was actually asked.</summary>
+        public long Asked => Interlocked.Read(ref _asked);
+
+        /// <summary>The gateway's own instance, or null when the system proxy needs none: it is not
+        /// Windows' (an HTTP_PROXY variable, another platform), or Windows' settings name a manual
+        /// proxy or none, which .NET answers without WinHTTP. Read as .NET reads them, through
+        /// <c>WinHttpGetIEProxyConfigForCurrentUser</c>.</summary>
+        public static CachedSystemProxy? ForThisMachine()
+        {
+            if (HttpClient.DefaultProxy is not { } p || p.GetType().Name != "HttpWindowsProxy") return null;
+            var settings = ProxyIntrospection.ReadEffectiveSettings();
+            if (!settings.AutoDetect && string.IsNullOrWhiteSpace(settings.AutoConfigUrl)) return null;
+            return new CachedSystemProxy(p, destination => WindowsAnswersWithAList(destination, settings));
+        }
+
+        /// <summary>Whether to stand in for the system proxy for <paramref name="destination"/>: yes,
+        /// unless Windows answers it with a failover list, or cannot answer. Asked once per site, when
+        /// its handler is made.</summary>
+        public bool Takes(Uri destination) =>
+            _takes.GetOrAdd(destination.GetLeftPart(UriPartial.Authority), _ =>
+            {
+                try { return !_isFailoverList(destination); }
+                catch { return false; }
+            });
+
+        /// <summary>The signed-in user's credentials, as the handler gives the system proxy, but not
+        /// as the <see cref="CredentialCache.DefaultCredentials"/> object itself (see
+        /// <see cref="SignedInUser"/>). The shared system proxy is never changed.</summary>
+        public ICredentials? Credentials
+        {
+            get => _credentials ?? _inner.Credentials ?? SignedInUser;
+            set => _credentials = value;
+        }
+
+        public Uri? GetProxy(Uri destination) => AnswerFor(destination).Proxy;
+
+        public bool IsBypassed(Uri host) => AnswerFor(host).Bypassed;
+
+        private Answer AnswerFor(Uri destination)
+        {
+            string key = destination.GetLeftPart(UriPartial.Authority);
+            while (true)
+            {
+                var lazy = _answers.GetOrAdd(key, _ => new Lazy<Answer>(() => Ask(destination)));
+                var answer = lazy.Value;
+                if (answer.Expires > _now()) return answer;
+                // Expired: one caller replaces it; everyone then waits on the same fresh question.
+                _answers.TryUpdate(key, new Lazy<Answer>(() => Ask(destination)), lazy);
+            }
+        }
+
+        private Answer Ask(Uri destination)
+        {
+            Interlocked.Increment(ref _asked);
+            Uri? proxy = null;
+            bool bypassed = true;
+            try
+            {
+                bypassed = _inner.IsBypassed(destination);
+                if (!bypassed) proxy = _inner.GetProxy(destination);
+            }
+            catch { /* what the handler does with a lookup that fails: go direct */ }
+            bool direct = bypassed || proxy is null;
+            return new Answer(proxy, direct, _now() + (long)(direct ? DirectLifetime : Lifetime).TotalMilliseconds);
+        }
+
+        private static bool WindowsAnswersWithAList(Uri destination, ProxySettings settings)
+        {
+            // As .NET asks: signing in to fetch the script only when it asks for that.
+            var (proxy, error) = ProxyIntrospection.Answer(destination.AbsoluteUri, settings, autoLogonWhenChallenged: true);
+            if (error is not null) return true;   // no answer to go by: leave the site to .NET's proxy
+            return proxy is not null &&
+                   proxy.Split(new[] { ';', ' ' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Length > 1;
+        }
+    }
+
     /// <summary>A proxy that asks a PAC script the caller named — `--pac` — through
     /// <see cref="ProxyIntrospection.EvaluatePac"/>, once per host (a PAC answers per URL, but the
     /// scripts that matter decide by host, and one WinHTTP call per request would be the slow way
@@ -105,7 +232,7 @@ public static class ProxyConfiguration
             _evaluate = evaluate ?? ProxyIntrospection.EvaluatePac;
         }
 
-        public ICredentials? Credentials { get; set; } = CredentialCache.DefaultCredentials;
+        public ICredentials? Credentials { get; set; } = SignedInUser;
 
         public Uri? GetProxy(Uri destination) =>
             _byHost.GetOrAdd(destination.GetLeftPart(UriPartial.Authority), _ => Evaluate(destination));

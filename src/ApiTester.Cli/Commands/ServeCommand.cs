@@ -72,7 +72,9 @@ public static class ServeCommand
           --cert-pin <pin>        Smart-card / HSM PIN for the key, supplied ahead of time so a
                                   headless job is not stopped by the prompt. Prefer CERTAPI_CERT_PIN,
                                   which keeps it out of the shell history. Windows (CNG) only
-          --insecure              Ignore upstream server-certificate errors (internal CAs)
+          --insecure              Ignore upstream server-certificate errors (internal CAs). The
+                                  chain is then built from this machine alone: no certificate or
+                                  revocation list is downloaded for it
           --windows-auth          Answer the upstream's Negotiate/NTLM (Kerberos) challenge with
                                   your signed-in account, on every caller's behalf — an intranet
                                   site that wants Windows auth and a certificate at once.
@@ -89,6 +91,13 @@ public static class ServeCommand
                                   is not cut off
           --max-body <bytes>      Refuse a request body larger than this with 413 (default: no
                                   limit). Suffixes k/m/g are accepted
+          --max-connections <n>   Connections the gateway may open to one site at once for
+                                  requests (default 16; each WebSocket has one of its own). A
+                                  request past it waits for one to come free, within --timeout,
+                                  rather than opening another
+          --max-requests <n>      Requests the gateway handles at once, WebSockets included
+                                  (default 256); one more is answered 503 straight away. Its own
+                                  /_certapi/ endpoints and CORS preflights do not count
           --forwarded             Add X-Forwarded-For, X-Forwarded-Proto, X-Forwarded-Host and
                                   Via: 1.1 certapi to forwarded requests, for an upstream that
                                   builds links from them. Off by default (byte-faithful)
@@ -106,9 +115,10 @@ public static class ServeCommand
           /_certapi/health        Answers 200 with the gateway's state as JSON; /_certapi/routes
                                   lists the mounts and the allow list. Both honour --token
           --workspace <file>      Resolve a saved-website <upstream> from a workspace file
-          -q, --quiet             No startup table or per-request log. To a console window the
-                                  log shows at most 20 requests a second and counts the rest;
-                                  2> file keeps every line
+          -q, --quiet             No startup table, per-request log or notes; warnings and the
+                                  once-a-minute health line still print. To a console window the
+                                  log shows at most 20 requests a second and counts the rest; 2> file
+                                  keeps every line
           --check                 Resolve every site, certificate and file, print the table of
                                   sites, and exit — nothing is bound, installed or contacted. Exit 0
                                   when the configuration is usable, 2/3 with the reason when not
@@ -233,11 +243,16 @@ public static class ServeCommand
 
 
           These apply to the gateway's upstream connections: the proxy options, --resolve,
-          --ca-file, --revocation / --revocation-strict, --tls-min, --connect-timeout, --offline
-          -4 / -6 and --sni (every site's handshake; a site's own "sni" wins). The redirect,
-          decompression, HTTP-version and retry flags are accepted but do not apply: the gateway
-          hands back the 3xx and the exact bytes the upstream sent, and does not retry on a
-          caller's behalf.
+          --ca-file, --revocation / --revocation-strict, --tls-min, --connect-timeout, --offline,
+          -4 / -6 and --sni (every site's handshake; a site's own "sni" wins). Without
+          --connect-timeout the name lookup and each address still get at most 15 s here (504
+          when none answers). The
+          redirect, decompression, HTTP-version and retry flags are accepted but do not apply: the
+          gateway hands back the 3xx and the exact bytes the upstream sent, and does not retry on
+          a caller's behalf. With a PAC script or WPAD, the system proxy is asked once per site
+          rather than before every request. A host that fails 5 connection attempts within 30 s
+          (through a proxy: the proxy) is left alone for 10 s or more, and its requests get 502
+          saying so. Once a minute, with traffic, a health line says what the gateway holds.
 
         Global: --debug (verbose diagnostics) and --log-file <path> work here too.
 
@@ -352,6 +367,8 @@ public static class ServeCommand
         if (!vhost && !vhostOff && sp?.Vhost == true) { vhost = true; vhostSuffix = sp.VhostSuffix; }
         bool forwarded = args.Switch("--forwarded", sp?.Forwarded);
         string? maxBodyRaw = args.Value("--max-body") ?? sp?.MaxBody;
+        string? maxConnectionsRaw = args.Value("--max-connections") ?? sp?.MaxConnections?.ToString();
+        string? maxRequestsRaw = args.Value("--max-requests") ?? sp?.MaxRequests?.ToString();
 
         bool check = args.Flag("--check");
         bool tls = args.Switch("--tls", sp?.Tls);
@@ -414,6 +431,13 @@ public static class ServeCommand
         int timeoutSeconds = 100;
         if (timeoutRaw is not null && (!int.TryParse(timeoutRaw, out timeoutSeconds) || timeoutSeconds <= 0))
             throw new CliUsageException($"--timeout expects a positive number of seconds, got '{timeoutRaw}'.");
+
+        int maxConnections = MtlsGateway.DefaultMaxConnectionsPerSite;
+        if (maxConnectionsRaw is not null && (!int.TryParse(maxConnectionsRaw, out maxConnections) || maxConnections is < 1 or > 1000))
+            throw new CliUsageException($"--max-connections expects 1-1000, got '{maxConnectionsRaw}'.");
+        int maxRequests = DefaultMaxRequests;
+        if (maxRequestsRaw is not null && (!int.TryParse(maxRequestsRaw, out maxRequests) || maxRequests is < 1 or > 100_000))
+            throw new CliUsageException($"--max-requests expects 1-100000, got '{maxRequestsRaw}'.");
 
         long? maxBody = null;
         if (maxBodyRaw is not null)
@@ -498,8 +522,10 @@ public static class ServeCommand
         // Written by a background thread (ServeLog): a console that blocks (a QuickEdit selection)
         // or draws slowly (a remote session) must never hold up a request the gateway is relaying.
         using var serveLog = new ServeLog(stderr, rateLimit: services.StderrIsTerminal, heldBack: services.Log.Note);
-        void Log(string line) { if (!quiet) serveLog.Write(line); }
-        void RequestLog(string line) { if (!quiet) serveLog.WriteRequest(line); }
+        // -q silences the table, the request lines and notes; a warning still prints.
+        static bool IsWarning(string line) => line.AsSpan().TrimStart().StartsWith("warning:", StringComparison.Ordinal);
+        void Log(string line) { if (!quiet || IsWarning(line)) serveLog.Write(line); }
+        void RequestLog(string line) { if (!quiet || IsWarning(line)) serveLog.WriteRequest(line); }
 
         // The origin the browser is actually talking to, which is what a rewritten Location and an
         // allow-origin decision are measured against. https when --tls is on, so Location rewriting
@@ -522,6 +548,7 @@ public static class ServeCommand
         using var gateway = services.GatewayFactory(
             routes, cert, insecure, TimeSpan.FromSeconds(timeoutSeconds), transport, trustPredicates.For);
         if (allow is not null) gateway.EnableDynamicUpstreams(allow);
+        gateway.MaxConnectionsPerSite = maxConnections;
         if (winUser is not null || windowsAuth)
             gateway.UseWindowsAuth(winUser is not null ? WindowsAuthOptions.FromCredentials(winUser, winPass) : new WindowsAuthOptions(true));
         // Now that the gateway exists, a Location to any host it can reach is rewritten back
@@ -745,9 +772,23 @@ public static class ServeCommand
         // A click in the console window starts a QuickEdit selection, and Windows then holds every
         // write to it until the selection ends: off while the gateway runs, back as it was after.
         var quickEdit = ConsoleQuickEdit.SuspendWhile(services.StderrIsTerminal);
+        // A bounded number of requests at once: past it, a request is answered 503 at once rather
+        // than started, so a page, a script or a runaway retry loop pointed at the gateway cannot
+        // make it hold more and more of the machine.
+        using var slots = new SemaphoreSlim(maxRequests, maxRequests);
+        // Health lines and warnings are written under -q too: they are the record of what the
+        // gateway held before a freeze, and one line a minute is not what -q is there to silence.
+        var health = new ServeHealth(gateway.Guard, () => maxRequests - slots.CurrentCount, serveLog.Write);
+        policy.Health = health;
+        using var healthTimer = new PeriodicTimer(services.ServeHealthInterval);
+        var healthLoop = Task.Run(async () =>
+        {
+            try { while (await healthTimer.WaitForNextTickAsync(ct)) health.Tick(); }
+            catch (OperationCanceledException) { }
+        });
         try
         {
-            var inFlight =new System.Collections.Concurrent.ConcurrentDictionary<Task, byte>();
+            var inFlight = new System.Collections.Concurrent.ConcurrentDictionary<Task, byte>();
             try
             {
                 while (!ct.IsCancellationRequested)
@@ -756,11 +797,33 @@ public static class ServeCommand
                     try { context = listener.GetContextAsync().GetAwaiter().GetResult(); }
                     catch (Exception) when (ct.IsCancellationRequested) { break; }   // Stop() unblocked us
 
+                    // The gateway's own endpoints and CORS preflights reach no upstream, so they take
+                    // no slot: they are answered with every slot taken (/_certapi/health says what
+                    // the gateway holds exactly when that matters, and a preflight turned away
+                    // without CORS headers would show in the browser as a CORS error), and never
+                    // hold one that a request to a site then finds taken.
+                    bool here = AnsweredHere(context.Request, browser);
+                    bool slot = !here && slots.Wait(0);
+                    if (!here && !slot)
+                    {
+                        health.Busy();
+                        var turnedAway = context;
+                        _ = Task.Run(() => AnswerBusy(turnedAway, maxRequests, RequestLog));
+                        continue;
+                    }
+                    health.Request();
                     // Off this thread from the first line: a request's synchronous start (a WinHTTP proxy
                     // or PAC lookup inside SendAsync, a large header rewrite) must not delay accepting
                     // the next one.
-                    var task = Task.Run(() => HandleAsync(context, gateway, routes, browser, headerRules, relay, policy,
-                        replay, recorder, localBase, RequestLog, ct));
+                    var task = Task.Run(async () =>
+                    {
+                        try
+                        {
+                            await HandleAsync(context, gateway, routes, browser, headerRules, relay, policy,
+                                replay, recorder, localBase, RequestLog, ct);
+                        }
+                        finally { if (slot) slots.Release(); }
+                    });
                     inFlight[task] = 0;
                     _ = task.ContinueWith(t => inFlight.TryRemove(t, out _), TaskScheduler.Default);
                 }
@@ -794,6 +857,7 @@ public static class ServeCommand
         }
         finally
         {
+            try { healthLoop.Wait(TimeSpan.FromSeconds(1)); } catch { /* it only samples */ }
             // Written out while QuickEdit is still off, so a click now cannot hold up the last
             // lines, and with them the exit.
             serveLog.Drain(TimeSpan.FromSeconds(2));
@@ -1093,6 +1157,9 @@ public static class ServeCommand
     private sealed record ServePolicy(string? Token, bool Forwarded, long? MaxBody, string LocalHost, string Scheme)
     {
         public GatewayCookieJar? CookieJar { get; init; }
+
+        /// <summary>The gateway's load figures, for /_certapi/health. Set once the gateway runs.</summary>
+        internal ServeHealth? Health { get; set; }
         public AppState? TokenState { get; init; }
         public bool RefererFallback { get; init; }
         /// <summary>`--vhost`: Host-header routing beside the path form. Null in path mode.</summary>
@@ -1625,6 +1692,41 @@ public static class ServeCommand
         }
     }
 
+    internal const int DefaultMaxRequests = 256;
+
+    /// <summary>Whether the gateway answers this request itself, contacting nothing: one of its own
+    /// endpoints, or a CORS preflight under --cors (answered, or refused with 403, here). The same
+    /// tests <see cref="HandleAsync"/> makes before either.</summary>
+    internal static bool AnsweredHere(HttpListenerRequest req, BrowserOptions browser)
+    {
+        string asSent = req.RawUrl ?? "/";
+        if (asSent.StartsWith("/_certapi/", StringComparison.OrdinalIgnoreCase) ||
+            asSent.Equals("/_certapi", StringComparison.OrdinalIgnoreCase))
+            return true;
+        return browser.Cors && req.HttpMethod.Equals("OPTIONS", StringComparison.OrdinalIgnoreCase) &&
+               req.Headers["Origin"] is not null && req.Headers["Access-Control-Request-Method"] is not null;
+    }
+
+    /// <summary>A request past --max-requests: 503 and a line in the log, without starting it.</summary>
+    private static void AnswerBusy(HttpListenerContext context, int maxRequests, Action<string> log)
+    {
+        string method = context.Request.HttpMethod, target = context.Request.RawUrl ?? "/";
+        try
+        {
+            var res = context.Response;
+            res.StatusCode = 503;
+            res.AddHeader("Retry-After", "1");
+            var bytes = System.Text.Encoding.UTF8.GetBytes(
+                $"503 Service Unavailable: the gateway is already handling {maxRequests} requests (--max-requests).");
+            res.ContentType = "text/plain";
+            res.ContentLength64 = bytes.Length;
+            res.OutputStream.Write(bytes);
+            res.Close();
+        }
+        catch { /* client already gone */ }
+        log($"{method,-6} {target}  -> 503 (busy: {maxRequests} requests in flight, --max-requests)");
+    }
+
     /// <summary>/_certapi/health and /_certapi/routes — the gateway describing itself. JSON, small,
     /// and never a forward.</summary>
     private static async Task AnswerSelfAsync(HttpListenerResponse res, string pathAndQuery,
@@ -1636,7 +1738,12 @@ public static class ServeCommand
         {
             case "/_certapi/health":
             case "/_certapi":
-                body = new { status = "ok", version = CliApp.ProductVersion, routes = routes.All.Count, dynamic = gateway.DynamicAllowlist is not null };
+                body = new
+                {
+                    status = "ok", version = CliApp.ProductVersion, routes = routes.All.Count, dynamic = gateway.DynamicAllowlist is not null,
+                    maxConnectionsPerSite = gateway.MaxConnectionsPerSite,
+                    load = policy.Health?.Describe(),
+                };
                 break;
             case "/_certapi/routes":
                 body = new

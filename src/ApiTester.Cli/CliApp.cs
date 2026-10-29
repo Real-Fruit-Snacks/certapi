@@ -87,6 +87,9 @@ public sealed class CliServices
 
     /// <summary>The same for stderr: what `serve` logs to, one line per request.</summary>
     public bool StderrIsTerminal { get; init; }
+
+    /// <summary>How often `serve` samples its load and writes the health line; a test shortens it.</summary>
+    public TimeSpan ServeHealthInterval { get; init; } = TimeSpan.FromMinutes(1);
 }
 
 public static class CliApp

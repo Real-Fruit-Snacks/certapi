@@ -28,7 +28,7 @@ public static class StreamTransport
     {
         var handler = new SocketsHttpHandler
         {
-            DefaultProxyCredentials = CredentialCache.DefaultCredentials
+            DefaultProxyCredentials = ProxyConfiguration.SignedInUser
         };
         // A stream, an upgrade or a token fetch has one destination, so the system proxy's own
         // failover list survives for a host the bypass list does not match.

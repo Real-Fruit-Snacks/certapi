@@ -89,6 +89,8 @@ public sealed record ServeProfile
     public bool? Forwarded { get; init; }
     public string? MaxBody { get; init; }
     public int? Timeout { get; init; }
+    public int? MaxConnections { get; init; }
+    public int? MaxRequests { get; init; }
     public bool? Tls { get; init; }
     public bool? RewriteBody { get; init; }
     public IReadOnlyList<GatewayRouteSpec> Sites { get; init; } = Array.Empty<GatewayRouteSpec>();
@@ -96,7 +98,8 @@ public sealed record ServeProfile
     public static readonly string[] Fields =
     {
         "port", "vhost", "browser", "cors", "token", "allow", "listen", "cookieJar", "autoToken",
-        "windowsAuth", "windowsUser", "windowsPassword", "forwarded", "maxBody", "timeout", "tls", "rewriteBody", "sites",
+        "windowsAuth", "windowsUser", "windowsPassword", "forwarded", "maxBody", "timeout",
+        "maxConnections", "maxRequests", "tls", "rewriteBody", "sites",
     };
 }
 
@@ -418,6 +421,8 @@ public static class ConfigLoader
             RewriteBody = Bool("rewriteBody"),
             MaxBody = Get("maxBody") is { ValueKind: JsonValueKind.Number } mb ? mb.GetRawText() : Str("maxBody"),
             Timeout = Int("timeout"),
+            MaxConnections = Int("maxConnections"),
+            MaxRequests = Int("maxRequests"),
             Tls = Bool("tls"),
             Sites = sites,
         };

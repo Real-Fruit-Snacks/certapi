@@ -105,6 +105,34 @@ public static class ProxyIntrospection
         }
     }
 
+    /// <summary>The settings as .NET's system proxy reads them: <c>WinHttpGetIEProxyConfigForCurrentUser</c>,
+    /// which also sees what <see cref="ReadSettings"/> cannot (a policy that makes the settings
+    /// per machine, the settings of the connection in use). <see cref="ReadSettings"/> when that
+    /// call fails or the platform is not Windows.</summary>
+    public static ProxySettings ReadEffectiveSettings()
+    {
+        if (!OperatingSystem.IsWindows()) return ReadSettings();
+        var config = default(WinHttpCurrentUserIeProxyConfig);
+        try
+        {
+            if (!WinHttpGetIEProxyConfigForCurrentUser(ref config)) return ReadSettings();
+            string? proxy = config.lpszProxy == IntPtr.Zero ? null : Marshal.PtrToStringUni(config.lpszProxy);
+            return new ProxySettings(
+                config.fAutoDetect,
+                config.lpszAutoConfigUrl == IntPtr.Zero ? null : Marshal.PtrToStringUni(config.lpszAutoConfigUrl),
+                !string.IsNullOrWhiteSpace(proxy),
+                proxy,
+                config.lpszProxyBypass == IntPtr.Zero ? null : Marshal.PtrToStringUni(config.lpszProxyBypass));
+        }
+        catch (Exception) { return ReadSettings(); }
+        finally
+        {
+            if (config.lpszAutoConfigUrl != IntPtr.Zero) GlobalFree(config.lpszAutoConfigUrl);
+            if (config.lpszProxy != IntPtr.Zero) GlobalFree(config.lpszProxy);
+            if (config.lpszProxyBypass != IntPtr.Zero) GlobalFree(config.lpszProxyBypass);
+        }
+    }
+
     /// <summary>The proxy Windows itself would use for <paramref name="url"/>, evaluated by WinHTTP
     /// with the machine's configured PAC/WPAD. Returns null with no error for DIRECT.
     /// <paramref name="winHttp"/> exists so tests can supply an engine without a PAC server.</summary>
@@ -158,6 +186,21 @@ public static class ProxyIntrospection
         public IntPtr lpszProxy;
         public IntPtr lpszProxyBypass;
     }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct WinHttpCurrentUserIeProxyConfig
+    {
+        [MarshalAs(UnmanagedType.Bool)] public bool fAutoDetect;
+        public IntPtr lpszAutoConfigUrl;
+        public IntPtr lpszProxy;
+        public IntPtr lpszProxyBypass;
+    }
+
+    [DllImport("winhttp.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool WinHttpGetIEProxyConfigForCurrentUser(ref WinHttpCurrentUserIeProxyConfig pProxyConfig);
+
+    private const int ErrorWinHttpLoginFailure = 12015;
 
     [DllImport("winhttp.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern IntPtr WinHttpOpen(string? pszAgentW, int dwAccessType,
@@ -228,9 +271,19 @@ public static class ProxyIntrospection
         return server;
     }
 
+    /// <summary>What Windows answers for <paramref name="url"/> with these settings: the proxy list
+    /// WinHTTP gives (or the manual proxy), null for DIRECT, or the error.
+    /// <paramref name="autoLogonWhenChallenged"/> asks again, signed in, when fetching the script
+    /// asked for a sign-in — what .NET's own proxy does.</summary>
+    internal static (string? Proxy, string? Error) Answer(string url, ProxySettings settings, bool autoLogonWhenChallenged = false) =>
+        WinHttpProxyForUrl(url, settings, autoLogonWhenChallenged);
+
     /// <summary>Ask WinHTTP to evaluate this URL against the configured PAC/WPAD. Never throws:
     /// any failure comes back as the error string, because a diagnostic must not be what breaks.</summary>
-    private static (string? Proxy, string? Error) WinHttpProxyForUrl(string url, ProxySettings settings)
+    private static (string? Proxy, string? Error) WinHttpProxyForUrl(string url, ProxySettings settings) =>
+        WinHttpProxyForUrl(url, settings, autoLogonWhenChallenged: false);
+
+    private static (string? Proxy, string? Error) WinHttpProxyForUrl(string url, ProxySettings settings, bool autoLogonWhenChallenged)
     {
         if (!OperatingSystem.IsWindows())
             return (null, "WinHTTP is only available on Windows.");
@@ -249,8 +302,9 @@ public static class ProxyIntrospection
                 // No ALLOW_STATIC / ALLOW_CM: they belong to WinHttpGetProxyForUrlEx, and the
                 // values once used here (0x4, 0x8) are HOST_KEEPCASE / HOST_LOWERCASE instead.
                 dwFlags = 0,
-                // fAutoLogonIfChallenged stays false: a PAC fetch that demands credentials should
-                // be reported, not silently authenticated with the user's identity.
+                // fAutoLogonIfChallenged starts false: for a report, a PAC fetch that demands
+                // credentials should be reported, not silently authenticated with the user's
+                // identity. The gateway's own question asks again signed in, as .NET does.
                 fAutoLogonIfChallenged = false
             };
             if (settings.AutoDetect)
@@ -264,9 +318,16 @@ public static class ProxyIntrospection
                 options.lpszAutoConfigUrl = settings.AutoConfigUrl;
             }
 
-            if (!WinHttpGetProxyForUrl(session, url, ref options, out var info))
+            bool answered = WinHttpGetProxyForUrl(session, url, ref options, out var info);
+            int error = answered ? 0 : Marshal.GetLastWin32Error();
+            if (!answered && error == ErrorWinHttpLoginFailure && autoLogonWhenChallenged)
             {
-                int error = Marshal.GetLastWin32Error();
+                options.fAutoLogonIfChallenged = true;
+                answered = WinHttpGetProxyForUrl(session, url, ref options, out info);
+                error = answered ? 0 : Marshal.GetLastWin32Error();
+            }
+            if (!answered)
+            {
                 return (null, error switch
                 {
                     12180 => "WPAD found no proxy-configuration script on this network (WINHTTP_ERROR_AUTODETECTION_FAILED).",

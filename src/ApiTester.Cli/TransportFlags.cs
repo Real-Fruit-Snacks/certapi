@@ -54,9 +54,10 @@ public static class TransportFlags
                                   revoked certificate is when --revocation is on
           --tls-min <1.2|1.3>     Refuse to negotiate below this TLS version (default: whatever the
                                   OS allows)
-          --connect-timeout <s>   Give up on the TCP connect (and proxy tunnel) after this many
-                                  seconds, separately from --timeout. On a network that blackholes
-                                  unknown hosts this tells "unreachable" from "slow" quickly
+          --connect-timeout <s>   Give up on connecting (the TCP connect, a proxy tunnel and the
+                                  TLS handshake) after this many seconds, separately from
+                                  --timeout. On a network that blackholes unknown hosts this tells
+                                  "unreachable" from "slow" quickly
           --offline               Touch nothing on the network but the request: no certificate
                                   downloads while building the chain, no online revocation (so
                                   --revocation online is refused), and doctor skips its
@@ -327,7 +328,8 @@ public static class TransportFlags
                                   --revocation offline or online)
           --ca-file <pem>         Trust the root(s) in this file for this run (repeatable)
           --tls-min <1.2|1.3>     Refuse to negotiate below this TLS version
-          --connect-timeout <s>   Separate budget for the TCP connect / proxy tunnel
+          --connect-timeout <s>   Separate budget for connecting: TCP, proxy tunnel, TLS (doctor
+                                  gives its TLS stage at least 30 s)
           --no-env-proxy          Ignore HTTP(S)_PROXY / NO_PROXY from the environment
           --offline               No certificate downloads, no online revocation
         """;

@@ -36,6 +36,7 @@ public sealed class GatewayWebSocketRelay
     };
 
     private readonly Func<Uri, HttpMessageInvoker> _invokerFor;
+    private readonly GatewayConnectionGuard? _guard;
 
     /// <summary>The pre-transport constructor, kept for callers that only have a certificate: the
     /// upstream is reached with the handler's defaults (system proxy, OS trust).</summary>
@@ -49,9 +50,8 @@ public sealed class GatewayWebSocketRelay
     /// <summary>Connect through the gateway's own handler for each upstream, so an upgrade is
     /// reached exactly the way a request to the same host is.</summary>
     public GatewayWebSocketRelay(MtlsGateway gateway)
-        : this(upstream => new HttpMessageInvoker(gateway.CreateHandlerFor(upstream), disposeHandler: true))
-    {
-    }
+        : this(upstream => new HttpMessageInvoker(gateway.CreateHandlerFor(upstream), disposeHandler: true)) =>
+        _guard = gateway.Guard;
 
     private GatewayWebSocketRelay(Func<Uri, HttpMessageInvoker> invokerFor) => _invokerFor = invokerFor;
 
@@ -90,6 +90,8 @@ public sealed class GatewayWebSocketRelay
         catch (Exception ex)
         {
             socket.Dispose();
+            // A tunnel the proxy refused is one of the gateway's failed connections, as on the HTTP relay.
+            if (_guard is not null && RefusedTunnel(ex)) _guard.CountRefusedTunnel();
             // The browser has already been upgraded, so a close frame is the only way left to tell
             // it the upgrade never reached the upstream: 1011 is "a condition stopped the server
             // fulfilling the request", carrying the reason with it.
@@ -108,6 +110,13 @@ public sealed class GatewayWebSocketRelay
                 client.Abort();
             socket.Dispose();
         }
+    }
+
+    private static bool RefusedTunnel(Exception? ex)
+    {
+        for (; ex is not null; ex = ex.InnerException)
+            if (ex is HttpRequestException { HttpRequestError: HttpRequestError.ProxyTunnelError }) return true;
+        return false;
     }
 
     /// <summary>The single-subprotocol, header-less form the first release had.</summary>

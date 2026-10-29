@@ -80,7 +80,7 @@ internal static class GrpcChannelFactory
         {
             // Use the machine's configured proxy — including WPAD/PAC — authenticating with the
             // signed-in user's Windows credentials when required. Mirrors ApiClient exactly.
-            DefaultProxyCredentials = CredentialCache.DefaultCredentials
+            DefaultProxyCredentials = ProxyConfiguration.SignedInUser
         };
         ProxyConfiguration.Apply(handler, transport, address);
 
