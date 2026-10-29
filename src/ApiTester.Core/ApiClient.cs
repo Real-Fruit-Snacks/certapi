@@ -80,6 +80,15 @@ public sealed class ApiClient : IDisposable
         _handlerCache.Dispose();
     }
 
+    /// <summary>Closes the pooled connections and drops the client-certificate copies their handlers
+    /// hold, keeping this client usable: the next send opens a new connection. A copy keeps the
+    /// original certificate's key alive, so a caller about to dispose a certificate loaded from a
+    /// file calls this first, and Windows can delete the key file the load created.</summary>
+    public void ReleasePooledConnections() => _handlerCache.Clear();
+
+    /// <summary>How many handlers the client keeps for reuse (for tests).</summary>
+    internal int CachedHandlers => _handlerCache.Count;
+
     /// <summary>Whether the result of one attempt earns another. Kept deterministic and free of the
     /// backoff's randomness so the decision itself is exactly what the observable behavior shows.</summary>
     private static bool ShouldRetry(

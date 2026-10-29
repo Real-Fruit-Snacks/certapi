@@ -55,7 +55,7 @@ public partial class App : Application
     /// kept) once, by the main window's own load, not here.</summary>
     private static string? SavedTheme()
     {
-        try { return System.IO.File.Exists(AppState.DefaultPath) ? AppState.LoadFrom(AppState.DefaultPath).Theme : null; }
+        try { return System.IO.File.Exists(AppState.DefaultPath) ? AppState.PeekFrom(AppState.DefaultPath).Theme : null; }
         catch (Exception) { return null; }
     }
 

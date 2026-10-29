@@ -71,7 +71,7 @@ public static class CliCert
         X509Certificate2? cert;
         if (certFile is not null)
         {
-            try { cert = CertificateFileLoader.Load(certFile, certPassword, keyFile); }
+            try { cert = services.Own(CertificateFileLoader.Load(certFile, certPassword, keyFile)); }
             catch (CertificateFileException ex) { throw new CliDataException(ex.Message); }
             NoteMissingIntermediates(certFile, cert.Thumbprint!, stderr);
         }
@@ -79,7 +79,10 @@ public static class CliCert
         else cert = CertPicker.Resolve(services.ListCertificates(localMachine),
             certQuery.Length == 0 ? null : certQuery, certIssuer, certSerial, stderr).Certificate;
 
-        return WithPin(cert, pin, stderr);
+        var unlocked = WithPin(cert, pin, stderr);
+        // A PIN makes a copy bound to the unlocked key; it is this invocation's too.
+        if (!ReferenceEquals(unlocked, cert)) services.Own(unlocked);
+        return unlocked;
     }
 
     /// <summary>A PEM that ships its intermediates is a trap: the TLS stack builds the client chain

@@ -123,14 +123,27 @@ public sealed class AppState
     /// <summary>Load from an explicit file. Throws on missing/corrupt files — callers decide.</summary>
     public static AppState LoadFrom(string path) => LoadFrom(path, SecretProtection.Default);
 
+    /// <summary>The file as stored, its secrets left encrypted: for a caller that needs only names
+    /// or settings (the app's theme at start, tab completion), and never saves it. Decrypting is a
+    /// call into lsass per secret, and a workspace can hold hundreds. Throws on missing/corrupt files.</summary>
+    public static AppState PeekFrom(string path) =>
+        JsonSerializer.Deserialize<AppState>(File.ReadAllText(path)) ?? new AppState();
+
     /// <summary>Load with an explicit protector — the seam the tests use to prove the degraded paths.</summary>
     public static AppState LoadFrom(string path, ISecretProtector protector)
     {
         var state = JsonSerializer.Deserialize<AppState>(File.ReadAllText(path)) ?? new AppState();
-        StateSecrets.Unprotect(state, protector, state.SecretWarnings);   // before Migrate, so migrations see plaintext
+        // Remembered, so a save writes back what was read for every value that has not changed.
+        var reusing = new ReusingProtector(protector);
+        StateSecrets.Unprotect(state, reusing, state.SecretWarnings);   // before Migrate, so migrations see plaintext
+        state._protector = reusing;
         state.Migrate();
         return state;
     }
+
+    /// <summary>The protector this state was loaded with, remembering the stored form of each
+    /// value, so a save re-encrypts only what changed.</summary>
+    [JsonIgnore] private ReusingProtector? _protector;
 
     /// <summary>Upgrade older states in place. Version 0 → 1: auth "None" predates the
     /// Auto/None split and meant "nothing configured", so it becomes "Auto". Version 1 → 2 needs no
@@ -182,7 +195,16 @@ public sealed class AppState
         }
 
         var clone = JsonSerializer.Deserialize<AppState>(JsonSerializer.Serialize(this))!;
-        bool encrypted = StateSecrets.Protect(clone, protector);
+        // The load's own protector when this is the protector it wraps, so unchanged values keep
+        // their stored form; otherwise one that remembers from here on.
+        if (_protector is null || !ReferenceEquals(_protector.Inner, protector)) _protector = new ReusingProtector(protector);
+        bool encrypted;
+        lock (_protector)   // one save's pass at a time
+        {
+            _protector.BeginPass();
+            try { encrypted = StateSecrets.Protect(clone, _protector); }
+            finally { _protector.EndPass(); }
+        }
 
         var json = JsonSerializer.Serialize(clone, new JsonSerializerOptions { WriteIndented = true });
         if (Path.GetDirectoryName(path) is { Length: > 0 } dir) Directory.CreateDirectory(dir);

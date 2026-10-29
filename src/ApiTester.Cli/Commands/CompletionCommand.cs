@@ -221,7 +221,7 @@ public static class CompletionCommand
         "--tls-mode" => ["valid", "expired", "wrong-host", "self-signed"],
         "--cert" or "--ca" => Certificates(services),
         "--profile" => ProfileNames(services),
-        "--env" => Safe(() => AppState.LoadFrom(services.LiveStatePath).Environments.Select(e => e.Name)),
+        "--env" => Safe(() => AppState.PeekFrom(services.LiveStatePath).Environments.Select(e => e.Name)),
         _ => [],
     };
 
@@ -246,7 +246,7 @@ public static class CompletionCommand
     });
 
     private static IEnumerable<string> CollectionNames(CliServices services) => Safe(() =>
-        AppState.LoadFrom(services.LiveStatePath).Collections.Select(c => c.Name));
+        AppState.PeekFrom(services.LiveStatePath).Collections.Select(c => c.Name));
 
     private static IEnumerable<string> Safe(Func<IEnumerable<string>> read)
     {

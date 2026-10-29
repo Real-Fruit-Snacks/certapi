@@ -362,6 +362,20 @@ internal sealed class HttpHandlerCache : IDisposable
     /// exactly once per successful <see cref="Rent"/>, however the send that rented it ends.</summary>
     public void Return(HandlerEntry entry) => entry.DropLease();
 
+    /// <summary>How many entries the cache holds.</summary>
+    public int Count { get { lock (_gate) return _entries.Count; } }
+
+    /// <summary>Drops every entry, as an eviction does (one a send still holds goes when that send
+    /// returns it), and stays usable: the next send builds a new one.</summary>
+    public void Clear()
+    {
+        lock (_gate)
+        {
+            foreach (var (_, entry) in _entries) entry.Dispose();
+            _entries.Clear();
+        }
+    }
+
     public void Dispose()
     {
         lock (_gate)

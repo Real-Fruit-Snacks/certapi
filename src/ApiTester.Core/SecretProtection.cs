@@ -166,6 +166,116 @@ public sealed class DpapiSecretProtector : ISecretProtector
     }
 }
 
+/// <summary>Hands back the stored form a secret was read from when the same value is saved again,
+/// so saving a workspace encrypts only what changed.
+/// <para>Each DPAPI call is a call into lsass, and the workspace keeps more than tokens: cookies,
+/// credential headers in history, and the body of every known-good response. Re-encrypting all of
+/// it on every save put megabytes through lsass for a one-line change. A value is recognised by an
+/// HMAC under a key made fresh for the process, so the plaintext itself is not kept here.</para>
+/// <para>A save is a pass (<see cref="BeginPass"/>, <see cref="EndPass"/>): within one, each stored
+/// form is handed out once, so two fields that hold the same value still get different stored forms,
+/// as DPAPI would have given them; and a value no field held in a pass is forgotten at its end. A
+/// value whose stored form is over <see cref="LargestRemembered"/> characters is encrypted each time,
+/// and past <see cref="Budget"/> characters in all, new values are no longer remembered.</para></summary>
+public sealed class ReusingProtector : ISecretProtector
+{
+    /// <summary>The longest stored form remembered: about 1.5 MB of plaintext.</summary>
+    public const int LargestRemembered = 2 * 1024 * 1024;
+
+    /// <summary>All the stored forms remembered at once, in characters (about 64 MB of memory).</summary>
+    public const long Budget = 32L * 1024 * 1024;
+
+    private const int FormsPerValue = 8;
+
+    private sealed class Entry
+    {
+        public readonly List<string> Forms = new(1);
+        public long Pass;
+    }
+
+    private readonly byte[] _key = System.Security.Cryptography.RandomNumberGenerator.GetBytes(32);
+    private readonly Dictionary<string, Entry> _entries = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _handedOut = new(StringComparer.Ordinal);
+    private readonly object _gate = new();
+    private long _pass, _size;
+
+    public ReusingProtector(ISecretProtector inner) => Inner = inner;
+
+    /// <summary>The protector that does the encrypting.</summary>
+    public ISecretProtector Inner { get; }
+
+    public bool IsAvailable => Inner.IsAvailable;
+
+    /// <summary>How many stored forms are remembered (for tests).</summary>
+    public int Remembered { get { lock (_gate) return _entries.Values.Sum(e => e.Forms.Count); } }
+
+    /// <summary>Starts a save.</summary>
+    public void BeginPass()
+    {
+        lock (_gate) { _pass++; _handedOut.Clear(); }
+    }
+
+    /// <summary>Ends a save: what it did not ask for is no longer in the workspace.</summary>
+    public void EndPass()
+    {
+        lock (_gate)
+        {
+            foreach (var (id, entry) in _entries.Where(e => e.Value.Pass < _pass).ToList())
+            {
+                _entries.Remove(id);
+                _size -= entry.Forms.Sum(f => (long)f.Length);
+            }
+            _handedOut.Clear();
+        }
+    }
+
+    public string? Protect(string plaintext)
+    {
+        string id = Id(plaintext);
+        lock (_gate)
+        {
+            if (_entries.TryGetValue(id, out var entry))
+            {
+                entry.Pass = _pass;
+                foreach (var form in entry.Forms)
+                    if (_handedOut.Add(form)) return form;
+            }
+        }
+        var fresh = Inner.Protect(plaintext);
+        if (fresh is not null)
+            lock (_gate)
+            {
+                Remember(id, fresh);
+                _handedOut.Add(fresh);
+            }
+        return fresh;
+    }
+
+    public string? Unprotect(string stored)
+    {
+        var plain = Inner.Unprotect(stored);
+        if (plain is not null) lock (_gate) Remember(Id(plain), stored);
+        return plain;
+    }
+
+    private void Remember(string id, string stored)
+    {
+        if (!_entries.TryGetValue(id, out var entry))
+        {
+            if (stored.Length > LargestRemembered || _size + stored.Length > Budget) return;
+            _entries[id] = entry = new Entry();
+        }
+        entry.Pass = _pass;
+        if (entry.Forms.Contains(stored) || entry.Forms.Count >= FormsPerValue ||
+            stored.Length > LargestRemembered || _size + stored.Length > Budget) return;
+        entry.Forms.Add(stored);
+        _size += stored.Length;
+    }
+
+    private string Id(string plaintext) =>
+        Convert.ToBase64String(System.Security.Cryptography.HMACSHA256.HashData(_key, Encoding.UTF8.GetBytes(plaintext)));
+}
+
 /// <summary>The protector for a system that cannot encrypt: everything returns null, so callers
 /// fall back to storing plaintext instead of losing the value.</summary>
 public sealed class UnavailableSecretProtector : ISecretProtector

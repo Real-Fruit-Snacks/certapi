@@ -981,7 +981,7 @@ public static class ServeCommand
             X509Certificate2? cert = null;
             if (spec.CertFile is not null)
             {
-                try { cert = CertificateFileLoader.Load(spec.CertFile, spec.CertPassword, spec.KeyFile); }
+                try { cert = services.Own(CertificateFileLoader.Load(spec.CertFile, spec.CertPassword, spec.KeyFile)); }
                 catch (CertificateFileException ex) { throw new CliDataException($"{label}: {ex.Message}"); }
                 CliCert.NoteMissingIntermediates(spec.CertFile, cert.Thumbprint!, stderr);
             }

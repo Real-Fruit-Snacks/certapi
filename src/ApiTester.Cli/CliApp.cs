@@ -90,6 +90,40 @@ public sealed class CliServices
 
     /// <summary>How often `serve` samples its load and writes the health line; a test shortens it.</summary>
     public TimeSpan ServeHealthInterval { get; init; } = TimeSpan.FromMinutes(1);
+
+    private readonly List<System.Security.Cryptography.X509Certificates.X509Certificate2> _owned = new();
+
+    /// <summary>A certificate this invocation loaded from a file, disposed when the command ends.
+    /// <para>Windows keeps a key imported from a .pfx (or a PEM, which is imported the same way) in
+    /// a key file in the user's profile, through the key isolation service in lsass, and deletes it
+    /// only when the certificate object is disposed. A process that ends without that leaves the
+    /// file behind: one per <c>send --cert-file</c>, thousands in a profile after a script has
+    /// looped for a week.</para></summary>
+    public T Own<T>(T certificate) where T : System.Security.Cryptography.X509Certificates.X509Certificate2?
+    {
+        if (certificate is not null) lock (_owned) _owned.Add(certificate);
+        return certificate;
+    }
+
+    /// <summary>How many certificates are waiting to be disposed (for tests).</summary>
+    internal int OwnedCount { get { lock (_owned) return _owned.Count; } }
+
+    /// <summary>Disposes what <see cref="Own"/> collected. Called by CliApp.Run at the end.
+    /// <para>The client's pooled connections go first: each pool keeps a copy of the certificate it
+    /// presents, and a copy keeps the original's key, and its key file, until it is disposed too.</para></summary>
+    internal void DisposeOwned()
+    {
+        System.Security.Cryptography.X509Certificates.X509Certificate2[] owned;
+        lock (_owned) { owned = _owned.ToArray(); _owned.Clear(); }
+        if (owned.Length == 0) return;
+        try { Client.ReleasePooledConnections(); } catch { /* best effort at exit */ }
+        foreach (var c in owned) { try { c.Dispose(); } catch { /* best effort at exit */ } }
+        // A copy .NET makes and drops without disposing (SslStream does, for a certificate whose
+        // chain has expired) holds the key until it is finalized, and nothing is finalized at exit:
+        // collect now, for a couple of seconds at most.
+        try { Task.Run(() => { GC.Collect(); GC.WaitForPendingFinalizers(); }).Wait(TimeSpan.FromSeconds(2)); }
+        catch { /* best effort at exit */ }
+    }
 }
 
 public static class CliApp
@@ -217,6 +251,7 @@ public static class CliApp
             catch (CliDataException ex) { err.WriteLine(ex.Message); return ExitCodes.Data; }
             catch (CliFailureException ex) { err.WriteLine("error: " + ex.Message); return ExitCodes.Failure; }
             catch (Exception ex) { err.WriteLine("error: " + log.Describe(ex)); return ExitCodes.Failure; }
+            finally { services.DisposeOwned(); }
         }
         return Run(args, stdout, stderr, bodyOut, services);
     }
@@ -293,6 +328,7 @@ public static class CliApp
         catch (CliDataException ex) { err.WriteLine(ex.Message); return ExitCodes.Data; }
         catch (CliFailureException ex) { err.WriteLine("error: " + ex.Message); return ExitCodes.Failure; }
         catch (Exception ex) { err.WriteLine("error: " + log.Describe(ex)); return ExitCodes.Failure; }
+        finally { services.DisposeOwned(); }
     }
 
     /// <summary>The network trace for this invocation, or null when it was not asked for. Writing

@@ -443,43 +443,97 @@ a `ApiTester.App.exe.WebView2` folder beside the exe, which you can delete.
 
 ## The command line or the app freezes a remote desktop (VDI, Citrix, RDP)
 
-A remote desktop has little spare CPU and usually no GPU, and the console window and the app are
-drawn over the network. From 1.96.0, certapi avoids the things that froze such sessions:
+There are two different freezes, and they have different causes.
 
-- **`serve`** writes its request log from a background thread. It shows at most 20 requests a
-  second in a console window and turns QuickEdit off while it runs (a click in the window no
-  longer stops the gateway). `--record` keeps at most 32 MB per body and about 128 MB of memory
-  for all of them.
-  [The request log](19-Local-Gateway.md#the-request-log) has the details.
-- **`send`** does not print a binary body to a console window, and stops a text body after 1 MB.
-- **The app** shows the first 1 MB of a body (Copy and Save… still take all of it), keeps the
-  stream and mock-server logs bounded, sends off the UI thread, and starts WebView2 with
-  `--disable-gpu` in a remote session.
+**Only the sites through the gateway stop.** Everything else on the machine works. That is the
+gateway waiting on something. Before 1.96.0 the usual cause was a click in its console window,
+which pauses every write to it; press Esc. From 1.96.0 the gateway never waits on its console
+([the request log](19-Local-Gateway.md#the-request-log)).
 
-If a session still slows down while certapi runs, these are worth checking:
+**The whole session stops.** Every work site, not only those through the gateway, stops
+answering. New programs (Task Manager, Notepad) don't start, although open windows still react,
+and nothing recovers until a restart. That is Windows itself stuck, or something every program
+waits on:
 
-1. **Send the log to a file.** Run `certapi serve … 2> gateway.log` (or `-q`), so the console
-   draws nothing per request. `--trace` writes from each request as it happens; on a remote
-   desktop give it `--trace-file`.
-2. **Many connections.** Each new TLS connection with a client certificate is a signature made
-   by `lsass.exe`. Watch its CPU in Task Manager while pages load. The gateway reuses connections
-   per site; `certapi connections` shows whether `send` and `run` do. If the machine runs out of
-   ephemeral ports, the System event log has Tcpip events 4227 or 4231, and
-   `(Get-NetTCPConnection -State TimeWait).Count` is in the thousands.
-3. **Security and Citrix software in the process.** Antivirus scanning and Citrix's API hooks
-   (which Citrix lets an administrator turn off per program with the `UviProcessExcludes` value)
-   run inside certapi.exe and ApiTester.App.exe. If the freeze stops with them excluded, that is
-   the cause; the exclusion is for your administrator to make.
-4. **Memory trimming.** Citrix Workspace Environment Management can trim an idle program's memory.
-   An idle gateway then pages back in on the next request. Ask for certapi.exe to be excluded.
-5. **Copying a large body.** On Citrix the clipboard is copied to your own computer too. Use
-   Save… for anything large.
-6. **WebView2 settings.** An administrator's `WEBVIEW2_USER_DATA_FOLDER` and
-   `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS` take precedence over the app's choices. Set
-   `CERTAPI_WEBVIEW2_GPU=1` to keep the GPU in a remote session that has one.
+- the security software under the network stack and under every program start (antivirus and
+  endpoint protection, data-loss and web filters);
+- `lsass.exe`, which signs with your software certificate's key, answers Windows sign-in
+  (Kerberos, NTLM) and runs DPAPI;
+- the machine running out of ports for new connections.
 
-When reporting a freeze, note what Task Manager showed for certapi.exe (CPU, memory, handles,
-threads) and for `lsass.exe`, and attach the gateway log written with `2>`.
+A program like certapi cannot do this directly, but its traffic can set it off. So from 1.96.0
+the gateway keeps what it asks of all of them bounded
+([limits and health](19-Local-Gateway.md#limits-and-health)):
+
+- at most 16 connections per site and 256 requests at once;
+- a pause for an address that keeps failing, instead of dialling it again for every retry;
+- at most 15 seconds for a name lookup, and for each address a connect tries;
+- with a PAC script or WPAD, the system proxy asked once per site, not on every request;
+- with `--insecure`, nothing downloaded for the certificate chain (each fetch, on a network
+  without internet, waits about 15 seconds per connection).
+
+Every command also stops leaving the key of a `--cert-file` certificate behind in your profile,
+and stops looking your user name up in lsass for each request through a proxy; a workspace save
+re-encrypts only what changed (each DPAPI call goes through lsass), tab completion no longer
+decrypts the whole workspace, and the app decrypts it once at start instead of twice.
+
+When it happens:
+
+1. **Is it everything, or only the gateway's sites?** Try a site that doesn't go through certapi,
+   and try to start Notepad. If Notepad won't start either, program starts are being held up, most
+   often by security software. If only Task Manager won't start, that can be its elevation: for an
+   administrator it starts elevated, which goes through lsass.
+2. **Keep the gateway's log in a file that survives a restart**:
+   `certapi serve … 2> "$env:LOCALAPPDATA\certapi-gateway.log"`, or a folder IT says is kept on
+   the remote desktop. A network drive such as `H:` is the last choice: when the network is what
+   stops, the last lines may never arrive. Once a minute (with `-q` too) the gateway writes a
+   health line: requests, connections, threads, handles, memory, and the machine's TCP
+   connections. The lines before the freeze show whether the gateway was piling something up, or
+   sat quietly while the machine went down around it. `--trace` writes from each request as it
+   happens; on a remote desktop give it `--trace-file`.
+3. **Ports.** If the machine ran out, the System event log has Tcpip events 4227 or 4231, and
+   `(Get-NetTCPConnection -State TimeWait).Count` is in the thousands. The health line warns
+   from 10,000 TCP connections on the machine. `netstat -ano` shows which process holds them.
+4. **Ask IT what their security software recorded at that time.** Its console shows whether it
+   blocked, quarantined or isolated something, or reported itself overloaded. If certapi.exe is
+   involved, the usual remedies are theirs to apply:
+   - an exclusion for certapi.exe from real-time scanning and from network inspection. Each
+     release lists the exe's SHA-256 in `SHA256SUMS.txt`, so they can name exactly the file.
+   - not inspecting loopback traffic (127.0.0.1). The gateway's browser side is plain HTTP there
+     and carries every page in the clear.
+   - for Citrix, turning off its API hooks for certapi.exe (Citrix documents a
+     `UviProcessExcludes` value for this), and leaving it out of Workspace Environment
+     Management's memory trimming.
+
+   certapi.exe is not code-signed, so security software has no publisher to trust it by and, on
+   a network without internet, cannot look up its reputation either. An allow-list entry by hash
+   is the way around that.
+
+   Some certapi features do exactly what security software is built to notice, and are best
+   cleared with IT first: `serve --tls-trust` installs a root certificate, `serve --allow "*"`
+   relays to any host, `fuzz` probes a site for endpoints (a scan), and `bench` is a load test.
+5. **On a network without internet, add `--offline`** to a gateway or a `send` that checks
+   certificates. It makes a missing intermediate an error instead of a download that waits
+   15 seconds.
+
+Things that slow a remote desktop without freezing it:
+
+- **Console output.** `serve` shows at most 20 requests a second in a console window, and `send`
+  does not print a binary body there and stops a text body after 1 MB.
+- **The app's views.** The app shows the first 1 MB of a body (Copy and Save… still take all of
+  it), keeps the stream and mock-server logs bounded, sends off the UI thread, and starts
+  WebView2 with `--disable-gpu` in a remote session. An administrator's
+  `WEBVIEW2_USER_DATA_FOLDER` and `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS` take precedence over the
+  app's choices; `CERTAPI_WEBVIEW2_GPU=1` keeps the GPU in a remote session that has one.
+- **Copying a large body.** On Citrix the clipboard is copied to your own computer too. Use Save…
+  for anything large.
+- **Many `send` calls in a loop.** Each one is a new process with its own connection, handshake
+  and workspace load. `certapi run` sends a whole collection from one process over pooled
+  connections.
+
+When reporting a freeze, send the gateway log written with `2>`, what Task Manager showed for
+certapi.exe and `lsass.exe` (CPU, memory, handles, threads) if it would open, and whether Notepad
+started.
 
 ## Headless runs don't save results
 
