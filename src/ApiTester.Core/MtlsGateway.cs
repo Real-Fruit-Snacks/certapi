@@ -122,6 +122,9 @@ public sealed class MtlsGateway : IDisposable
     private readonly X509Certificate2? _clientCertificate;
     private readonly bool _ignoreServerCertificateErrors;
     private readonly TimeSpan _timeout;
+
+    /// <summary>How long a request may wait for the upstream's response headers (--timeout).</summary>
+    public TimeSpan UpstreamTimeout => _timeout;
     private readonly TransportOptions? _transport;
     private readonly Func<string, Func<X509Certificate2?, bool>>? _trustForHost;
 

@@ -203,7 +203,7 @@ secret masked.
 | `--max-body <bytes>` | Refuse a request body over the limit with 413 (`k`/`m`/`g` suffixes) |
 | `--forwarded` | Add `X-Forwarded-For/Proto/Host` and `Via: 1.1 certapi` to forwarded requests |
 | `--workspace <file>` | Resolve a saved-website `<upstream>` from a workspace file |
-| `-q, --quiet` | No startup table or per-request log |
+| `-q, --quiet` | No startup table or per-request log ([the log](#the-request-log)) |
 | `--tls` | Serve the gateway itself over HTTPS on 127.0.0.1 with a generated gateway certificate, so `Secure` and `__Host-`/`__Secure-` cookies work. The certificate is cached in `%AppData%\CertApiTester\gateway-tls` and reused. Binding the port needs an elevated prompt the first time; the exact `netsh` command is printed if it isn't available. With `--vhost` the certificate also names the suffix, every site under it and each `--allow` host on its default https port. It is regenerated within 7 days of expiry, or when it lacks a name the run needs; that run moves the `127.0.0.1:<port>` binding to the new certificate (from an elevated prompt; otherwise it prints the `netsh` commands and stops). With `--tls-trust` the new root is installed and then the old one removed; without it, a note says to add `--tls-trust` once |
 | `--tls-trust` | Also install that certificate into `CurrentUser\Root` so the browser accepts it silently — explicit, logged, and reversible. Only with `--tls` |
 | `--tls-untrust` | Remove the current gateway certificate, and every earlier one this tool generated, from `CurrentUser\Root`, then exit; a standalone action. It does not remove the HTTP.sys port binding |
@@ -232,6 +232,29 @@ decompression, HTTP-version and retry options are accepted but do not apply. `--
 in every site's handshake (a site's own `"sni"` wins), direct connections only. The gateway answers
 `/_certapi/health` (state as JSON) and `/_certapi/routes` (sites, settings, allow list) itself, on
 `127.0.0.1` and on every virtual host alike; both honour `--token`.
+
+## The request log
+
+`serve` writes a line per request to stderr. A thread of its own writes the log, so a request
+never waits for the console:
+
+- **To a console window**, at most 20 request lines a second are shown. The rest of that second
+  is counted on one line: `… and 140 more requests in that second`. A page load through ten sites
+  is hundreds of requests, and on a remote desktop (a VDI, RDP, Citrix) drawing that much
+  scrolling text costs the session more than relaying the requests. Warnings, 5xx answers and
+  failed requests have a limit of their own, 100 a second, so ordinary traffic does not crowd
+  them out. With `--log-file`, the file still gets every line.
+- **QuickEdit is turned off while the gateway runs** (even with stdin redirected), and back on when
+  it stops. With QuickEdit
+  on, a click in a classic console window starts a selection, and every write to the window waits
+  until the selection ends. Before 1.96.0 that stopped the gateway and every page relayed through
+  it. Windows Terminal never paused output that way.
+- **If the console still cannot keep up**, lines that do not fit in the log's queue (10,000) are
+  counted and reported (`… 312 log lines not written: the console could not keep up`), not waited
+  for. With `--log-file`, they still reach the file.
+- **To a file or a pipe**, every line is written: `certapi serve … 2> gateway.log`. `-q` turns the
+  log off. `--trace` is different: it writes each network event as it happens, on the request's
+  own thread, so on a remote desktop send it to a file (`--trace-file`).
 
 ## Revocation checking
 
@@ -335,6 +358,15 @@ call — and answers a path the session never saw with 404. The two flags are mu
 you cannot record a session you are inventing. Because the format is the same one `mock --har`
 reads, a session recorded here can also be replayed by `certapi mock --har session.har` without a
 gateway at all.
+
+The session is held in memory until the gateway stops, so the bodies it keeps are bounded: at most
+32 MB per body, and about 128 MB of memory for all of them together, counting the requests still
+in flight. (A kept body is held as text, two bytes a character, so that is roughly 64 MB of
+bodies.) Bodies are copied as they stream through, so recording does not hold up the relay. An
+exchange past either limit is still recorded (method, URL, headers, status) with an empty body and
+a `comment` saying why, with the body's size where it is known. When the gateway stops it says how
+many bodies were left out. Replaying such an exchange answers with an empty body and drops its
+`Content-Encoding`.
 
 ## Browsers and Private Network Access
 

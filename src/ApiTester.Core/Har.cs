@@ -69,6 +69,9 @@ public sealed class HarPostData
     /// that does not know it sees the base64 text.</summary>
     public string? Encoding;
 
+    /// <summary>Why the body is not in the archive, when it is not (HAR 1.2's own comment field).</summary>
+    public string? Comment;
+
     /// <summary>A recorded request body: text when it is UTF-8, base64 otherwise, so a binary
     /// upload survives the archive instead of turning into replacement characters.</summary>
     public static HarPostData From(byte[] body, string? contentType)
@@ -106,6 +109,9 @@ public sealed class HarContent
 
     /// <summary>"base64" for a binary body, else null.</summary>
     public string? Encoding { get; set; }
+
+    /// <summary>Why the body is not in the archive, when it is not (HAR 1.2's own comment field).</summary>
+    public string? Comment { get; set; }
 }
 
 public sealed class HarTimings

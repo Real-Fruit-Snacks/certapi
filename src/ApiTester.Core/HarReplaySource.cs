@@ -158,6 +158,10 @@ public sealed class HarReplaySource
         {
             body = string.IsNullOrEmpty(response.Content.Text) ? Array.Empty<byte>() : Encoding.UTF8.GetBytes(response.Content.Text);
         }
+        // No body, so nothing is encoded: a recording that left a gzip body out (too large to keep)
+        // would otherwise answer "Content-Encoding: gzip" with zero bytes, which a browser fails to decode.
+        if (body.Length == 0)
+            headers.RemoveAll(h => string.Equals(h.Key, "Content-Encoding", StringComparison.OrdinalIgnoreCase));
 
         string? contentType = !string.IsNullOrEmpty(response.Content.MimeType)
             ? response.Content.MimeType

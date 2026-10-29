@@ -30,7 +30,12 @@ if (OperatingSystem.IsWindows())
 try
 {
     return CliApp.Run(args, Console.In, Console.Out, Console.Error, Console.OpenStandardOutput(),
-                      new CliServices { Cancel = cts.Token });
+                      new CliServices
+                      {
+                          Cancel = cts.Token,
+                          StdoutIsTerminal = !Console.IsOutputRedirected,
+                          StderrIsTerminal = !Console.IsErrorRedirected,
+                      });
 }
 finally
 {

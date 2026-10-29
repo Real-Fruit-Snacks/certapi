@@ -106,7 +106,9 @@ public static class ServeCommand
           /_certapi/health        Answers 200 with the gateway's state as JSON; /_certapi/routes
                                   lists the mounts and the allow list. Both honour --token
           --workspace <file>      Resolve a saved-website <upstream> from a workspace file
-          -q, --quiet             No startup table or per-request log
+          -q, --quiet             No startup table or per-request log. To a console window the
+                                  log shows at most 20 requests a second and counts the rest;
+                                  2> file keeps every line
           --check                 Resolve every site, certificate and file, print the table of
                                   sites, and exit — nothing is bound, installed or contacted. Exit 0
                                   when the configuration is usable, 2/3 with the reason when not
@@ -121,7 +123,9 @@ public static class ServeCommand
         Record / replay (two ends of one HAR format — capture a session live, replay it offline):
           --record <file.har>     Record every forwarded exchange to a HAR file, written on Ctrl+C
                                   (an existing file is replaced with this session). Credential
-                                  headers (Authorization, Cookie, tokens) are redacted by default
+                                  headers (Authorization, Cookie, tokens) are redacted by default.
+                                  Bodies over 32 MB, or past about 128 MB of memory in all, are
+                                  left out (noted)
           --record-include-secrets   Keep the secrets in the recording (only with --record)
           --replay <file.har>     Answer from a recorded HAR without ever contacting the upstream —
                                   develop against a captured session when the real one is gone.
@@ -491,8 +495,11 @@ public static class ServeCommand
                 throw new CliUsageException(route.Settings?.Sni is null ? transportProblem : $"site {route.Name ?? route.PathPrefix}: {transportProblem.Replace("--sni", "\"sni\"")}");
         }
 
-        var logLock = new object();
-        void Log(string line) { if (!quiet) lock (logLock) stderr.WriteLine(line); }
+        // Written by a background thread (ServeLog): a console that blocks (a QuickEdit selection)
+        // or draws slowly (a remote session) must never hold up a request the gateway is relaying.
+        using var serveLog = new ServeLog(stderr, rateLimit: services.StderrIsTerminal, heldBack: services.Log.Note);
+        void Log(string line) { if (!quiet) serveLog.Write(line); }
+        void RequestLog(string line) { if (!quiet) serveLog.WriteRequest(line); }
 
         // The origin the browser is actually talking to, which is what a rewritten Location and an
         // allow-origin decision are measured against. https when --tls is on, so Location rewriting
@@ -735,42 +742,63 @@ public static class ServeCommand
         var ct = services.Cancel;
         using var stopReg = ct.Register(() => { try { listener.Stop(); } catch { } });
 
-        var inFlight = new System.Collections.Concurrent.ConcurrentDictionary<Task, byte>();
+        // A click in the console window starts a QuickEdit selection, and Windows then holds every
+        // write to it until the selection ends: off while the gateway runs, back as it was after.
+        var quickEdit = ConsoleQuickEdit.SuspendWhile(services.StderrIsTerminal);
         try
         {
-            while (!ct.IsCancellationRequested)
+            var inFlight =new System.Collections.Concurrent.ConcurrentDictionary<Task, byte>();
+            try
             {
-                HttpListenerContext context;
-                try { context = listener.GetContextAsync().GetAwaiter().GetResult(); }
-                catch (Exception) when (ct.IsCancellationRequested) { break; }   // Stop() unblocked us
+                while (!ct.IsCancellationRequested)
+                {
+                    HttpListenerContext context;
+                    try { context = listener.GetContextAsync().GetAwaiter().GetResult(); }
+                    catch (Exception) when (ct.IsCancellationRequested) { break; }   // Stop() unblocked us
 
-                var task = HandleAsync(context, gateway, routes, browser, headerRules, relay, policy,
-                    replay, recorder, localBase, Log, ct);
-                inFlight[task] = 0;
-                _ = task.ContinueWith(t => inFlight.TryRemove(t, out _), TaskScheduler.Default);
+                    // Off this thread from the first line: a request's synchronous start (a WinHTTP proxy
+                    // or PAC lookup inside SendAsync, a large header rewrite) must not delay accepting
+                    // the next one.
+                    var task = Task.Run(() => HandleAsync(context, gateway, routes, browser, headerRules, relay, policy,
+                        replay, recorder, localBase, RequestLog, ct));
+                    inFlight[task] = 0;
+                    _ = task.ContinueWith(t => inFlight.TryRemove(t, out _), TaskScheduler.Default);
+                }
             }
+            finally
+            {
+                // Let requests already accepted finish before we tear down the gateway/listener.
+                try { Task.WhenAny(Task.WhenAll(inFlight.Keys), Task.Delay(TimeSpan.FromSeconds(5))).GetAwaiter().GetResult(); }
+                catch { }
+                try { listener.Close(); } catch { }
+                gatewayCert?.Dispose();
+                if (cookieJarFile is not null && policy.CookieJar is { } jarToSave)
+                {
+                    try { jarToSave.Save(cookieJarFile, SecretProtection.Default); Log($"saved {jarToSave.Count} cookie(s) to {cookieJarFile} (encrypted)."); }
+                    catch (Exception ex) { Log("warning: the cookie jar was not written: " + ex.Message); }
+                }
+                // Written once, at shutdown, after the in-flight requests above have finished appending.
+                if (recorder is not null)
+                {
+                    try
+                    {
+                        recorder.Save(recordPath!);
+                        Log($"recorded {recorder.Count} exchange(s) to {recordPath}." +
+                            (recorder.OmittedBodies > 0 ? $" {recorder.OmittedBodies} bod{(recorder.OmittedBodies == 1 ? "y was" : "ies were")} too large to keep; their entries say so." : ""));
+                    }
+                    catch (Exception ex) { Log("warning: could not write the recording: " + ex.Message); }
+                }
+            }
+
+            Log("stopped.");
         }
         finally
         {
-            // Let requests already accepted finish before we tear down the gateway/listener.
-            try { Task.WhenAny(Task.WhenAll(inFlight.Keys), Task.Delay(TimeSpan.FromSeconds(5))).GetAwaiter().GetResult(); }
-            catch { }
-            try { listener.Close(); } catch { }
-            gatewayCert?.Dispose();
-            if (cookieJarFile is not null && policy.CookieJar is { } jarToSave)
-            {
-                try { jarToSave.Save(cookieJarFile, SecretProtection.Default); Log($"saved {jarToSave.Count} cookie(s) to {cookieJarFile} (encrypted)."); }
-                catch (Exception ex) { Log("warning: the cookie jar was not written: " + ex.Message); }
-            }
-            // Written once, at shutdown, after the in-flight requests above have finished appending.
-            if (recorder is not null)
-            {
-                try { recorder.Save(recordPath!); Log($"recorded {recorder.Count} exchange(s) to {recordPath}."); }
-                catch (Exception ex) { Log("warning: could not write the recording: " + ex.Message); }
-            }
+            // Written out while QuickEdit is still off, so a click now cannot hold up the last
+            // lines, and with them the exit.
+            serveLog.Drain(TimeSpan.FromSeconds(2));
+            quickEdit.Dispose();
         }
-
-        Log("stopped.");
         return ExitCodes.Ok;
     }
 
@@ -1238,21 +1266,33 @@ public static class ServeCommand
                 return;
             }
 
-            // When recording, the request body is buffered up front so it can be both forwarded and
-            // written into the HAR; otherwise it streams straight through as it always has.
-            byte[] recordedRequestBody = Array.Empty<byte>();
             Stream? requestBody = req.HasEntityBody ? req.InputStream : null;
             long? declaredLength = req.HasEntityBody && req.ContentLength64 >= 0 ? req.ContentLength64 : null;
             if (requestBody is not null && policy.MaxBody is { } cap)
                 requestBody = new LimitedStream(requestBody, cap);
-            if (recorder is not null && requestBody is not null)
+            // A small body with a declared length is read before it is forwarded, so it can be sent
+            // again: a Windows sign-in (NTLM, Negotiate) answers the first send with 401 and the
+            // handler repeats the request, and a send on a pooled connection the server has just
+            // closed is retried. Both need a body that can be read twice. A larger or chunked body
+            // streams through as it arrives and is never held whole.
+            byte[]? smallBody = null;
+            if (requestBody is not null && declaredLength is { } small && small <= ReplayableBodyBytes)
             {
-                using var buffer = new MemoryStream();
-                await requestBody.CopyToAsync(buffer, ct);
-                recordedRequestBody = buffer.ToArray();
-                requestBody = new MemoryStream(recordedRequestBody);
-                declaredLength = recordedRequestBody.Length;
+                smallBody = new byte[small];
+                // Bounded by --timeout, as a streamed body is (the upstream waits for it): a client
+                // that stalls its upload is answered 504, not held until http.sys gives up.
+                try { await requestBody.ReadExactlyAsync(smallBody, ct).AsTask().WaitAsync(gateway.UpstreamTimeout, ct); }
+                catch (TimeoutException)
+                { throw new TimeoutException($"The request body did not arrive within {gateway.UpstreamTimeout.TotalSeconds:0} s."); }
+                requestBody = new MemoryStream(smallBody, writable: false);
             }
+            // When recording, a streamed body goes upstream through a capture that keeps a copy of it
+            // for the HAR, within the recording's limits.
+            CapturingStream? requestCapture = null;
+            if (recorder is not null && requestBody is not null && smallBody is null)
+                requestBody = requestCapture = recorder.Capture(requestBody);
+            // Disposed however this request ends, so a failed one hands its share of the budget back.
+            using var requestCaptureLease = requestCapture;
 
             var gwReq = new GatewayRequest(method, pathAndQuery, headers, requestBody, req.ContentType) { ContentLength = declaredLength };
 
@@ -1378,15 +1418,24 @@ public static class ServeCommand
                 }
                 else
                 {
-                    // Tee the body: read it whole so the same bytes go to the client and into the
-                    // HAR. Only when recording — the default relay still streams without buffering.
-                    using var captured = new MemoryStream();
-                    await CopyBodyAsync(captured);
-                    byte[] body = captured.ToArray();
-                    await res.OutputStream.WriteAsync(body, ct);
-                    recorder.Record(
-                        method, localBase + pathAndQuery, headers, recordedRequestBody, req.ContentType,
-                        gwResp.StatusCode, gwResp.ReasonPhrase, responseHeaders, body, sw.Elapsed.TotalMilliseconds);
+                    // Tee the body as it streams: the client gets every byte as it arrives, and the
+                    // HAR a copy of it within the recording's limits (past them, the entry says the
+                    // body was left out instead). A body over the per-body limit is relayed without
+                    // being held; one under it is held until it is recorded.
+                    using var responseCapture = recorder.Capture(res.OutputStream);
+                    await CopyBodyAsync(responseCapture);
+                    using (requestCapture)
+                    {
+                        long? requestBodySize = requestCapture is { Overflowed: true } rq ? rq.Total : null;
+                        long? responseBodySize = responseCapture.Overflowed ? responseCapture.Total : null;
+                        // The captures' share of the budget is handed to the entry built from them;
+                        // released when they are disposed, just after.
+                        recorder.Record(
+                            method, localBase + pathAndQuery, headers, smallBody ?? requestCapture?.Captured ?? Array.Empty<byte>(), req.ContentType,
+                            gwResp.StatusCode, gwResp.ReasonPhrase, responseHeaders, responseCapture.Captured, sw.Elapsed.TotalMilliseconds,
+                            requestBodySize: requestBodySize, responseBodySize: responseBodySize,
+                            heldReservation: (requestCapture?.Reserved ?? 0) + responseCapture.Reserved);
+                    }
                 }
             }
             res.Close();
@@ -1631,6 +1680,10 @@ public static class ServeCommand
         // would answer every request 413.
         return long.TryParse(s, out var n) && n > 0 && n <= long.MaxValue / mult ? n * mult : null;
     }
+
+    /// <summary>A request body up to this size, with a declared length, is read before it is
+    /// forwarded so the handler can send it again (see HandleAsync).</summary>
+    internal const int ReplayableBodyBytes = 1024 * 1024;
 
     private sealed class BodyTooLargeException(long limit) : Exception($"request body exceeds --max-body {limit}");
 

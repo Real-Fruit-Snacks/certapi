@@ -174,18 +174,22 @@ public static class HarWriter
     }
 
     /// <summary>Serialize entries into a pretty-printed HAR document.</summary>
-    public static string Write(IEnumerable<HarEntry> entries, string creatorVersion)
+    public static string Write(IEnumerable<HarEntry> entries, string creatorVersion) =>
+        JsonSerializer.Serialize(Wrap(entries, creatorVersion), Options);
+
+    /// <summary>The same document written straight to a stream: a long recording is never held a
+    /// second time as one string.</summary>
+    public static void WriteTo(Stream destination, IEnumerable<HarEntry> entries, string creatorVersion) =>
+        JsonSerializer.Serialize(destination, Wrap(entries, creatorVersion), Options);
+
+    private static Har Wrap(IEnumerable<HarEntry> entries, string creatorVersion) => new()
     {
-        var har = new Har
+        Log = new HarLog
         {
-            Log = new HarLog
-            {
-                Creator = new HarCreator("certapi", creatorVersion),
-                Entries = entries.ToList()
-            }
-        };
-        return JsonSerializer.Serialize(har, Options);
-    }
+            Creator = new HarCreator("certapi", creatorVersion),
+            Entries = entries.ToList()
+        }
+    };
 
     private static HarContent BuildContent(byte[] body, string? contentType)
     {

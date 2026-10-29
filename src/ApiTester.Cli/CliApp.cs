@@ -79,6 +79,14 @@ public sealed class CliServices
     /// <summary>The global --config path, for `config init` (which does not read a configuration
     /// and so never resolves one): the file it should write.</summary>
     public string? ExplicitConfigPath { get; set; }
+
+    /// <summary>Whether stdout is a terminal (a console window) rather than a pipe or a file.
+    /// Program.cs sets it from the real console; a test keeps the default, false, which is what
+    /// writing into a StringWriter is.</summary>
+    public bool StdoutIsTerminal { get; init; }
+
+    /// <summary>The same for stderr: what `serve` logs to, one line per request.</summary>
+    public bool StderrIsTerminal { get; init; }
 }
 
 public static class CliApp
