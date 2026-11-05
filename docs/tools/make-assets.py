@@ -8,8 +8,9 @@ Writes:
   docs/assets/favicon.ico, icon-192.png, icon-512.png, apple-touch-icon.png
   src/ApiTester.App/icon.ico                      the WPF app icon
 
-The README cover, og:image and social preview are not made here: they come from
-docs/assets/cover.toml through Real-Fruit-Snacks/rfs-brand tools/make-cover.py.
+The README seal, og:image and social preview are not made here: they come from
+docs/art/make-seal.py and docs/card.html. The RFS cover comes from docs/assets/cover.toml
+through Real-Fruit-Snacks/rfs-brand tools/make-cover.py.
 Requires: cairosvg, pillow.
 """
 import os, sys, io

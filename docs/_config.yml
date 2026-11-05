@@ -4,5 +4,10 @@
 # development artifacts, not user documentation. They also contain {{ }} code
 # samples that Jekyll's Liquid renderer would try (and fail) to parse. Exclude
 # them so the Pages build only ever publishes the real site (index.html + assets).
+# art/ (the seal's generator and transcripts), card.html (the social card's source)
+# and DESIGN.md are for working on the site, not part of it.
 exclude:
   - superpowers
+  - art
+  - card.html
+  - DESIGN.md

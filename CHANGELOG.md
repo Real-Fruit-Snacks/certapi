@@ -6,6 +6,12 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+- **The project page and the README open with a seal drawn from a real `certapi doctor` run** against
+  client.badssl.com: one engraved ring per stage, with the certificate (200 OK) and without it (400).
+  `docs/art/make-seal.py` draws it from the transcripts beside it, CI fails when the drawing is out of
+  date, and a links workflow checks the README, the handbook and the page every month.
+
 ## [1.96.0] - 2026-10-29
 
 The command line and the desktop app ask far less of a remote desktop (a VDI, Citrix, RDP) and of

@@ -3,9 +3,11 @@
 mTLS API client for the Windows certificate store
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/cover-dark.svg">
-  <img alt="certapi in PowerShell: a request sent with a Windows-store client certificate returns 200 OK over TLS 1.3 with the certificate presented, then serve --check prints a two-site gateway table" src="docs/assets/cover-light.svg" width="100%">
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/seal-dark.svg">
+  <img alt="certapi's seal: six engraved rings for the stages certapi doctor checks, url, proxy, dns, tcp, tls and http, each with its time from the run, around 200 OK. Beside it: client.badssl.com accepts certificates from BadSSL Client Root Certificate Authority, certapi presented BadSSL Client Certificate, and the server answered 200 OK. Then the same URL without a certificate: the tls ring stays plain and the server answers 400 Bad Request." src="docs/assets/seal-light.svg" width="100%">
 </picture>
+
+A real `certapi doctor` run against [client.badssl.com](https://client.badssl.com/), a public test server that asks for a client certificate, then the same URL without one. One ring per stage, outside in. The [transcripts](docs/art/) are as certapi printed them; [`make-seal.py`](docs/art/make-seal.py) draws the picture from them.
 
 ```powershell
 mkdir "$env:LOCALAPPDATA\certapi" -Force; cd "$env:LOCALAPPDATA\certapi"
@@ -20,6 +22,31 @@ With [Scoop](https://scoop.sh) instead: `scoop install https://github.com/Real-F
 Some internal endpoints don't take a password. They ask the browser to choose a certificate and complete a mutual-TLS handshake, and most API clients want that certificate and its private key as files on disk, which enterprise and smart-card certificates deliberately don't allow. certapi picks the certificate from your Windows certificate store — the Personal store, `CurrentUser\My`, or the machine's `LocalMachine\My` — and lets Windows sign the handshake, so the key never leaves the store and never has to be exportable. A `.pfx` or `.pem` file works too. With no certificate selected it is an ordinary HTTP client. I wrote it for my own internal APIs; it assumes Windows 10/11 and nothing else.
 
 Site: [real-fruit-snacks.github.io/certapi](https://real-fruit-snacks.github.io/certapi/) · Handbook: [`wiki/`](wiki/README.md) · [Changelog](CHANGELOG.md)
+
+## What it prints
+
+The same request without and with a certificate. The status line goes to stderr, the body to stdout:
+
+```text
+PS> certapi send https://client.badssl.com/
+400 Bad Request · 262 B · 680 ms · TLS 1.2
+PS> certapi send https://client.badssl.com/ --cert-file badssl.com-client.p12 --cert-password badssl.com
+200 OK · 687 B · 777 ms · TLS 1.2 · client cert presented
+```
+
+When a server turns you away, `certapi doctor` connects one stage at a time and, at the TLS stage, reads which authorities the server takes client certificates from and checks every certificate in your store against them. From the run in the picture ([all of it](docs/art/doctor-with-cert.txt)):
+
+```text
+  [ok  ] tls      handshake succeeded (Tls12)  (403 ms)
+           client certificate presented: CN=BadSSL Client Certificate, O=BadSSL, L=San Francisco, S=California, C=US
+           the server accepts client certificates from 1 authority/authorities:
+             CN=BadSSL Client Root Certificate Authority, O=BadSSL, L=San Francisco, S=California, C=US
+           NONE of your 5 certificate(s) are issued by any of those authorities
+           the certificate you chose IS issued by one of them
+  [ok  ] http     HTTP/1.1 200 OK  (71 ms)
+```
+
+The test certificate is the one BadSSL publishes, from a file. With `--cert "CN=…"` the certificate comes from the store and Windows signs with its key. Run on Windows 11 with certapi 1.96.0, 5 November 2026.
 
 ## What's in it
 
