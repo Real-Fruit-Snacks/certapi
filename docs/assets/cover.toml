@@ -1,14 +1,28 @@
 # Cover + social preview. Regenerate with Real-Fruit-Snacks/rfs-brand, from the folder holding both clones:
 #   python3 rfs-brand/tools/make-cover.py certapi/docs/assets/cover.toml
+# Layout v2 (BRAND.md section 7): name, rule, the README one-liner, and one panel.
 name        = "certapi"
-description = "mTLS API client for the Windows certificate store."
-bullets = [
-  "Signs with a store certificate; the key never leaves",
-  "Desktop app and a headless command line, one engine",
-  "Local gateway for apps that can't do mTLS",
-  "Windows 10 and 11, self-contained, no admin",
-]
+description = "mTLS API client for the Windows certificate store"   # README line 1
 
+# What certapi does: a certificate from the Windows store signs the mutual-TLS
+# handshake, and the API answers. Subject, host and timings are the v1 cover's
+# examples; "client cert presented" is certapi's own wording (OutputText.MetaLine).
 [panel]
-kind = "art"
-file = "cover-art.svg"
+kind   = "flow"
+status = ["ok client cert presented"]
+
+[panel.input]
+label = "Windows cert store"
+note  = "CurrentUser\\My"
+value = "CN=matt"
+tone  = "amber"
+
+[panel.tool]
+label = "certapi send"
+note  = "mTLS"
+
+[panel.output]
+label = "api.internal/orders"
+note  = "48 ms"
+chips = ["200 OK", "TLS 1.3"]
+tone  = "mint"
