@@ -55,3 +55,23 @@ jobs:
           name: test-results
           path: "**/test-results.trx"
           if-no-files-found: ignore
+
+  art:
+    # The README seal (docs/assets/seal-*.svg), the page's seal in docs/index.html and the social
+    # card's seal are generated from the transcripts in docs/art; fail if they no longer match.
+    name: Seal is up to date
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Regenerate the seal
+        run: |
+          python -m pip install --quiet -r docs/art/requirements.txt
+          python docs/art/make-seal.py
+          git diff --exit-code -- docs/assets/seal-dark.svg docs/assets/seal-light.svg docs/art/seal-still-dark.svg docs/index.html

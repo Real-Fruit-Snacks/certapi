@@ -1,0 +1,37 @@
+name: Links
+
+# Links in the README, the handbook and the project page. Monthly as well, because the pages they
+# point at move without this repo changing. Example hosts (internal.corp, api.example.com, localhost)
+# are skipped, and so is client.badssl.com, which answers 400 to anyone without its test certificate.
+on:
+  push:
+    branches: [main]
+    paths: ["**.md", "docs/**.html", ".github/workflows/links.yml"]
+  schedule:
+    - cron: "23 6 4 * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  lychee:
+    name: Check links
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: lychee
+        uses: lycheeverse/lychee-action@v2
+        with:
+          args: >-
+            --no-progress --max-retries 4 --retry-wait-time 10 --timeout 30
+            --accept 200,206,429
+            --exclude '\.corp\b' --exclude '\.internal\b' --exclude 'example\.com' --exclude 'localhost'
+            --exclude '127\.0\.0\.1' --exclude '\{\{' --exclude '^https://client\.badssl\.com'
+            --exclude '^https://github\.com/Real-Fruit-Snacks/certapi/(issues/new|security/advisories/new)'
+            README.md CONTRIBUTING.md SECURITY.md 'wiki/*.md' docs/index.html
+          fail: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
