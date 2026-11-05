@@ -1,11 +1,11 @@
 certapi doctor · https://client.badssl.com/
 
-  [ok  ] url      https://client.badssl.com:443/  (16 ms)
-  [ok  ] proxy    DIRECT (system proxy says direct)  (65 ms)
-  [ok  ] dns      client.badssl.com → 1 address  (63 ms)
+  [ok  ] url      https://client.badssl.com:443/  (11 ms)
+  [ok  ] proxy    DIRECT (system proxy says direct)  (66 ms)
+  [ok  ] dns      client.badssl.com → 1 address  (55 ms)
            104.154.89.105
-  [ok  ] tcp      connected to client.badssl.com:443  (51 ms)
-  [ok  ] tls      handshake succeeded (Tls12)  (644 ms)
+  [ok  ] tcp      connected to client.badssl.com:443  (42 ms)
+  [ok  ] tls      handshake succeeded (Tls12)  (660 ms)
            protocol: Tls12
            cipher: TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256
            server certificate: CN=*.badssl.com (issued by CN=YR1, O=Let's Encrypt, C=US, expires 2026-12-28)
@@ -18,6 +18,6 @@ certapi doctor · https://client.badssl.com/
            the server accepts client certificates from 1 authority/authorities:
              CN=BadSSL Client Root Certificate Authority, O=BadSSL, L=San Francisco, S=California, C=US
            NONE of your 5 certificate(s) are issued by any of those authorities
-  [ok  ] http     HTTP/1.1 400 Bad Request  (85 ms)
+  [ok  ] http     HTTP/1.1 400 Bad Request  (90 ms)
 
-All stages passed in 923 ms.
+All stages passed in 924 ms.

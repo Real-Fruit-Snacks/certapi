@@ -326,7 +326,7 @@ def legend_radius(stage, bottom=False):
 
 W, H = 1000, 600
 SEAL = dict(x=20, y=24, s=552 / 800)          # the seal's 800 units drawn 552 wide
-RUN_NOTE = "certapi 1.96.0 · Windows 11 · 2026-11-05"   # where and when the transcripts were made
+RUN_NOTE = "certapi 1.96.1 · Windows 11 · 2026-11-05"   # where and when the transcripts were made
 CYCLE = 18.0
 RUN_AT = {"with": 0.0, "without": 9.0}
 # seconds into a run that each ring starts engraving, and how long it takes

@@ -37,16 +37,16 @@ PS> certapi send https://client.badssl.com/ --cert-file badssl.com-client.p12 --
 When a server turns you away, `certapi doctor` connects one stage at a time and, at the TLS stage, reads which authorities the server takes client certificates from and checks every certificate in your store against them. From the run in the picture ([all of it](docs/art/doctor-with-cert.txt)):
 
 ```text
-  [ok  ] tls      handshake succeeded (Tls12)  (403 ms)
+  [ok  ] tls      handshake succeeded (Tls12)  (397 ms)
            client certificate presented: CN=BadSSL Client Certificate, O=BadSSL, L=San Francisco, S=California, C=US
            the server accepts client certificates from 1 authority/authorities:
              CN=BadSSL Client Root Certificate Authority, O=BadSSL, L=San Francisco, S=California, C=US
            NONE of your 5 certificate(s) are issued by any of those authorities
            the certificate you chose IS issued by one of them
-  [ok  ] http     HTTP/1.1 200 OK  (71 ms)
+  [ok  ] http     HTTP/1.1 200 OK  (88 ms)
 ```
 
-The test certificate is the one BadSSL publishes, from a file. With `--cert "CN=…"` the certificate comes from the store and Windows signs with its key. Run on Windows 11 with certapi 1.96.0, 5 November 2026.
+The test certificate is the one BadSSL publishes, from a file. With `--cert "CN=…"` the certificate comes from the store and Windows signs with its key. Run on Windows 11 with certapi 1.96.1, 5 November 2026.
 
 ## What's in it
 

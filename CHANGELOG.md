@@ -6,6 +6,12 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.96.1] - 2026-11-05
+
+A new picture for the README and the project page. The command line and the desktop app are
+1.96.0's code, built again with the same .NET runtime (9.0.22); only the version they report has
+changed.
+
 ### Changed
 - **The project page and the README open with a seal drawn from a real `certapi doctor` run** against
   client.badssl.com: one engraved ring per stage, with the certificate (200 OK) and without it (400).
@@ -3174,7 +3180,8 @@ Initial release.
 - Save any response (including binary) to a file.
 - Self-contained single-file executable — no installer, no admin rights, no runtime dependency.
 
-[Unreleased]: https://github.com/Real-Fruit-Snacks/certapi/compare/v1.96.0...HEAD
+[Unreleased]: https://github.com/Real-Fruit-Snacks/certapi/compare/v1.96.1...HEAD
+[1.96.1]: https://github.com/Real-Fruit-Snacks/certapi/compare/v1.96.0...v1.96.1
 [1.96.0]: https://github.com/Real-Fruit-Snacks/certapi/compare/v1.95.0...v1.96.0
 [1.95.0]: https://github.com/Real-Fruit-Snacks/certapi/compare/v1.94.0...v1.95.0
 [1.94.0]: https://github.com/Real-Fruit-Snacks/certapi/compare/v1.93.0...v1.94.0

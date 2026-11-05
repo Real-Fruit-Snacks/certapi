@@ -45,7 +45,7 @@ The seal. Six engraved rings, one per stage `certapi doctor` checks (url, proxy,
 
 The page loads showing the uncut plate: every ring in the line colour. Then the rings engrave themselves outside in, each sweeping clockwise from its legend, with the stage's real time from the run in the legend. The tls ring cuts in Amber with "client certificate presented", and the centre stamps "200 OK" in Mint at 2.6 s. "Without it" replays the same URL from a second real run with no certificate: the tls ring cuts in plain line colour, its legend reads "client certificate presented: none", and the centre stamps "400 Bad Request" in Raspberry. On a desktop pointer the rings turn up to 6° against each other over the plate, and the engraving shimmers like a moiré on a banknote.
 
-- **The runs:** `docs/art/doctor-with-cert.txt` and `doctor-without-cert.txt`, exactly as `certapi doctor` printed them against client.badssl.com on 2026-11-05 (certapi 1.96.0, Windows 11). The certificate is BadSSL's published test one, from a file; the caption says so.
+- **The runs:** `docs/art/doctor-with-cert.txt` and `doctor-without-cert.txt`, exactly as `certapi doctor` printed them against client.badssl.com on 2026-11-05 (certapi 1.96.1, Windows 11). The certificate is BadSSL's published test one, from a file; the caption says so.
 - **No JS:** the seal plays once on load (CSS only) and ends finished; the run buttons stay hidden.
 - **Reduced motion:** the finished seal, no engraving, no turning. The buttons swap runs instantly.
 - **Phone:** the same seal, full width, after the headline. The legends get small there; the transcript below has the same facts as text.
