@@ -14,8 +14,8 @@ All notable changes to this project are documented here. The format follows
   only package source and restores everything from it with no network. The .NET SDK and Python
   are not in it; `offline\README.md` names the exact versions and links their offline installers.
   CI builds the kit on every push and runs the setup, the build, the tests, the publish and the
-  seal check from it with the internet cut off, and the release does the same on the tag before
-  it publishes anything. See [Developing offline](CONTRIBUTING.md#developing-offline).
+  seal check from it with no package source but the kit and, for all but the tests, the internet
+  cut off; the release does the same on the tag before it publishes anything. See [Developing offline](CONTRIBUTING.md#developing-offline).
 
 ### Changed
 - `SHA256SUMS.txt` lists every file in the release, now with the source zip, the dev kit and the

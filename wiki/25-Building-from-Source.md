@@ -81,8 +81,8 @@ commands above. [Developing offline](../CONTRIBUTING.md#developing-offline) has 
 Releases are cut by pushing a `v*` tag; CI (continuous integration) builds the self-contained
 executables, attaches the starter
 wordlist, and bundles a **full source zip** of the repository at that tag and the **offline dev
-kit**, once a build, the tests and a publish from the kit alone have passed with the network cut
-off. See `.github/workflows/`.
+kit**, once a build, the tests and a publish from the kit alone have passed with no package
+source but the kit. See `.github/workflows/`.
 
 Before tagging, set `<Version>` in `src/ApiTester.App/ApiTester.App.csproj` and
 `src/ApiTester.Cli/ApiTester.Cli.csproj` to the tag's version (`v1.95.0` → `1.95.0`); the workflow
