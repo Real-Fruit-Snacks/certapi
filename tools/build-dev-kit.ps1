@@ -6,9 +6,9 @@
     Writes certapi-<version>-dev-windows-x64.zip. It unzips to one folder, certapi-<version>-dev\:
     the repository at HEAD as git archive writes it (no .git), plus offline\:
 
-      nuget\           every NuGet package that a restore of the solution, a restore for the
-                       self-contained win-x64 publish of the app and of certapi, and
-                       `dotnet tool restore` fetch
+      nuget\           every NuGet package that a restore of the solution and a restore for
+                       the self-contained win-x64 publish of the app and of certapi fetch, and
+                       the local tools in .config\dotnet-tools.json
       python\          the wheels docs\art\requirements.txt names, for CPython on win_amd64 at the
                        version in docs\art\.python-version
       licences\        the licence and notices of each of those packages
@@ -196,7 +196,25 @@ try {
         foreach ($proj in 'src\ApiTester.App\ApiTester.App.csproj', 'src\ApiTester.Cli\ApiTester.Cli.csproj') {
             Invoke-Native "dotnet restore $proj (win-x64, self-contained)" { dotnet restore $proj -r win-x64 -p:SelfContained=true }
         }
-        Invoke-Native 'dotnet tool restore' { dotnet tool restore }
+        # The local tools, fetched as plain downloads: `dotnet tool restore` fetches nothing for a
+        # tool ~\.dotnet\toolResolverCache already knows, so on a machine that has restored it
+        # before, the package would not land in the folder the kit is collected from.
+        $manifest = [IO.File]::ReadAllText((Join-Path $scratch '.config\dotnet-tools.json')) | ConvertFrom-Json
+        $tools = @($manifest.tools.PSObject.Properties | ForEach-Object { [pscustomobject]@{ Id = $_.Name; Version = $_.Value.version } })
+        $toolsDir = Join-Path $scratch 'kit-tools'
+        New-Item -ItemType Directory -Path $toolsDir | Out-Null
+        $downloads = ($tools | ForEach-Object { "    <PackageDownload Include=""$($_.Id)"" Version=""[$($_.Version)]"" />" }) -join "`n"
+        Write-Text (Join-Path $toolsDir 'kit-tools.csproj') @"
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net$((($sdk -split '\.')[0..1]) -join '.')</TargetFramework>
+  </PropertyGroup>
+  <ItemGroup>
+$downloads
+  </ItemGroup>
+</Project>
+"@
+        Invoke-Native "the local tools in .config\dotnet-tools.json ($(@($tools | ForEach-Object { "$($_.Id) $($_.Version)" }) -join ', '))" { dotnet restore (Join-Path $toolsDir 'kit-tools.csproj') }
         $sdkLine = (Invoke-Quiet 'dotnet' @('--list-sdks')).Output | Where-Object { $_ -like "$sdk *" } | Select-Object -First 1
     }
     finally { Pop-Location }
@@ -218,6 +236,12 @@ try {
     foreach ($pack in 'microsoft.netcore.app.runtime.win-x64', 'microsoft.windowsdesktop.app.runtime.win-x64') {
         if (-not (Test-Path -LiteralPath (Join-Path $offline "nuget\$pack.$runtime.nupkg"))) {
             throw "$pack $runtime is not among the restored packages, so the kit could not publish the exes"
+        }
+    }
+    foreach ($tool in $tools) {
+        $file = ('{0}.{1}.nupkg' -f $tool.Id, $tool.Version).ToLowerInvariant()
+        if (-not (Test-Path -LiteralPath (Join-Path $offline "nuget\$file"))) {
+            throw "$($tool.Id) $($tool.Version) from .config\dotnet-tools.json is not among the restored packages"
         }
     }
 
