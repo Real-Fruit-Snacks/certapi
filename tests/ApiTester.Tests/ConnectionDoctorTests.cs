@@ -1,4 +1,5 @@
 using System.IO;
+using System.Net;
 using System.Security.Cryptography.X509Certificates;
 using ApiTester.Core;
 
@@ -69,6 +70,71 @@ public class ConnectionDoctorTests
     public void InterceptionNote_is_silent_for_an_ordinary_public_root()
     {
         Assert.Null(DoctorReport.InterceptionNote("CN=DigiCert Global Root G2, O=DigiCert Inc", false));
+    }
+
+    // ---------------------------------------------------------------- the proxy decision (pure)
+
+    /// <summary>Answers the way the proxy .NET builds from HTTPS_PROXY and NO_PROXY does: GetProxy
+    /// names the proxy for every host, and only IsBypassed reads the bypass list.</summary>
+    private sealed class EnvironmentStyleProxy(Uri proxy, params string[] bypassed) : IWebProxy
+    {
+        public ICredentials? Credentials { get; set; }
+        public Uri? GetProxy(Uri destination) => proxy;
+        public bool IsBypassed(Uri host) => bypassed.Contains(host.Host, StringComparer.OrdinalIgnoreCase);
+    }
+
+    /// <summary>The proxy .NET uses on a machine with none: no proxy for any host.</summary>
+    private sealed class NoSystemProxy : IWebProxy
+    {
+        public ICredentials? Credentials { get; set; }
+        public Uri? GetProxy(Uri destination) => null;
+        public bool IsBypassed(Uri host) => true;
+    }
+
+    private static readonly Uri EnvironmentProxy = new("http://127.0.0.1:9");
+
+    [Fact]
+    public void A_host_the_system_proxy_bypasses_is_reached_direct_as_send_reaches_it()
+    {
+        var system = new EnvironmentStyleProxy(EnvironmentProxy, "internal.corp");
+
+        var (proxy, why) = ConnectionDoctor.DecideProxy(new Uri("https://internal.corp/x"), new TransportOptions(), () => system);
+
+        Assert.Null(proxy);
+        Assert.Equal("NO_PROXY bypasses this host", why);
+    }
+
+    [Fact]
+    public void A_host_the_system_proxy_does_not_bypass_goes_through_it()
+    {
+        var system = new EnvironmentStyleProxy(EnvironmentProxy, "internal.corp");
+
+        var (proxy, why) = ConnectionDoctor.DecideProxy(new Uri("https://outside.corp/x"), new TransportOptions(), () => system);
+
+        Assert.Equal(EnvironmentProxy, proxy);
+        Assert.Equal("system proxy (including any PAC/WPAD)", why);
+    }
+
+    [Fact]
+    public void With_no_system_proxy_the_line_still_says_the_system_proxy_says_direct()
+    {
+        // Not "bypasses this host": the README's doctor transcripts were printed on a machine like this.
+        var (proxy, why) = ConnectionDoctor.DecideProxy(new Uri("https://internal.corp/x"), new TransportOptions(), () => new NoSystemProxy());
+
+        Assert.Null(proxy);
+        Assert.Equal("system proxy says direct", why);
+    }
+
+    [Fact]
+    public void A_bypass_rule_of_its_own_is_still_named_before_the_system_proxy_is_asked()
+    {
+        var system = new EnvironmentStyleProxy(EnvironmentProxy, "internal.corp");
+        var options = new TransportOptions { NoProxy = ProxyBypass.ParseLenient("internal.corp") };
+
+        var (proxy, why) = ConnectionDoctor.DecideProxy(new Uri("https://internal.corp/x"), options, () => system);
+
+        Assert.Null(proxy);
+        Assert.Equal("bypassed by 'internal.corp'", why);
     }
 
     // ---------------------------------------------------------------- staged runs

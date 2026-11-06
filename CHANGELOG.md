@@ -6,6 +6,19 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- `certapi doctor` goes direct to a host that `NO_PROXY` lists when `HTTPS_PROXY` is set, as
+  `send` does. It asked .NET's proxy for those variables which proxy the host would use, and that
+  proxy names itself for every host and leaves `NO_PROXY` to a second question doctor never asked.
+  So with `--noproxy` naming other hosts, which replaces `NO_PROXY` for certapi's own list, doctor
+  tunnelled through the proxy to a host `send` reached directly. Its proxy line there now reads
+  `DIRECT (NO_PROXY bypasses this host)`.
+
+### Changed
+- The dev kit's CI check runs the tests with the internet cut off as well. For the tests,
+  `NO_PROXY` also lists the reserved names some of them give servers on the machine (`.test`,
+  `.invalid`, `api.example.com`).
+
 ## [1.96.2] - 2026-11-05
 
 A dev kit for building certapi with no network, in this release and every one after it. The

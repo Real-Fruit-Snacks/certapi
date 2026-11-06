@@ -2,9 +2,9 @@ name: Dev kit
 
 # Builds certapi-<version>-dev-windows-x64.zip, the offline dev kit (tools/build-dev-kit.ps1), and
 # proves it: unzipped into a fresh folder, with the internet and the package registries cut off,
-# its setup.ps1, the build, the self-contained publish and the seal check all run from the kit
-# alone, and so do the tests, with the registries still cut off (see the Test step). CI runs this
-# on every push; the release runs it on the tag and publishes the kit only when it passes.
+# its setup.ps1, the build, the tests, the self-contained publish and the seal check all run from
+# the kit alone. CI runs this on every push; the release runs it on the tag and publishes the kit
+# only when it passes.
 #
 # The cut-off: HTTP_PROXY, HTTPS_PROXY and ALL_PROXY point at a closed port (NO_PROXY keeps the
 # tests' loopback servers reachable), setup.ps1's nuget.config has no source but the kit,
@@ -130,16 +130,15 @@ jobs:
         working-directory: ${{ env.KIT }}
         run: dotnet build --configuration Release --no-restore -warnaserror
 
-      # Without the three proxy variables, which certapi reads as its own configuration: its tests
-      # assume a machine with no proxy, as on the build-and-test job. Pointed at a closed port, 15
-      # tests that talk only to servers on this machine fail: doctor's ask .NET's system proxy,
-      # which for these variables does not apply NO_PROXY, and the rest use reserved names
-      # (site.test, *.invalid, api.example.com). NUGET_PACKAGES is still empty, the kit is still the
-      # only package source and pip still has no index; --no-build restores nothing.
+      # With the internet still cut off. The tests talk only to servers on this machine, but some
+      # name them with reserved names that never reach the internet (RFC 2606 and 6761) and pin
+      # them to loopback or never dial them: site.test, other.test, *.invalid, api.example.com.
+      # certapi reads the proxy variables as its own configuration, so those names join NO_PROXY
+      # for this step alone.
       - name: Test
         working-directory: ${{ env.KIT }}
         run: |
-          Remove-Item Env:HTTP_PROXY, Env:HTTPS_PROXY, Env:ALL_PROXY, Env:NO_PROXY
+          $env:NO_PROXY = 'localhost,127.0.0.1,.test,.invalid,api.example.com'
           dotnet test --configuration Release --no-build --filter "Category!=StoreRoundTrip" --logger "trx;LogFileName=test-results.trx"
 
       - name: Publish self-contained single-file exe

@@ -401,7 +401,12 @@ public static class ConnectionDoctor
 
     /// <summary>Which proxy this URL would go through, and why — the same three inputs
     /// <see cref="ProxyConfiguration"/> honors, reported rather than applied.</summary>
-    private static (Uri? Proxy, string Why) DecideProxy(Uri uri, TransportOptions options)
+    private static (Uri? Proxy, string Why) DecideProxy(Uri uri, TransportOptions options) =>
+        DecideProxy(uri, options, () => HttpClient.DefaultProxy);
+
+    /// <param name="systemProxy">The machine's proxy: <see cref="HttpClient.DefaultProxy"/>, or a
+    /// stand-in from a test.</param>
+    internal static (Uri? Proxy, string Why) DecideProxy(Uri uri, TransportOptions options, Func<IWebProxy?> systemProxy)
     {
         if (options.Proxy == ProxyMode.None) return (null, "--no-proxy");
         if (ProxyBypass.Match(options.NoProxy, uri) is { } rule)
@@ -410,9 +415,14 @@ public static class ConnectionDoctor
             return (Uri.TryCreate(explicitUrl, UriKind.Absolute, out var p) ? p : null, "--proxy");
         try
         {
+            var system = systemProxy();
             // WinHTTP evaluates WPAD/PAC behind DefaultProxy, so this is the machine's real answer.
-            var system = HttpClient.DefaultProxy.GetProxy(uri);
-            return system is null ? (null, "system proxy says direct") : (system, "system proxy (including any PAC/WPAD)");
+            if (system is null || system.GetProxy(uri) is not { } proxy)
+                return (null, "system proxy says direct");
+            // The proxy .NET builds from HTTPS_PROXY names itself for every host and leaves NO_PROXY
+            // to IsBypassed, which the handler asks first, as ApiClient.DecideProxy does.
+            if (system.IsBypassed(uri)) return (null, "NO_PROXY bypasses this host");
+            return (proxy, "system proxy (including any PAC/WPAD)");
         }
         catch (Exception ex) { return (null, "system proxy could not be evaluated: " + ex.Message); }
     }
