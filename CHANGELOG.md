@@ -6,6 +6,12 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.96.3] - 2026-11-06
+
+`certapi doctor` now agrees with `send` about hosts that `NO_PROXY` lists. The desktop app has no
+doctor, so it works as 1.96.2 did, built with the same .NET runtime (9.0.22); only the version it
+reports has changed.
+
 ### Fixed
 - `certapi doctor` goes direct to a host that `NO_PROXY` lists when `HTTPS_PROXY` is set, as
   `send` does. It asked .NET's proxy for those variables which proxy the host would use, and that
@@ -3214,7 +3220,8 @@ Initial release.
 - Save any response (including binary) to a file.
 - Self-contained single-file executable — no installer, no admin rights, no runtime dependency.
 
-[Unreleased]: https://github.com/Real-Fruit-Snacks/certapi/compare/v1.96.2...HEAD
+[Unreleased]: https://github.com/Real-Fruit-Snacks/certapi/compare/v1.96.3...HEAD
+[1.96.3]: https://github.com/Real-Fruit-Snacks/certapi/compare/v1.96.2...v1.96.3
 [1.96.2]: https://github.com/Real-Fruit-Snacks/certapi/compare/v1.96.1...v1.96.2
 [1.96.1]: https://github.com/Real-Fruit-Snacks/certapi/compare/v1.96.0...v1.96.1
 [1.96.0]: https://github.com/Real-Fruit-Snacks/certapi/compare/v1.95.0...v1.96.0
