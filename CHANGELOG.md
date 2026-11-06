@@ -16,8 +16,8 @@ All notable changes to this project are documented here. The format follows
 
 ### Changed
 - The dev kit's CI check runs the tests with the internet cut off as well. For the tests,
-  `NO_PROXY` also lists the reserved names some of them give servers on the machine (`.test`,
-  `.invalid`, `api.example.com`).
+  `NO_PROXY` also lists the reserved names some of them give servers on the machine, such as
+  `site.test` and `api.example.com`.
 
 ## [1.96.2] - 2026-11-05
 

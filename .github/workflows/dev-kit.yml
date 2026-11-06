@@ -131,14 +131,19 @@ jobs:
         run: dotnet build --configuration Release --no-restore -warnaserror
 
       # With the internet still cut off. The tests talk only to servers on this machine, but some
-      # name them with reserved names that never reach the internet (RFC 2606 and 6761) and pin
-      # them to loopback or never dial them: site.test, other.test, *.invalid, api.example.com.
-      # certapi reads the proxy variables as its own configuration, so those names join NO_PROXY
-      # for this step alone.
+      # give them reserved names that never reach the internet (RFC 2606 and 6761), pinned to
+      # loopback or never dialled, and expect to reach them direct. certapi reads the proxy
+      # variables as its own configuration, so those names join NO_PROXY for this step alone:
+      # exact names, not .test or .invalid, because NO_PROXY narrows --proxy too, and other tests
+      # send through a --proxy to names such as blocked.test and example.invalid.
       - name: Test
         working-directory: ${{ env.KIT }}
         run: |
-          $env:NO_PROXY = 'localhost,127.0.0.1,.test,.invalid,api.example.com'
+          $env:NO_PROXY = @(
+            'localhost', '127.0.0.1', 'api.example.com', 'site.test', 'other.test'
+            'doctor-no-such-host.invalid', 'certapi-gateway-resolve.invalid'
+            'certapi-resolve-test.invalid', 'certapi-characterization-resolve.invalid'
+          ) -join ','
           dotnet test --configuration Release --no-build --filter "Category!=StoreRoundTrip" --logger "trx;LogFileName=test-results.trx"
 
       - name: Publish self-contained single-file exe
