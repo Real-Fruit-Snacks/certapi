@@ -13,8 +13,18 @@ permissions:
   contents: write
 
 jobs:
+  # The offline dev kit for the tag, checked as CI checks it (network cut off, everything from the
+  # kit) before anything is published; the release job below attaches the zip it built.
+  dev-kit:
+    name: Dev kit
+    uses: ./.github/workflows/dev-kit.yml
+    with:
+      ref: ${{ github.event_name == 'workflow_dispatch' && format('refs/tags/{0}', inputs.tag) || github.ref }}
+      upload: true
+
   release:
     name: Build & publish portable exe
+    needs: dev-kit
     runs-on: windows-latest
 
     steps:
@@ -91,6 +101,21 @@ jobs:
           TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
         run: git archive --format=zip --prefix="certapi-${TAG}/" -o "certapi-source-${TAG}.zip" HEAD
 
+      - name: Fetch the dev kit
+        uses: actions/download-artifact@v8
+        with:
+          name: dev-kit
+          path: dev-kit
+
+      - name: Check the dev kit is this tag's
+        shell: bash
+        env:
+          TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+        run: |
+          KIT="dev-kit/certapi-${TAG#v}-dev-windows-x64.zip"
+          if [ ! -f "$KIT" ]; then echo "::error::the dev-kit job left no $KIT"; ls -l dev-kit; exit 1; fi
+          ls -l "$KIT"
+
       - name: Checksums and a Scoop manifest
         shell: bash
         env:
@@ -101,13 +126,6 @@ jobs:
           CLI_SHA=$(sha256sum publish-cli/certapi.exe | cut -d' ' -f1)
           APP_SHA=$(sha256sum publish/ApiTester.App.exe | cut -d' ' -f1)
           QUIC_SHA=$(sha256sum publish-cli/msquic.dll | cut -d' ' -f1)
-          WORDS_SHA=$(sha256sum wordlists/common-api-endpoints.txt | cut -d' ' -f1)
-          {
-            echo "${CLI_SHA}  certapi.exe"
-            echo "${APP_SHA}  ApiTester.App.exe"
-            echo "${QUIC_SHA}  msquic.dll"
-            echo "${WORDS_SHA}  common-api-endpoints.txt"
-          } > SHA256SUMS.txt
           # Installed with: scoop install https://github.com/<repo>/releases/latest/download/certapi.json
           cat > certapi.json <<JSON
           {
@@ -139,6 +157,12 @@ jobs:
           }
           JSON
           python -c "import json; json.load(open('certapi.json'))"
+          # Every asset but this list itself. certapi update and Scoop look up a file by its name.
+          for f in publish-cli/certapi.exe publish/ApiTester.App.exe publish-cli/msquic.dll \
+                   wordlists/common-api-endpoints.txt "certapi-source-${TAG}.zip" \
+                   "dev-kit/certapi-${VERSION}-dev-windows-x64.zip" certapi.json; do
+            echo "$(sha256sum "$f" | cut -d' ' -f1)  $(basename "$f")"
+          done > SHA256SUMS.txt
           cat SHA256SUMS.txt certapi.json
 
       - name: Compose release notes from CHANGELOG
@@ -173,6 +197,7 @@ jobs:
             "publish-cli/msquic.dll#HTTP/3 (QUIC) library: keep it beside certapi.exe and ApiTester.App.exe" \
             "wordlists/common-api-endpoints.txt#Starter wordlist for certapi fuzz" \
             "certapi-source-${TAG}.zip#Source at this tag" \
+            "dev-kit/certapi-${TAG#v}-dev-windows-x64.zip#Dev kit: the source and every package it needs, to build and test with no network (Windows x64)" \
             "SHA256SUMS.txt#SHA-256 of each file (certapi update checks against these)" \
             "certapi.json#Scoop manifest" \
             --title "$TAG" \

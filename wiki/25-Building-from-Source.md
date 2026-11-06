@@ -68,11 +68,21 @@ dotnet publish src/ApiTester.Cli -c Release -r win-x64 --self-contained -o publi
 
 These bundle the .NET runtime, so they run on any Windows 10/11 x64 machine with nothing installed.
 
+## Build offline
+
+Each release has `certapi-<version>-dev-windows-x64.zip`: the source at the tag and every package
+a build fetches, with a setup script that needs no network. Install the .NET SDK (and, for the
+seal, Python) that its `offline\README.md` names, run
+`powershell -ExecutionPolicy Bypass -File offline\setup.ps1` in the unzipped folder, then the
+commands above. [Developing offline](../CONTRIBUTING.md#developing-offline) has the details.
+
 ## Releases
 
 Releases are cut by pushing a `v*` tag; CI (continuous integration) builds the self-contained
 executables, attaches the starter
-wordlist, and bundles a **full source zip** of the repository at that tag. See `.github/workflows/`.
+wordlist, and bundles a **full source zip** of the repository at that tag and the **offline dev
+kit**, once a build, the tests and a publish from the kit alone have passed with the network cut
+off. See `.github/workflows/`.
 
 Before tagging, set `<Version>` in `src/ApiTester.App/ApiTester.App.csproj` and
 `src/ApiTester.Cli/ApiTester.Cli.csproj` to the tag's version (`v1.95.0` → `1.95.0`); the workflow

@@ -6,6 +6,21 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- **`certapi-<version>-dev-windows-x64.zip`, the dev kit.** It unzips to the source at the tag and
+  `offline\`: every NuGet package that the solution, the self-contained publish and the local
+  Stryker.NET tool restore (the .NET 9.0.22 runtime packs among them), the wheels for the seal's
+  generator, the licence of each, and `setup.ps1`, which checks the toolchain, makes the kit the
+  only package source and restores everything from it with no network. The .NET SDK and Python
+  are not in it; `offline\README.md` names the exact versions and links their offline installers.
+  CI builds the kit on every push and runs the setup, the build, the tests, the publish and the
+  seal check from it with the internet cut off, and the release does the same on the tag before
+  it publishes anything. See [Developing offline](CONTRIBUTING.md#developing-offline).
+
+### Changed
+- `SHA256SUMS.txt` lists every file in the release, now with the source zip, the dev kit and the
+  Scoop manifest.
+
 ## [1.96.1] - 2026-11-05
 
 A new picture for the README and the project page. The command line and the desktop app are

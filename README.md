@@ -19,6 +19,8 @@ That's `certapi.exe` (command line) and `ApiTester.App.exe` (desktop) from the [
 
 With [Scoop](https://scoop.sh) instead: `scoop install https://github.com/Real-Fruit-Snacks/certapi/releases/latest/download/certapi.json` (then `scoop update certapi`).
 
+Offline, copy the two exes (and `msquic.dll`, for `--http3`) across: they need no network and no .NET install. To build certapi offline, each release also has `certapi-<version>-dev-windows-x64.zip`, the source with every package it needs; [Developing offline](CONTRIBUTING.md#developing-offline) has the steps.
+
 Some internal endpoints don't take a password. They ask the browser to choose a certificate and complete a mutual-TLS handshake, and most API clients want that certificate and its private key as files on disk, which enterprise and smart-card certificates deliberately don't allow. certapi picks the certificate from your Windows certificate store — the Personal store, `CurrentUser\My`, or the machine's `LocalMachine\My` — and lets Windows sign the handshake, so the key never leaves the store and never has to be exportable. A `.pfx` or `.pem` file works too. With no certificate selected it is an ordinary HTTP client. I wrote it for my own internal APIs; it assumes Windows 10/11 and nothing else.
 
 Site: [real-fruit-snacks.github.io/certapi](https://real-fruit-snacks.github.io/certapi/) · Handbook: [`wiki/`](wiki/README.md) · [Changelog](CHANGELOG.md)

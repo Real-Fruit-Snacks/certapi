@@ -1,0 +1,161 @@
+name: Dev kit
+
+# Builds certapi-<version>-dev-windows-x64.zip, the offline dev kit (tools/build-dev-kit.ps1), and
+# proves it: unzipped into a fresh folder, with the internet and the package registries cut off,
+# its setup.ps1, the build, the tests, the self-contained publish and the seal check all run from
+# the kit alone. CI runs this on every push; the release runs it on the tag and publishes the kit
+# only when it passes.
+#
+# The cut-off: HTTP_PROXY, HTTPS_PROXY and ALL_PROXY point at a closed port (NO_PROXY keeps the
+# tests' loopback servers reachable), setup.ps1's nuget.config has no source but the kit,
+# NUGET_PACKAGES is a new empty folder so the runner's package cache cannot fill a gap, and pip has
+# no index. No firewall rule: the runner must still reach GitHub.
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: "The commit or tag to build the kit from (default: the one that started the run)"
+        type: string
+        default: ""
+      upload:
+        description: "Keep the kit as the artifact dev-kit, for the release to publish"
+        type: boolean
+        default: false
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: pwsh
+
+jobs:
+  dev-kit:
+    name: Builds and works offline
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref }}
+
+      # The same toolchain as the build-and-test job and the release: the newest .NET 9 SDK, and
+      # the Python the seal job uses. The kit names these exact versions.
+      - name: Set up .NET 9
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: "9.0.x"
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version-file: docs/art/.python-version
+
+      - name: Build the dev kit
+        run: ./tools/build-dev-kit.ps1 -OutputDirectory "$env:RUNNER_TEMP/dev-kit"
+
+      - name: Keep the kit for the release
+        if: inputs.upload
+        uses: actions/upload-artifact@v7
+        with:
+          name: dev-kit
+          path: ${{ runner.temp }}/dev-kit/*.zip
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 3
+
+      - name: Unzip it into a fresh folder
+        run: |
+          $zip = @(Get-ChildItem "$env:RUNNER_TEMP/dev-kit" -Filter *.zip)
+          if ($zip.Count -ne 1) { throw "expected one kit zip, found $($zip.Count)" }
+          $dest = Join-Path $env:RUNNER_TEMP 'offline-check'
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          [IO.Compression.ZipFile]::ExtractToDirectory($zip[0].FullName, $dest)
+          $top = @(Get-ChildItem $dest -Force)
+          $want = $zip[0].BaseName -replace '-windows-x64$', ''
+          if ($top.Count -ne 1 -or $top[0].Name -ne $want) { throw "the kit should unzip to one folder, $want; it unzips to: $($top.Name -join ', ')" }
+          Write-Host "$($zip[0].Name): $([math]::Round($zip[0].Length / 1MB, 1)) MB, unzipped to $($top[0].FullName)"
+          "KIT=$($top[0].FullName)" >> $env:GITHUB_ENV
+
+      - name: Cut off the internet and the package registries
+        run: |
+          $empty = Join-Path $env:RUNNER_TEMP 'nuget-packages-empty'
+          New-Item -ItemType Directory -Path $empty | Out-Null
+          @(
+            'HTTP_PROXY=http://127.0.0.1:9'
+            'HTTPS_PROXY=http://127.0.0.1:9'
+            'ALL_PROXY=http://127.0.0.1:9'
+            'NO_PROXY=localhost,127.0.0.1'
+            "NUGET_PACKAGES=$empty"
+            'PIP_INDEX_URL=http://127.0.0.1:9/simple'
+            'PIP_NO_INDEX=1'
+          ) | Add-Content -Path $env:GITHUB_ENV
+
+      # With .NET's own HttpClient, which dotnet and NuGet use.
+      - name: Check nuget.org is out of reach
+        run: |
+          $client = [System.Net.Http.HttpClient]::new()
+          $client.Timeout = [TimeSpan]::FromSeconds(30)
+          $reached = $true
+          try { $null = $client.GetAsync('https://api.nuget.org/v3/index.json').GetAwaiter().GetResult() }
+          catch { $reached = $false; Write-Host "As it should be: $($_.Exception.GetBaseException().Message)" }
+          if ($reached) { throw 'api.nuget.org answered: the cut-off does not hold' }
+
+      - name: offline/setup.ps1 (PowerShell 7)
+        working-directory: ${{ env.KIT }}
+        run: ./offline/setup.ps1
+
+      - name: offline/setup.ps1 again (Windows PowerShell 5.1)
+        working-directory: ${{ env.KIT }}
+        shell: powershell
+        run: |
+          & .\offline\setup.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Only the kit is a package source
+        working-directory: ${{ env.KIT }}
+        run: |
+          $sources = dotnet nuget list source --format short | Where-Object { $_ -match '\S' }
+          $sources
+          if (@($sources).Count -ne 1 -or $sources -notmatch 'offline[\\/]nuget') { throw 'the kit should be the only package source' }
+
+      # From here on, the steps of the build-and-test job and of the release, run in the kit.
+      - name: Restore
+        working-directory: ${{ env.KIT }}
+        run: dotnet restore
+
+      - name: Build (warnings as errors)
+        working-directory: ${{ env.KIT }}
+        run: dotnet build --configuration Release --no-restore -warnaserror
+
+      - name: Test
+        working-directory: ${{ env.KIT }}
+        run: dotnet test --configuration Release --no-build --filter "Category!=StoreRoundTrip" --logger "trx;LogFileName=test-results.trx"
+
+      - name: Publish self-contained single-file exe
+        working-directory: ${{ env.KIT }}
+        run: |
+          dotnet publish src/ApiTester.App -c Release -r win-x64 --self-contained -o publish
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          dotnet publish src/ApiTester.Cli -c Release -r win-x64 --self-contained -o publish-cli
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if ((Get-FileHash publish/msquic.dll).Hash -ne (Get-FileHash publish-cli/msquic.dll).Hash) { throw 'the app and the command line were published with different msquic.dll files' }
+          $version = (Get-Content offline/toolchain.json -Raw | ConvertFrom-Json).version
+          $said = (./publish-cli/certapi.exe --version | Out-String).Trim()
+          if ($LASTEXITCODE -ne 0 -or $said -ne "certapi $version") { throw "publish-cli/certapi.exe --version printed '$said', not 'certapi $version'" }
+          Get-ChildItem publish/ApiTester.App.exe, publish-cli/certapi.exe, publish-cli/msquic.dll | ForEach-Object { '{0,12:N0}  {1}' -f $_.Length, $_.Name }
+          Write-Host $said
+
+      # As the seal job does with git diff, without git: the kit has no .git.
+      - name: Seal is up to date
+        working-directory: ${{ env.KIT }}
+        run: |
+          $files = 'docs/assets/seal-dark.svg', 'docs/assets/seal-light.svg', 'docs/art/seal-still-dark.svg', 'docs/index.html'
+          $before = @{}
+          foreach ($f in $files) { $before[$f] = [IO.File]::ReadAllText((Join-Path $PWD $f)).Replace("`r`n", "`n") }
+          ./.venv/Scripts/python.exe docs/art/make-seal.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $changed = @($files | Where-Object { [IO.File]::ReadAllText((Join-Path $PWD $_)).Replace("`r`n", "`n") -ne $before[$_] })
+          if ($changed.Count -gt 0) { throw "make-seal.py drew a different seal: $($changed -join ', ')" }
