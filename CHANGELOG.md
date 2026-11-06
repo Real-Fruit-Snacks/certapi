@@ -6,8 +6,14 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.96.2] - 2026-11-05
+
+A dev kit for building certapi with no network, in this release and every one after it. The
+command line and the desktop app are 1.96.1's code, built again with the same .NET runtime
+(9.0.22); only the version they report has changed.
+
 ### Added
-- **`certapi-<version>-dev-windows-x64.zip`, the dev kit.** It unzips to the source at the tag and
+- **`certapi-1.96.2-dev-windows-x64.zip`, the dev kit.** It unzips to the source at the tag and
   `offline\`: every NuGet package that the solution, the self-contained publish and the local
   Stryker.NET tool restore (the .NET 9.0.22 runtime packs among them), the wheels for the seal's
   generator, the licence of each, and `setup.ps1`, which checks the toolchain, makes the kit the
@@ -3195,7 +3201,8 @@ Initial release.
 - Save any response (including binary) to a file.
 - Self-contained single-file executable — no installer, no admin rights, no runtime dependency.
 
-[Unreleased]: https://github.com/Real-Fruit-Snacks/certapi/compare/v1.96.1...HEAD
+[Unreleased]: https://github.com/Real-Fruit-Snacks/certapi/compare/v1.96.2...HEAD
+[1.96.2]: https://github.com/Real-Fruit-Snacks/certapi/compare/v1.96.1...v1.96.2
 [1.96.1]: https://github.com/Real-Fruit-Snacks/certapi/compare/v1.96.0...v1.96.1
 [1.96.0]: https://github.com/Real-Fruit-Snacks/certapi/compare/v1.95.0...v1.96.0
 [1.95.0]: https://github.com/Real-Fruit-Snacks/certapi/compare/v1.94.0...v1.95.0
