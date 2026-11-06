@@ -419,6 +419,7 @@ try {
     finally { $zip.Dispose() }
 
     Write-Host ''
+    foreach ($row in $rows | Sort-Object Kind, Id, Version) { Write-Host ('  {0,-7} {1} {2} ({3})' -f $row.Kind, $row.Id, $row.Version, $row.Licence) }
     Write-Host ("{0}  {1:N1} MB" -f $zipPath, ((Get-Item -LiteralPath $zipPath).Length / 1MB))
     Write-Host ("  {0} NuGet packages ({1} MB), {2} wheels for CPython {3}, licences for all {4}" -f $nupkgs.Count, $tokens['nuget-mb'], $wheels.Count, $pyMinor, $rows.Count)
     Write-Host "  .NET SDK $sdk (runtime $runtime), Python $pyVersion, PowerShell $pwshVersion"
