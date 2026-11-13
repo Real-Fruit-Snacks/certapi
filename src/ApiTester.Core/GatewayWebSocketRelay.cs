@@ -136,11 +136,27 @@ public sealed class GatewayWebSocketRelay
     /// cannot be told anything, and failing to say so is not a second failure worth reporting.</summary>
     private static async Task TryCloseAsync(WebSocket client, WebSocketCloseStatus status, string reason, CancellationToken ct)
     {
-        try { await client.CloseOutputAsync(status, reason, ct); }
-        catch (WebSocketException) { }
-        catch (OperationCanceledException) { }
-        catch (ObjectDisposedException) { }
+        try
+        {
+            await client.CloseOutputAsync(status, reason, ct);
+            // Give the frame time to reach the browser, and the browser time to answer it, before
+            // the caller disposes the connection: disposed at once, http.sys can drop the frame and
+            // the browser sees a reset with no reason at all.
+            using var linger = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            linger.CancelAfter(CloseLinger);
+            var buffer = new byte[256];
+            while (client.State == WebSocketState.CloseSent)
+            {
+                var r = await client.ReceiveAsync(buffer, linger.Token);
+                if (r.MessageType == WebSocketMessageType.Close) break;
+            }
+        }
+        catch (Exception ex) when (ex is WebSocketException or OperationCanceledException or ObjectDisposedException
+                                       or IOException or InvalidOperationException or System.Net.HttpListenerException) { }
     }
+
+    /// <summary>How long a failed upgrade's close frame is given to reach the browser.</summary>
+    internal static TimeSpan CloseLinger { get; set; } = TimeSpan.FromSeconds(2);
 
     /// <summary>The failure as a close reason. A close description may not exceed 123 UTF-8 bytes
     /// (RFC 6455 §5.5) and an over-long one throws instead of closing, so the reason is trimmed to

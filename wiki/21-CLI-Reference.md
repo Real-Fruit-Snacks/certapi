@@ -1132,6 +1132,7 @@ Accepts the [certificate](#certificate-options) and [transport](#transport-optio
 | `--cert <thumbprint or subject>` | none | The certificate every tool uses. **Pinned at startup — the agent cannot change it**, which is the security model: the agent chooses requests, you choose the identity |
 | `--allow <host>` | any host, with a warning | An allowed upstream host. **Repeatable, and the allowlist is the boundary**: a URL must match one of these or be a subdomain of it, so an agent cannot be talked into calling somewhere else. Without `--allow` every host is allowed and the startup line says so |
 | `--timeout <seconds>` | `100` | Upstream timeout for `send_request`; a saved request may carry its own |
+| `--max-body <size>` | `1m` | The most of a response body a tool result carries; the rest is not read, and the result says `"truncated": true`. `k`/`m`/`g` suffixes |
 | `--workspace <file>` | live state | Load saved requests, environments and chains from a workspace file, so the agent can run things you prepared |
 | `--no-auto-token` | off | Do not capture or reuse bearer tokens across the session's calls |
 | `--protoset <file>` | reflection | Compiled descriptor set for `grpc_list`/`grpc_call` against a service without reflection |
