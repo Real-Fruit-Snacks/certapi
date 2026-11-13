@@ -65,9 +65,9 @@ Write-Host 'Toolchain'
 Say 'ok' "PowerShell $($PSVersionTable.PSVersion) ($($PSVersionTable.PSEdition))"
 
 # --- .NET SDK --------------------------------------------------------------------------------
-# global.json asks for a 9.0 SDK, 9.0.320 or later. The kit's runtime packs and its ILLink package
+# global.json asks for a 10.0 SDK, 10.0.404 or later. The kit's runtime packs and its ILLink package
 # are the runtime the kit's SDK bundles, and an SDK restores the ones for its own runtime, so the
-# SDK must be one that bundles the same runtime: the kit's SDK, or another 9.0 SDK from the same
+# SDK must be one that bundles the same runtime: the kit's SDK, or another 10.0 SDK from the same
 # release.
 $dotnetOk = $false
 if (-not (Get-Command dotnet -ErrorAction SilentlyContinue)) {

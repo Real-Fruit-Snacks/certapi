@@ -28,7 +28,7 @@ The short version:
 | | |
 |---|---|
 | **Platform** | Windows 10 / 11 (x64) |
-| **Runtime** | .NET 9 (bundled in the self-contained builds — nothing to install) |
+| **Runtime** | .NET 10 (bundled in the self-contained builds — nothing to install) |
 | **Two front ends** | `ApiTester.App.exe` (GUI — graphical user interface) and `certapi.exe` (CLI) — same engine |
 | **Signature feature** | Client-certificate (mTLS) auth from the Windows store or a file |
 | **License** | See `LICENSE` in the repository |

@@ -129,7 +129,7 @@ public class SecretProtectionTests
     [Fact]
     public void Default_protector_is_available_and_round_trips_on_this_windows_test_machine()
     {
-        // The test suite targets net9.0-windows and runs on Windows CI/dev machines only, so
+        // The test suite targets net10.0-windows and runs on Windows CI/dev machines only, so
         // asserting IsAvailable directly (rather than skipping) is safe here.
         Assert.True(SecretProtection.Default.IsAvailable);
 

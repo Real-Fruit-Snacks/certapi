@@ -19,23 +19,23 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Set up .NET 9
+      - name: Set up .NET 10
         uses: actions/setup-dotnet@v6
         with:
-          dotnet-version: "9.0.x"
+          dotnet-version: "10.0.x"
 
-      # The release stops when the exes would bundle an older runtime than the newest 9.0 patch;
+      # The release stops when the exes would bundle an older runtime than the newest 10.0 patch;
       # this says so here first, as a warning, so it is not news on release day.
       - name: Runtime the exes would bundle
         shell: pwsh
         run: |
-          $latest = [version](Invoke-RestMethod https://builds.dotnet.microsoft.com/dotnet/release-metadata/9.0/releases.json).'latest-runtime'
+          $latest = [version](Invoke-RestMethod https://builds.dotnet.microsoft.com/dotnet/release-metadata/10.0/releases.json).'latest-runtime'
           $out = dotnet msbuild src/ApiTester.Cli/ApiTester.Cli.csproj -nologo -t:ProcessFrameworkReferences -getItem:RuntimePack `
             -p:Configuration=Release -p:RuntimeIdentifier=win-x64 -p:SelfContained=true | Out-String
           $json = $out.Substring($out.IndexOf('{'), $out.LastIndexOf('}') - $out.IndexOf('{') + 1)
           $pack = @(($json | ConvertFrom-Json).Items.RuntimePack | Where-Object Identity -eq 'Microsoft.NETCore.App.Runtime.win-x64')
           $bundled = [version]$pack[0].NuGetPackageVersion
-          Write-Host "A release built now bundles .NET runtime $bundled (newest 9.0 patch: $latest, SDK $(dotnet --version))"
+          Write-Host "A release built now bundles .NET runtime $bundled (newest 10.0 patch: $latest, SDK $(dotnet --version))"
           if ($bundled -lt $latest) { Write-Host "::warning::A release built now would bundle .NET $bundled; $latest is out, and the release workflow will refuse it." }
         continue-on-error: true
 

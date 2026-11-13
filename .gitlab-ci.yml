@@ -1,11 +1,11 @@
 # GitLab CI for building certapi on a self-hosted GitLab.
 #
-# Why Windows: the desktop app is WPF (net9.0-windows) and can only be built on
+# Why Windows: the desktop app is WPF (net10.0-windows) and can only be built on
 # Windows, so the build/publish jobs need a runner tagged `windows` that has the
-# .NET 9 SDK installed. The docs `pages` job is platform-agnostic.
+# .NET 10 SDK installed. The docs `pages` job is platform-agnostic.
 #
 # Self-hosted runner notes:
-#   1. Use a runner image that already contains the .NET 9 SDK.
+#   1. Use a runner image that already contains the .NET 10 SDK.
 #   2. To restore from your own package feed, commit a nuget.config whose
 #      <packageSources> points at your internal mirror; NUGET_PACKAGES (below)
 #      caches the restored packages between runs.

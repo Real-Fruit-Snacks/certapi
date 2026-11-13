@@ -286,7 +286,7 @@ Invoke-Check 'Machine' {
     Info ("{0} (build {1}) | PowerShell {2} | .NET SDK {3} | elevated: {4} | console code pages: input {5}, output {6}" -f
         $os.Caption, $os.BuildNumber, $PSVersionTable.PSVersion, $dn, $IsElevated, $StartPages.In, $StartPages.Out)
 }
-if (-not $Dotnet) { throw 'The .NET SDK (dotnet) is not on PATH; install the .NET 9 SDK and run again.' }
+if (-not $Dotnet) { throw 'The .NET SDK (dotnet) is not on PATH; install the .NET 10 SDK and run again.' }
 
 Invoke-Check 'Left behind by an earlier run that was cut off' {
     $notes = @()
@@ -697,7 +697,7 @@ if (-not $Network) {
         $notes = @("certapi.exe with msquic.dll beside it: $alone")
         # The same code, framework-dependent, on the installed .NET runtime: if this works and
         # the exe does not, the single-file packaging is what lost QUIC.
-        $dll = Join-Path $Repo 'src\ApiTester.Cli\bin\Release\net9.0-windows\certapi.dll'
+        $dll = Join-Path $Repo 'src\ApiTester.Cli\bin\Release\net10.0-windows\certapi.dll'
         if (Test-Path $dll) { $notes += "the same build on the installed .NET (dotnet certapi.dll): " + (Try-H3 $Dotnet.Source @($dll)) }
         $runtimeQuic = @(Get-ChildItem (Join-Path $env:ProgramFiles 'dotnet\shared\Microsoft.NETCore.App') -Recurse -Filter 'msquic.dll' -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName })
         $notes += "msquic.dll in the installed .NET runtime: " + $(if ($runtimeQuic.Count) { $runtimeQuic -join ', ' } else { 'none' })

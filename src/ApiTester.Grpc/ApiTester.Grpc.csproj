@@ -7,7 +7,7 @@
        no-new-dependencies rule bends here and nowhere else. -->
 
   <PropertyGroup>
-    <TargetFramework>net9.0</TargetFramework>
+    <TargetFramework>net10.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <RootNamespace>ApiTester.Grpc</RootNamespace>

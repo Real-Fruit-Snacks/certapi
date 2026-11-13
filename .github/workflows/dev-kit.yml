@@ -41,12 +41,12 @@ jobs:
         with:
           ref: ${{ inputs.ref }}
 
-      # The same toolchain as the build-and-test job and the release: the newest .NET 9 SDK, and
+      # The same toolchain as the build-and-test job and the release: the newest .NET 10 SDK, and
       # the Python the seal job uses. The kit names these exact versions.
-      - name: Set up .NET 9
+      - name: Set up .NET 10
         uses: actions/setup-dotnet@v6
         with:
-          dotnet-version: "9.0.x"
+          dotnet-version: "10.0.x"
 
       - name: Set up Python
         uses: actions/setup-python@v7

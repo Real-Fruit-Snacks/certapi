@@ -4,7 +4,7 @@ Issues and pull requests are welcome. This is a one-maintainer project, so small
 
 ## Before a pull request
 
-- Build and test on Windows; the app is WPF and the test project targets `net9.0-windows`.
+- Build and test on Windows; the app is WPF and the test project targets `net10.0-windows`.
   `dotnet build -warnaserror` then `dotnet test --filter "Category!=StoreRoundTrip"`.
 - `StoreRoundTrip` tests touch the real certificate store and `TlsBinding` tests touch `netsh` bindings; both are opt-in and must stay that way.
 - The `serve --vhost` tests skip themselves in a prompt that cannot bind `http://+:<port>/`; run elevated to include them (CI always does). Mark a new test that binds every interface `[WildcardBindingFact]`.
@@ -23,7 +23,7 @@ Issues and pull requests are welcome. This is a one-maintainer project, so small
 
 Each release has `certapi-<version>-dev-windows-x64.zip`, a dev kit for a Windows x64 machine with no network. It unzips to one folder, `certapi-<version>-dev\`: the repository at the tag (no `.git`) and `offline\`, with every NuGet package that the solution, the self-contained publish of the app and `certapi`, and the local tool (Stryker.NET) restore, the .NET runtime packs among them; the wheels `docs/art/requirements.txt` names; the licence of each; and `setup.ps1`.
 
-1. From a machine that can download, install what the kit does not carry: the [.NET 9 SDK](https://dotnet.microsoft.com/download/dotnet/9.0) and, for the seal only, [Python 3.13](https://www.python.org/downloads/windows/). The kit's `offline\README.md` names the exact versions CI used and links their offline installers. The SDK has to bundle the same .NET runtime as the kit's runtime packs, so take the one it names. Windows PowerShell 5.1 runs the setup; git and Visual Studio are not needed.
+1. From a machine that can download, install what the kit does not carry: the [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0) and, for the seal only, [Python 3.13](https://www.python.org/downloads/windows/). The kit's `offline\README.md` names the exact versions CI used and links their offline installers. The SDK has to bundle the same .NET runtime as the kit's runtime packs, so take the one it names. Windows PowerShell 5.1 runs the setup; git and Visual Studio are not needed.
 2. In the kit: `powershell -ExecutionPolicy Bypass -File offline\setup.ps1`. It says what is missing, writes a `nuget.config` with the kit as the only package source, restores everything from it, and makes `.venv` for `docs/art` with a `pip.ini` that keeps pip offline. It needs no network.
 3. Build, test and publish as CI does; `setup.ps1` prints the commands.
 

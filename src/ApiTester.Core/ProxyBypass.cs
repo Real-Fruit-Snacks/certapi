@@ -108,7 +108,12 @@ public sealed record ProxyBypassRule
 
         if (hostPart.Contains('/'))
         {
-            if (!IPNetwork.TryParse(hostPart, out var network))
+            // .NET 10 parses "10.0.0.5/8" by clearing the host bits, where .NET 9 refused it; an
+            // entry whose address is not the network's own base is still refused, so a typo does
+            // not quietly widen to the whole /8.
+            if (!IPNetwork.TryParse(hostPart, out var network) ||
+                !IPAddress.TryParse(hostPart[..hostPart.IndexOf('/')], out var written) ||
+                !written.Equals(network.BaseAddress))
             {
                 problem = $"'{trimmed}' is not a valid network range — write it with its prefix length and " +
                            "host bits clear, e.g. 10.0.0.0/8";

@@ -268,7 +268,7 @@ public class McpProtocolTests
     }
 
     [Fact]
-    public void A_ping_is_answered_while_a_call_runs_and_a_cancelled_call_answers_nothing()
+    public async Task A_ping_is_answered_while_a_call_runs_and_a_cancelled_call_answers_nothing()
     {
         var started = new ManualResetEventSlim();
         bool sawCancellation = false;
@@ -296,12 +296,12 @@ public class McpProtocolTests
         Assert.True(sawCancellation);
 
         input.End();
-        Assert.True(run.Wait(TimeSpan.FromSeconds(10)));
+        await run.WaitAsync(TimeSpan.FromSeconds(10));
         Assert.Empty(output.Lines);
     }
 
     [Fact]
-    public void End_of_input_cancels_a_call_that_outlives_the_grace_period()
+    public async Task End_of_input_cancels_a_call_that_outlives_the_grace_period()
     {
         var started = new ManualResetEventSlim();
         bool sawCancellation = false;
@@ -322,7 +322,7 @@ public class McpProtocolTests
 
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();
         input.End();
-        Assert.True(run.Wait(TimeSpan.FromSeconds(10)));
+        await run.WaitAsync(TimeSpan.FromSeconds(10));
         Assert.True(stopwatch.Elapsed < TimeSpan.FromSeconds(5));
         Assert.True(sawCancellation);
         Assert.Empty(output.Lines);

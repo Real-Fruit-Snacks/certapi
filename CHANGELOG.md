@@ -6,8 +6,11 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
-Fixes from a security audit of `certapi mcp` and `certapi serve`. Some defaults are stricter; the
-**Changed** list says what a working setup may notice.
+## [1.97.0] - 2026-11-13
+
+Fixes from a security audit of `certapi mcp` and `certapi serve`, and a move to .NET 10: .NET 9
+reached end of support on 2026-11-10 and gets no more security fixes. Some defaults are stricter;
+the **Changed** list says what a working setup may notice.
 
 ### Security
 - `mcp`: the `vars` argument of `run_saved` and `run_chain` can no longer change a saved request's
@@ -66,6 +69,11 @@ Fixes from a security audit of `certapi mcp` and `certapi serve`. Some defaults 
   body, marked `"truncated": true`. The rest is never read.
 
 ### Changed
+- Built on .NET 10 (LTS, supported to November 2028). The self-contained downloads bundle .NET
+  runtime 10.0.15; building from source needs the .NET 10 SDK, 10.0.404 or later.
+- The mutation-testing tool is Stryker.NET 5.1.0, the first release that runs on .NET 10.
+- A `--noproxy` range with host bits set (`10.0.0.5/8`) is still refused on .NET 10, which would
+  otherwise read it as `10.0.0.0/8`.
 - `mcp --allow` takes a bare host name or IP address; an empty value, a scheme, port, path,
   wildcard or comma stops the launch.
 - `mcp` writes its notes to stderr as well as sending them as log notifications.
@@ -3286,7 +3294,8 @@ Initial release.
 - Save any response (including binary) to a file.
 - Self-contained single-file executable — no installer, no admin rights, no runtime dependency.
 
-[Unreleased]: https://github.com/Real-Fruit-Snacks/certapi/compare/v1.96.3...HEAD
+[Unreleased]: https://github.com/Real-Fruit-Snacks/certapi/compare/v1.97.0...HEAD
+[1.97.0]: https://github.com/Real-Fruit-Snacks/certapi/compare/v1.96.3...v1.97.0
 [1.96.3]: https://github.com/Real-Fruit-Snacks/certapi/compare/v1.96.2...v1.96.3
 [1.96.2]: https://github.com/Real-Fruit-Snacks/certapi/compare/v1.96.1...v1.96.2
 [1.96.1]: https://github.com/Real-Fruit-Snacks/certapi/compare/v1.96.0...v1.96.1

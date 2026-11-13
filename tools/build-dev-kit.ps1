@@ -19,7 +19,7 @@
     Every version comes from where CI reads it: the PackageReferences in the projects,
     .config\dotnet-tools.json, docs\art\requirements.txt and docs\art\.python-version. The .NET SDK
     and the Python that run this script are the ones the kit names, so run it with the SDK CI uses
-    (the newest 9.0; global.json asks for 9.0.320 or later) and with Python 3.13.
+    (the newest 10.0; global.json asks for 10.0.404 or later) and with Python 3.13.
 
     Needs the network: nuget.org, pypi.org, the .NET release metadata and the SPDX licence texts.
     The work happens in a temporary folder that is removed at the end; packages are fetched into
@@ -190,7 +190,7 @@ try {
     Push-Location -LiteralPath $scratch
     try {
         $r = Invoke-Quiet 'dotnet' @('--version')
-        if ($r.ExitCode -ne 0) { throw 'no .NET SDK that global.json accepts (a 9.0 SDK, 9.0.320 or later) is installed' }
+        if ($r.ExitCode -ne 0) { throw 'no .NET SDK that global.json accepts (a 10.0 SDK, 10.0.404 or later) is installed' }
         $sdk = $r.Output[0].Trim()
         Invoke-Native 'dotnet restore (solution)' { dotnet restore ApiTester.sln }
         foreach ($proj in 'src\ApiTester.App\ApiTester.App.csproj', 'src\ApiTester.Cli\ApiTester.Cli.csproj') {

@@ -28,7 +28,7 @@ works with no network once downloaded.
 | PowerShell | 5.1 (part of Windows) or {{pwsh}} | `setup.ps1` (either works) | [PowerShell {{pwsh}} for win-x64]({{pwsh-url}}) |
 | Edge WebView2 Runtime | {{webview2}} | The desktop app's Rendered view only; Windows 11 has it | [Evergreen Standalone Installer, x64]({{webview2-url}}) |
 
-The SDK has to be {{sdk}}, or another 9.0 SDK that bundles .NET runtime {{runtime}}: an SDK
+The SDK has to be {{sdk}}, or another 10.0 SDK that bundles .NET runtime {{runtime}}: an SDK
 restores the runtime packs and the ILLink package for its own runtime, and the kit has
 {{runtime}}'s. `setup.ps1` says so when the SDK does not match. Nothing else is needed: no Visual
 Studio, no git, no admin rights after the installers.

@@ -11,12 +11,12 @@
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <TargetFramework>net9.0-windows</TargetFramework>
+    <TargetFramework>net10.0-windows</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>certapi</AssemblyName>
     <RootNamespace>ApiTester.Cli</RootNamespace>
-    <Version>1.96.3</Version>
+    <Version>1.97.0</Version>
     <Product>certapi</Product>
     <Description>mTLS API client for the Windows certificate store</Description>
     <Authors>RFS</Authors>

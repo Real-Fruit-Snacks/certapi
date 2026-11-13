@@ -3,7 +3,7 @@
 ## Requirements
 
 - **Windows 10 or 11**, 64-bit.
-- Nothing else for the self-contained downloads — the .NET 9 runtime is bundled.
+- Nothing else for the self-contained downloads — the .NET 10 runtime is bundled.
 - The **Rendered website** view uses the Microsoft Edge **WebView2** runtime, which ships with
   Windows 11 and up-to-date Windows 10. If it's missing, only that one tab is affected; everything
   else works.
