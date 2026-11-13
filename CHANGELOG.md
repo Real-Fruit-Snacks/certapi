@@ -6,6 +6,72 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+Fixes from a security audit of `certapi mcp` and `certapi serve`. Some defaults are stricter; the
+**Changed** list says what a working setup may notice.
+
+### Security
+- `mcp`: the `vars` argument of `run_saved` and `run_chain` can no longer change a saved request's
+  scheme, host or port. An agent could send a saved request, with its saved bearer token, API key,
+  password or Windows sign-in, to a host of its choosing whenever `--allow` was missing or listed
+  more than one host. A saved request whose host only comes from `vars` is refused too.
+- `mcp`: a host refusal names the host only. It used to quote the resolved URL, which could hold a
+  secret variable's value.
+- `mcp`: a `Host` header that differs from the URL's host, and gRPC `host` metadata, are refused,
+  so a request cannot reach another name on a shared front end through the allow-list.
+- `mcp`: a `certapi.config.json` found by walking up from the working directory is no longer read.
+  An MCP host picks that directory, and a profile there could turn off certificate checks or add a
+  proxy. `--config`, `CERTAPI_CONFIG` and the per-user file still apply; the start-up line names
+  the file and what it changes, and `--insecure` prints its own warning.
+- `serve`: a WebSocket upgrade presents its site's own certificate, trust, revocation and Windows
+  sign-in settings. It used the gateway's defaults, so a site set to verify its server was not
+  verified for WebSockets under `--insecure`.
+- `serve`: `--cors` with no list (and so `--browser`) answers only pages on this machine
+  (`localhost`, `*.localhost`, loopback). It echoed any origin with credentials and answered the
+  Private Network Access question, so any web page could use the client certificate.
+- `serve`: requests and WebSocket upgrades from an origin the gateway does not accept, and
+  cross-site browser requests that are not page loads, are refused with 403 before anything is
+  forwarded. Only preflights were refused before.
+- `serve`: a loopback-only gateway answers 421 to a `Host` that is not a loopback address,
+  `localhost` or a `*.localhost` name, which stops DNS rebinding.
+- `serve`: an empty `--token` is a usage error. It satisfied the token requirement for anyone who
+  sent an empty header.
+- `serve`: `--windows-auth` cannot be combined with `--allow *`; a wildcard entry prints a warning.
+- `serve`: a dynamic target whose host is a configured site connects as that site.
+- `serve --record` redacts credential fields in JSON and form bodies, sent and received, and
+  credential query values in `Location` and the redirect address.
+- `serve --tls`: `netsh` is started from System32 by full path; the gateway's key file moves out of
+  the roaming profile and is encrypted for the Windows user; `--tls-untrust` also removes the copy
+  bound in `LocalMachine\My`.
+- Header values with CR, LF or NUL are refused everywhere a request is built (`send`, `run`, `mcp`,
+  `serve` header rules, routes files and profiles). They were written as extra header lines.
+- `mock`: a scenario's `bodyFile` must stay inside the scenario's folder; request bodies over 16 MB,
+  requests that take over 30 seconds to arrive, and more than 256 connections at once are dropped.
+
+### Fixed
+- `mcp` no longer exits on a JSON-RPC batch, a line that is not an object, or an unpaired surrogate
+  escape. A batch is answered with an array; a malformed message gets a JSON-RPC error.
+- `mcp` keeps reading while a tool runs: `ping` and listings are answered at once,
+  `notifications/cancelled` stops the call, and closing stdin ends the process within a few seconds.
+- `mcp` checks tool arguments against each tool's schema and reports a wrong type or an unknown
+  argument as a tool error that names the field.
+- `mcp`: an unknown tool is JSON-RPC error `-32602`; a request with an `id` and a `notifications/`
+  method gets `-32601`; an `id` that is not a string or an integer, or a missing `"jsonrpc":"2.0"`,
+  is `-32600`; a byte-order mark before the first line is ignored.
+
+### Added
+- `mcp` speaks MCP revision 2026-07-28 alongside the handshake revisions (now through 2025-11-25):
+  `server/discover`, the per-request `_meta` protocol version, `-32022` for an unsupported version,
+  `resultType`, `ttlMs` and `cacheScope`, per-request log levels, `resources/templates/list`.
+- `mcp --max-body <size>` (default 1 MB): a tool result carries at most this much of a response
+  body, marked `"truncated": true`. The rest is never read.
+
+### Changed
+- `mcp --allow` takes a bare host name or IP address; an empty value, a scheme, port, path,
+  wildcard or comma stops the launch.
+- `mcp` writes its notes to stderr as well as sending them as log notifications.
+- `serve --cors` without a list no longer answers public origins: list them, e.g.
+  `--cors https://app.example`.
+
 ## [1.96.3] - 2026-11-06
 
 `certapi doctor` now agrees with `send` about hosts that `NO_PROXY` lists. The desktop app has no

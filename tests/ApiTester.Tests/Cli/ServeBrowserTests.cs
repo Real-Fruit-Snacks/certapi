@@ -88,10 +88,10 @@ public class ServeBrowserTests
 
             using var http = NewClient();
             var resp = await Poll(() => http.SendAsync(
-                Preflight(serve.Origin, "https://app.example", "PUT", "authorization, x-trace")));
+                Preflight(serve.Origin, "http://localhost:3000", "PUT", "authorization, x-trace")));
 
             Assert.Equal(HttpStatusCode.NoContent, resp.StatusCode);
-            Assert.Equal(new[] { "https://app.example" }, HeaderValues(resp, "Access-Control-Allow-Origin"));
+            Assert.Equal(new[] { "http://localhost:3000" }, HeaderValues(resp, "Access-Control-Allow-Origin"));
             Assert.Equal(new[] { "PUT" }, HeaderValues(resp, "Access-Control-Allow-Methods"));
             Assert.Equal(new[] { "authorization, x-trace" }, HeaderValues(resp, "Access-Control-Allow-Headers"));
             Assert.Equal(new[] { "true" }, HeaderValues(resp, "Access-Control-Allow-Credentials"));
@@ -111,10 +111,10 @@ public class ServeBrowserTests
         {
             await using var api = await LoopbackMtlsServer.StartEchoAsync(server, client.Thumbprint!);
             await using var serve = ServeHost.Start(client,
-                "--upstream", $"/={api.BaseUrl}", "--cors", "https://app.example");
+                "--upstream", $"/={api.BaseUrl}", "--cors", "http://localhost:3000");
 
             using var http = NewClient();
-            var listed = await Poll(() => http.SendAsync(Preflight(serve.Origin, "https://app.example")));
+            var listed = await Poll(() => http.SendAsync(Preflight(serve.Origin, "http://localhost:3000")));
             var stranger = await http.SendAsync(Preflight(serve.Origin, "https://evil.example"));
 
             Assert.Equal(HttpStatusCode.NoContent, listed.StatusCode);
@@ -136,10 +136,10 @@ public class ServeBrowserTests
 
             using var http = NewClient();
             var resp = await Poll(() => http.SendAsync(
-                Preflight(serve.Origin, "https://app.example", privateNetwork: true)));
+                Preflight(serve.Origin, "http://localhost:3000", privateNetwork: true)));
 
             Assert.Equal(HttpStatusCode.NoContent, resp.StatusCode);
-            Assert.Equal(new[] { "https://app.example" }, HeaderValues(resp, "Access-Control-Allow-Origin"));
+            Assert.Equal(new[] { "http://localhost:3000" }, HeaderValues(resp, "Access-Control-Allow-Origin"));
             Assert.Equal(new[] { "true" }, HeaderValues(resp, "Access-Control-Allow-Private-Network"));
         }
     }
@@ -152,11 +152,11 @@ public class ServeBrowserTests
         {
             string unreachable = $"https://127.0.0.1:{FreePort()}";
             await using var serve = ServeHost.Start(client,
-                "--upstream", $"/={unreachable}", "--cors", "https://app.example");
+                "--upstream", $"/={unreachable}", "--cors", "http://localhost:3000");
 
             using var http = NewClient();
             var allowed = await Poll(() => http.SendAsync(
-                Preflight(serve.Origin, "https://app.example", privateNetwork: true)));
+                Preflight(serve.Origin, "http://localhost:3000", privateNetwork: true)));
             var stranger = await http.SendAsync(
                 Preflight(serve.Origin, "https://evil.example", privateNetwork: true));
 
@@ -182,7 +182,7 @@ public class ServeBrowserTests
             await using var serve = ServeHost.Start(client, "--upstream", $"/={unreachable}", "--cors");
 
             using var http = NewClient();
-            var resp = await Poll(() => http.SendAsync(Preflight(serve.Origin, "https://app.example")));
+            var resp = await Poll(() => http.SendAsync(Preflight(serve.Origin, "http://localhost:3000")));
 
             Assert.Equal(HttpStatusCode.NoContent, resp.StatusCode);
             Assert.Empty(HeaderValues(resp, "Access-Control-Allow-Private-Network"));
@@ -204,7 +204,7 @@ public class ServeBrowserTests
                 new[] { "--upstream", $"/={unreachable}", "--cors" }.Concat(maxAgeArgs).ToArray());
 
             using var http = NewClient();
-            var resp = await Poll(() => http.SendAsync(Preflight(serve.Origin, "https://app.example")));
+            var resp = await Poll(() => http.SendAsync(Preflight(serve.Origin, "http://localhost:3000")));
 
             Assert.Equal(new[] { expected }, HeaderValues(resp, "Access-Control-Max-Age"));
         }
@@ -258,14 +258,14 @@ public class ServeBrowserTests
             HttpRequestMessage FromApp()
             {
                 var m = new HttpRequestMessage(HttpMethod.Get, $"{serve.Origin}/orders");
-                m.Headers.Add("Origin", "https://app.example");
+                m.Headers.Add("Origin", "http://localhost:3000");
                 return m;
             }
             var resp = await Poll(() => http.SendAsync(FromApp()));
 
             // Two allow-origin values is a hard browser failure, not a warning: the upstream's own
             // must be gone, and exactly the caller's origin left in its place.
-            Assert.Equal(new[] { "https://app.example" }, HeaderValues(resp, "Access-Control-Allow-Origin"));
+            Assert.Equal(new[] { "http://localhost:3000" }, HeaderValues(resp, "Access-Control-Allow-Origin"));
             Assert.Equal(new[] { "true" }, HeaderValues(resp, "Access-Control-Allow-Credentials"));
         }
     }
@@ -373,7 +373,7 @@ public class ServeBrowserTests
             HttpRequestMessage FromApp()
             {
                 var m = new HttpRequestMessage(HttpMethod.Get, $"{serve.Origin}/orders");
-                m.Headers.Add("Origin", "https://app.example");
+                m.Headers.Add("Origin", "http://localhost:3000");
                 return m;
             }
             var resp = await Poll(() => http.SendAsync(FromApp()));

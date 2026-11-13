@@ -35,13 +35,13 @@ public sealed class GatewayWebSocketRelay
         "TE", "Trailer"
     };
 
-    private readonly Func<Uri, HttpMessageInvoker> _invokerFor;
+    private readonly Func<Uri, GatewayRoute?, HttpMessageInvoker> _invokerFor;
     private readonly GatewayConnectionGuard? _guard;
 
     /// <summary>The pre-transport constructor, kept for callers that only have a certificate: the
     /// upstream is reached with the handler's defaults (system proxy, OS trust).</summary>
     public GatewayWebSocketRelay(X509Certificate2? clientCertificate, bool ignoreServerCertificateErrors)
-        : this(upstream => new HttpMessageInvoker(
+        : this((upstream, _) => new HttpMessageInvoker(
             MtlsGateway.CreateHandler(clientCertificate, ignoreServerCertificateErrors, transport: null, trustServerCertificate: null),
             disposeHandler: true))
     {
@@ -50,10 +50,11 @@ public sealed class GatewayWebSocketRelay
     /// <summary>Connect through the gateway's own handler for each upstream, so an upgrade is
     /// reached exactly the way a request to the same host is.</summary>
     public GatewayWebSocketRelay(MtlsGateway gateway)
-        : this(upstream => new HttpMessageInvoker(gateway.CreateHandlerFor(upstream), disposeHandler: true)) =>
+        : this((upstream, route) => new HttpMessageInvoker(
+            route is null ? gateway.CreateHandlerFor(upstream) : gateway.CreateHandlerFor(upstream, route), disposeHandler: true)) =>
         _guard = gateway.Guard;
 
-    private GatewayWebSocketRelay(Func<Uri, HttpMessageInvoker> invokerFor) => _invokerFor = invokerFor;
+    private GatewayWebSocketRelay(Func<Uri, GatewayRoute?, HttpMessageInvoker> invokerFor) => _invokerFor = invokerFor;
 
     /// <summary>Connect to <paramref name="upstream"/> and pump both directions until either side
     /// closes, then relay that close status and description to the other.</summary>
@@ -62,11 +63,17 @@ public sealed class GatewayWebSocketRelay
     /// <param name="requestHeaders">The browser's upgrade headers. Cookie, Authorization, Origin
     /// and anything custom travel with the upgrade — a cookie- or token-authenticated socket is
     /// the ordinary case behind a login the browser already completed through the gateway.</param>
-    public async Task RelayAsync(WebSocket client, Uri upstream, IReadOnlyList<string> subProtocols,
+    public Task RelayAsync(WebSocket client, Uri upstream, IReadOnlyList<string> subProtocols,
+        IReadOnlyList<KeyValuePair<string, string>> requestHeaders, CancellationToken ct) =>
+        RelayAsync(client, upstream, route: null, subProtocols, requestHeaders, ct);
+
+    /// <param name="route">The route the upgrade resolved to; its certificate, trust and sign-in
+    /// apply, exactly as for an HTTP request on that route. Null looks the site up by address.</param>
+    public async Task RelayAsync(WebSocket client, Uri upstream, GatewayRoute? route, IReadOnlyList<string> subProtocols,
         IReadOnlyList<KeyValuePair<string, string>> requestHeaders, CancellationToken ct)
     {
         var socket = new ClientWebSocket();
-        using var invoker = _invokerFor(upstream);
+        using var invoker = _invokerFor(upstream, route);
         try
         {
             // Asked for on the way out so the upstream can pick one and the browser's negotiated

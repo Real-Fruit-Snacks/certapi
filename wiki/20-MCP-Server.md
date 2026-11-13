@@ -46,7 +46,11 @@ stdio server. The agent then has a small, safe toolset for talking to your API.
 
 Bearer tokens seen in responses are captured in memory for the session and attached to later calls to
 the same host (like the app's automatic tokens), unless you pass `--no-auto-token`. Values captured
-by `run_saved` and `run_chain` resolve `{{variables}}` in later calls the same way. **Nothing is ever
+by `run_saved` and `run_chain` resolve `{{variables}}` in later calls the same way. The `vars`
+argument fills values into a saved request — an id, a query value — but cannot change its scheme,
+host or port: a call whose `vars` would send a saved request (with its saved credentials) somewhere
+else is refused. A saved request whose host only comes from `vars` is refused too; put the host in
+an environment. **Nothing is ever
 written back to disk** — the workspace is read once at launch, and the session's captures die with
 the process.
 
@@ -63,9 +67,22 @@ is shown as written. `list_saved` redacts each URL the same way.
 Tools carry the protocol's **behavioral annotations** (read-only, destructive, idempotent,
 open-world hints) so a host's permission model has something structured to act on, results include
 **structured content** alongside the text form, and server notes (tokens captured, assertions
-failed) arrive as **logging notifications** whose minimum level the host sets with
-`logging/setLevel`. Protocol revisions `2024-11-05` through `2025-06-18` are supported; an unknown
-client version is answered with the newest supported one rather than echoed.
+failed) are written to stderr, and also sent as **logging notifications** just before the response
+of the call that produced them. Arguments are checked against each tool's schema; a wrong type or an
+unknown argument is a tool error that names the field.
+
+The server is **dual-era**. A client that opens with `initialize` is served by revisions `2024-11-05`
+through `2025-11-25` (an unknown client version is answered with the newest of those, not echoed;
+`logging/setLevel` sets the notification level for the connection). A request that carries
+`io.modelcontextprotocol/protocolVersion` in its `_meta` is served by revision `2026-07-28`:
+`server/discover`, `resultType` and caching hints on every result, `-32022` for a version the
+server does not speak, and notifications only for a request that sets
+`io.modelcontextprotocol/logLevel`. Both can arrive on one process.
+
+Calls run one at a time, in order, but the server keeps reading while one runs:
+`notifications/cancelled` stops that call (and it answers nothing), and closing stdin gives queued
+work two seconds to finish before it is cancelled. A malformed line is answered with a JSON-RPC
+error; it never ends the session. A JSON-RPC batch (an array) is answered with an array.
 
 ## Guardrails
 
@@ -73,21 +90,38 @@ The point of `mcp` is to give an agent **capability without keys**:
 
 - **Pinned certificate** — `--cert` (or `--cert-file`) fixes the identity; the agent can't change it.
   A saved request that names its own certificate uses that one (an operator's earlier choice); one
-  that names none uses the pinned certificate.
+  that names none uses the pinned certificate. The same goes for a saved request's own "ignore
+  server certificate" setting and its Windows sign-in: they travel with the request, which is why
+  `vars` cannot move a saved request to another host.
 - **Host allowlist** — `--allow <host>` (repeatable). A request URL must match, or be a subdomain of,
-  an allowed host. Ports are ignored, and a URL that is not `http://` or `https://` is always
-  refused. **Omit `--allow` and any host is permitted — with a printed warning.** Always set
+  an allowed host. Give a bare host name or IP address: an empty value, a scheme, port, path,
+  wildcard or comma stops the launch with a usage error. Ports are ignored, and a URL that is not
+  `http://` or `https://` is always refused. A `Host` header that differs from the URL's host is
+  refused, as is gRPC `host` metadata, so the request cannot ask a shared front end for another
+  name. A refusal names the host only, never the resolved URL. **Omit `--allow` and any host is
+  permitted** — the start-up line on stderr says so, but an MCP host may never show it. Always set
   an allowlist for anything but local experimentation. Enforced per request, including every chain
   step and every gRPC call.
 - **Pinned trust, not blanket trust** — a host pinned with `certapi trust add` is reachable without
   `--insecure`, exactly as it is for `send`/`run`. `--insecure` remains the blunt launch-wide switch.
 - **No redirects** — a 3xx is returned as data, never followed, so the allowlist cannot be escaped
   by a server-controlled hop.
-- **No secrets in the transcript** — the agent asks the server to authenticate; the certificate and
-  captured tokens stay on your side. Resources and `list_saved` withhold auth secrets, secret
-  variable values, and credentials typed into headers, query strings and bodies.
+- **Saved secrets stay out of the transcript** — the agent asks the server to authenticate; the
+  certificate and the workspace's saved credentials stay on your side. Resources and `list_saved`
+  withhold auth secrets, secret variable values, and credentials typed into headers, query strings
+  and bodies. **What an upstream returns is not filtered**: response headers (including
+  `Set-Cookie`) and bodies (including any token a login returns) reach the agent as received, up to
+  `--max-body` (1 MB by default).
+- **Your config file is not picked up from the project folder** — `mcp` ignores a
+  `certapi.config.json` found by walking up from the working directory, which the MCP host chooses.
+  `--config`, `CERTAPI_CONFIG` and the per-user file still apply, and the start-up line names the
+  file and the settings it changes. `--insecure` adds a warning line of its own.
 - **Read-only against your files** — the workspace is never written back; captures and tokens live
   in memory for the session only.
+- **The app's logins come along by default** — without `--workspace` the desktop app's live
+  `state.json` is read, so the session starts with its stored tokens and browser-captured cookies
+  and attaches them to calls to the same origin. The agent never sees them but acts with them. For
+  an agent that is not fully trusted, pass a dedicated `--workspace` or `--no-auto-token`.
 
 ## Options
 
@@ -98,11 +132,12 @@ The point of `mcp` is to give an agent **capability without keys**:
 | `--store <location>` | `CurrentUser` (default) or `LocalMachine`, which searches both stores |
 | `--cert-issuer <name>` / `--cert-serial <hex>` | Pick the store certificate by issuer or serial number, as on [`send`](21-CLI-Reference.md#certificate-options) |
 | `--cert-pin <pin>` | Smart-card or HSM PIN, supplied ahead of the prompt (or `CERTAPI_CERT_PIN`) |
-| `--allow <host>` | Allowed upstream host (repeatable) |
+| `--allow <host>` | Allowed upstream host (repeatable): a bare host name or IP address (`[::1]` for IPv6) |
 | `--insecure` | Ignore upstream server-certificate errors (internal CAs — certificate authorities) |
 | `--timeout <seconds>` | Deadline for `send_request`, `grpc_list` and `grpc_call` (default 100; a saved request keeps its own saved timeout). A gRPC call past it returns a tool error instead of holding up later calls; a stream cut off this way still lists the messages it delivered |
-| `--workspace <file>` | Load saved requests / environments / chains from a workspace file (read once at launch). Without it, the app's live `state.json` is read |
-| `--no-auto-token` | Don't capture/reuse bearer tokens across the session |
+| `--workspace <file>` | Load saved requests / environments / chains from a workspace file (read once at launch). Without it, the app's live `state.json` is read, stored logins included |
+| `--no-auto-token` | Don't capture/reuse bearer tokens across the session, and don't attach the workspace's stored tokens or cookies |
+| `--max-body <size>` | Most of a response body a tool returns (default `1m`); the rest is not read and the result says `"truncated": true` |
 | `--protoset <file>` | Compiled descriptor set for `grpc_list`/`grpc_call` against a server without reflection — pinned at launch; the agent cannot name files |
 | `--proxy` / `--proxy-user` / `--no-proxy` / `--noproxy` | The same proxy control as [`send`](21-CLI-Reference.md#send), applied to every call the tools make |
 | `--revocation <mode>` / `--revocation-strict` | The same [revocation checking](06-Certificates-and-mTLS.md) as `send`, applied to every call |
@@ -113,7 +148,7 @@ The point of `mcp` is to give an agent **capability without keys**:
 ## Examples
 
 ```powershell
-certapi mcp --cert "CN=Agent Client" --allow api.example.com
+certapi mcp --no-config --cert "CN=Agent Client" --allow api.example.com
 certapi mcp --cert 4A8823… --allow api.example.com --allow auth.example.com --insecure
 certapi mcp --cert "CN=Agent Client" --allow api.example.com --workspace .\suite.json
 certapi mcp --cert "CN=Agent Client" --allow grpc.internal --protoset .\contracts.protoset
@@ -121,7 +156,8 @@ certapi mcp --cert "CN=Agent Client" --allow api.example.com --revocation online
 ```
 
 The server runs until stdin closes or Ctrl+C (a second Ctrl+C quits at once). A message without an
-`id` is a notification: nothing runs and nothing is answered. Exit 0 on a clean shutdown, 2 usage,
+`id` is a notification: nothing runs and nothing is answered. A request with an `id` and a
+`notifications/…` method is answered with "method not found". Exit 0 on a clean shutdown, 2 usage,
 3 data error.
 
 Next: [CLI Reference](21-CLI-Reference.md).

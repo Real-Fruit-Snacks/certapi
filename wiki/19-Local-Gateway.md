@@ -195,9 +195,9 @@ secret masked.
 | `--ca-file <pem>` | Trust the root(s) in this file on top of the Windows store. Repeatable |
 | `--revocation none\|offline\|online` | Check whether the upstream's certificate has been revoked by its issuer (default `none`) |
 | `--revocation-strict` | Treat an undeterminable revocation status as fatal; needs `--revocation offline` or `online` |
-| `--windows-auth` | Answer the upstream's Negotiate/NTLM challenge as you. Aliases `--ntlm`, `--negotiate` |
+| `--windows-auth` | Answer the upstream's Negotiate/NTLM challenge as you. Aliases `--ntlm`, `--negotiate`. Refused together with `--allow *`; a wildcard `--allow` entry prints a warning, since any host under it a caller names could ask for your sign-in. A dynamic target whose host is a configured site connects as that site |
 | `--windows-user` + `--windows-password` | Answer it as this account instead |
-| `--token <value>` | Require callers to send `Authorization: Bearer <value>` or `X-Certapi-Token: <value>` |
+| `--token <value>` | Require callers to send `Authorization: Bearer <value>` or `X-Certapi-Token: <value>`. An empty value is refused; under 16 characters prints a warning |
 | `--listen <address>` | Also answer on this address: an IP address, `0.0.0.0`, `::`, `+`, `*` or `localhost`. A loopback address (`127.0.0.1`, `::1`, `localhost`) needs no token and stays loopback-only, even under `--vhost`. Any other address needs `--token`. With `--tls` only `127.0.0.1` or `::1` is accepted |
 | `--timeout <seconds>` | How long to wait for the upstream's **response headers** (default 100). A body that streams longer is not cut off |
 | `--max-body <bytes>` | Refuse a request body over the limit with 413 (`k`/`m`/`g` suffixes) |
@@ -206,11 +206,11 @@ secret masked.
 | `--forwarded` | Add `X-Forwarded-For/Proto/Host` and `Via: 1.1 certapi` to forwarded requests |
 | `--workspace <file>` | Resolve a saved-website `<upstream>` from a workspace file |
 | `-q, --quiet` | No startup table, per-request log or notes; warnings and the health line still print ([the log](#the-request-log)) |
-| `--tls` | Serve the gateway itself over HTTPS on 127.0.0.1 with a generated gateway certificate, so `Secure` and `__Host-`/`__Secure-` cookies work. The certificate is cached in `%AppData%\CertApiTester\gateway-tls` and reused. Binding the port needs an elevated prompt the first time; the exact `netsh` command is printed if it isn't available. With `--vhost` the certificate also names the suffix, every site under it and each `--allow` host on its default https port. It is regenerated within 7 days of expiry, or when it lacks a name the run needs; that run moves the `127.0.0.1:<port>` binding to the new certificate (from an elevated prompt; otherwise it prints the `netsh` commands and stops). With `--tls-trust` the new root is installed and then the old one removed; without it, a note says to add `--tls-trust` once |
+| `--tls` | Serve the gateway itself over HTTPS on 127.0.0.1 with a generated gateway certificate, so `Secure` and `__Host-`/`__Secure-` cookies work. The certificate is cached in `%LocalAppData%\CertApiTester\gateway-tls` (out of the roaming profile, with the key file encrypted for your Windows account) and reused. `--tls-untrust` also removes the copy `--tls` installed in `LocalMachine\My`, from an elevated prompt. Binding the port needs an elevated prompt the first time; the exact `netsh` command is printed if it isn't available. With `--vhost` the certificate also names the suffix, every site under it and each `--allow` host on its default https port. It is regenerated within 7 days of expiry, or when it lacks a name the run needs; that run moves the `127.0.0.1:<port>` binding to the new certificate (from an elevated prompt; otherwise it prints the `netsh` commands and stops). With `--tls-trust` the new root is installed and then the old one removed; without it, a note says to add `--tls-trust` once |
 | `--tls-trust` | Also install that certificate into `CurrentUser\Root` so the browser accepts it silently — explicit, logged, and reversible. Only with `--tls` |
 | `--tls-untrust` | Remove the current gateway certificate, and every earlier one this tool generated, from `CurrentUser\Root`, then exit; a standalone action. It does not remove the HTTP.sys port binding |
 | `--browser` | The bundle: the seven browser accommodations below at once |
-| `--cors [<origins>]` | Answer CORS (Cross-Origin Resource Sharing) preflights and add the headers a script needs; echoes the caller's `Origin` with no value, or takes an allowlist. Repeatable |
+| `--cors [<origins>]` | Answer CORS (Cross-Origin Resource Sharing) preflights and add the headers a script needs; with no value, for pages on this machine only (`localhost`, `*.localhost`, loopback), or for exactly the origins listed. Requests and upgrades from an origin it does not accept are refused. Repeatable |
 | `--cors-max-age <seconds>` | How long a browser may cache a preflight answer (default 600). Only with `--cors` (or `--browser`) |
 | `--rewrite-cookies` | Strip `Domain=` and `Secure` from each `Set-Cookie` and turn `SameSite=None` into `Lax`, so the browser stores the cookie against the gateway |
 | `--rewrite-location` | Bring a 3xx `Location` (and a `Refresh` header's URL) aimed at the upstream, another site or an allowed host back through the gateway |
@@ -368,8 +368,16 @@ usable on its own. `--cookie-jar` and `--auto-token` stay opt-in, because they m
 session state on your behalf.
 
 `--cors [<origins>]` answers a preflight at the gateway and adds the response headers a script needs
-in order to read the reply. With no value the caller's own `Origin` is echoed back; give it a
-comma-separated list to allow only those origins instead. See
+in order to read the reply. With no value it answers pages served from this machine — an origin on
+`localhost`, a `*.localhost` name or a loopback address — and never a public site; give it a
+comma-separated list to allow exactly those origins instead. The gateway's own origin is always
+allowed.
+
+A preflight protects only the requests that need one: a form `POST`, an image or a WebSocket from
+another site arrives without asking. So the gateway also refuses, with 403 and before anything is
+forwarded, any request or upgrade whose `Origin` it would not answer CORS for (with `--cors` off,
+anything but this machine's pages), and any request marked `Sec-Fetch-Site: cross-site` that is not
+a top-level page load. Programs such as `curl`, which send neither header, are not affected. See
 [Browsers and Private Network Access](#browsers-and-private-network-access), below, for the further
 check Chrome runs on top of CORS.
 
@@ -423,7 +431,10 @@ certapi serve https://api.internal --port 8443 --replay session.har
 `--record` redacts credential headers by default — `Authorization`, `Proxy-Authorization`,
 `Cookie`, `Set-Cookie`, `X-Api-Key`, `X-Auth-Token`, and any header named like a token, secret,
 password, API key, session or credential (CORS `Access-Control-*` headers and `WWW-Authenticate`
-are never redacted) — since a recording is a file people share; `--record-include-secrets` keeps them. `--replay` matches a request the way `mock --har`
+are never redacted) — since a recording is a file people share. Credential query values are
+redacted in the request address and in a redirect's `Location`, and credential fields (a password,
+`access_token`, `refresh_token`, a secret) in JSON and form bodies, sent and received, become
+`REDACTED`. The rest of each body is kept as it was. `--record-include-secrets` keeps everything. `--replay` matches a request the way `mock --har`
 does — method and path, query included when it disambiguates, in recorded order for a repeated
 call — and answers a path the session never saw with 404. The two flags are mutually exclusive:
 you cannot record a session you are inventing. Because the format is the same one `mock --har`
@@ -441,14 +452,23 @@ many bodies were left out. Replaying such an exchange answers with an empty body
 
 ## Browsers and Private Network Access
 
-Chrome runs a further check, PNA, before it lets a page on a public origin
-reach a private or loopback address at all: its preflight carries
-`Access-Control-Request-Private-Network: true`, and Chrome blocks the request unless the response
-answers `Access-Control-Allow-Private-Network: true`. `--cors` answers it, but only for an origin the
-same allowlist already accepts — an origin outside an explicit `--cors <origins>` list still gets a
-bare 403. Letting a public origin reach a loopback service at all is a real exposure even with PNA
-answered, which is why naming the origins you develop from with `--cors <origins>` is safer than
-leaving it echoing whoever asks.
+Browsers increasingly stop a page on a public site from reaching a loopback or private address.
+Chrome first did this with a preflight (Private Network Access: `Access-Control-Request-Private-Network:
+true`, answered with `Access-Control-Allow-Private-Network: true`) and, from Chrome 142, asks the user
+for permission instead ([Local Network Access](https://developer.chrome.com/blog/local-network-access)).
+The gateway does not rely on either. It answers the PNA question only for an origin it already
+accepts, it accepts no public origin unless you list it with `--cors <origins>`, and it refuses
+cross-site requests and upgrades from origins it does not accept (above).
+
+Two more protections hold whatever the browser does. A loopback-only gateway answers only requests
+whose `Host` is a loopback address, `localhost` or a `*.localhost` name, and answers anything else
+with 421 — this is what stops DNS rebinding, where an attacker's page makes its own name resolve to
+`127.0.0.1` and so becomes same-origin with the gateway. The same check keeps a web page from reading the gateway's
+own `/_certapi/routes` and `/_certapi/health`, or the detail in a 502 or 504 answer.
+
+**On a shared machine** — a remote-desktop or terminal server, a jump host — every account signed in
+to it can reach `127.0.0.1:<port>`, and so can use your client certificate through the gateway. Use
+`--token` there.
 
 ## Add a shared secret, share the gateway
 

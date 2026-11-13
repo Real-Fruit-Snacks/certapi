@@ -203,13 +203,38 @@ public static class LoopbackTlsBinding
         RunNetsh(DeleteArgs(port));
     }
 
+    /// <summary>System32's netsh.exe on Windows; elsewhere (tests) the bare name.</summary>
+    internal static string NetshPath =>
+        OperatingSystem.IsWindows() && Environment.SystemDirectory.Length > 0
+            ? Path.Combine(Environment.SystemDirectory, "netsh.exe")
+            : "netsh";
+
+    /// <summary>Removes the machine-store copy <see cref="Bind"/> installed for http.sys. Needs an
+    /// elevated prompt; returns false when there was none to remove or it could not be removed.</summary>
+    public static bool RemoveMachineCopy(string thumbprint)
+    {
+        if (!OperatingSystem.IsWindows()) return false;
+        try
+        {
+            using var store = new X509Store(StoreName.My, StoreLocation.LocalMachine);
+            store.Open(OpenFlags.ReadWrite);
+            var found = store.Certificates.Find(X509FindType.FindByThumbprint, NormalizeThumbprint(thumbprint), validOnly: false);
+            if (found.Count == 0) return false;
+            store.RemoveRange(found);
+            return true;
+        }
+        catch (Exception ex) when (ex is System.Security.Cryptography.CryptographicException or UnauthorizedAccessException) { return false; }
+    }
+
     private static (int ExitCode, string Stdout, string Stderr) RunNetsh(string arguments)
     {
         using var process = new Process
         {
             StartInfo = new ProcessStartInfo
             {
-                FileName = "netsh",
+                // By full path: a bare name is looked for in the current directory before System32,
+                // and this runs from an elevated prompt.
+                FileName = NetshPath,
                 Arguments = arguments,
                 UseShellExecute = false,
                 RedirectStandardOutput = true,

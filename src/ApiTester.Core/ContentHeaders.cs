@@ -16,8 +16,14 @@ public static class ContentHeaders
     {
         var forContent = new List<KeyValuePair<string, string>>();
         foreach (var h in headers)
+        {
+            // TryAddWithoutValidation writes a value exactly as given, so a CR or LF in it would
+            // become a further header line, or a whole second request on the connection.
+            if (HeaderValues.HasLineBreak(h.Value))
+                throw new ArgumentException($"the value of header '{h.Key}' contains a line break or NUL character");
             if (!message.Headers.TryAddWithoutValidation(h.Key, h.Value))
                 forContent.Add(h);
+        }
         return forContent;
     }
 
@@ -42,4 +48,16 @@ public static class ContentHeaders
             content.Headers.TryAddWithoutValidation(h.Key, h.Value);
         }
     }
+}
+
+/// <summary>The one rule every place that accepts a header value applies: CR, LF and NUL are
+/// refused, because the HTTP stack sends values as written.</summary>
+public static class HeaderValues
+{
+    public static bool HasLineBreak(string? value) =>
+        value is not null && value.AsSpan().IndexOfAny('\r', '\n', '\0') >= 0;
+
+    /// <summary>The problem to report for <paramref name="value"/>, or null when it may be sent.</summary>
+    public static string? Problem(string name, string? value) =>
+        HasLineBreak(value) ? $"the value of header '{name}' contains a line break or NUL character" : null;
 }

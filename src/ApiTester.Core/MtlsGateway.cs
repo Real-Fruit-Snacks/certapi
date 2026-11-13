@@ -21,8 +21,19 @@ public sealed class GatewayRouteNotFoundException(string target)
 /// <summary>Thrown when a dynamic target (<c>/_/https://host/…</c>) names a host outside the
 /// <c>--allow</c> list. Nothing is contacted: an allowlist that could be talked around would make
 /// the gateway an open proxy carrying the user's client certificate.</summary>
-public sealed class GatewayHostNotAllowedException(string host)
-    : Exception($"Upstream host '{host}' is not in the --allow list and was refused.");
+public class GatewayHostNotAllowedException : Exception
+{
+    public GatewayHostNotAllowedException(string host)
+        : base($"Upstream host '{host}' is not in the --allow list and was refused.") { }
+
+    protected GatewayHostNotAllowedException(string message, bool _) : base(message) { }
+}
+
+/// <summary>A dynamic target names a host that several configured sites front with different
+/// certificates or settings, so there is no one identity to connect as. Answered like any other
+/// refused host (403).</summary>
+public sealed class GatewaySiteAmbiguousException(string host)
+    : GatewayHostNotAllowedException($"Upstream host '{host}' is configured as more than one site with different identities; use the site's own mount.", true);
 
 /// <summary>Hop-by-hop headers that must never be forwarded through a proxy (RFC 7230 §6.1),
 /// plus Host/Content-Length which the HTTP client manages itself.</summary>
@@ -204,7 +215,8 @@ public sealed class MtlsGateway : IDisposable
     /// is handed a URL rather than a route, so this is how it connects as the right site.</summary>
     public GatewayRoute? SiteFor(Uri upstream)
     {
-        string authority = Authority(upstream);
+        // Sites are written as http(s):// upstreams; a ws(s):// address names the same authority.
+        string authority = Authority(HttpForm(upstream));
         foreach (var r in _routes.All)
             if (Authority(r.Upstream).Equals(authority, StringComparison.OrdinalIgnoreCase))
                 return r;
@@ -418,6 +430,15 @@ public sealed class MtlsGateway : IDisposable
 
     private static string Authority(Uri uri) => uri.GetLeftPart(UriPartial.Authority);
 
+    /// <summary>The http(s) form of a ws(s) address, so a WebSocket upgrade is matched to the site
+    /// that fronts the same authority.</summary>
+    private static Uri HttpForm(Uri uri) => uri.Scheme switch
+    {
+        "wss" => new UriBuilder(uri) { Scheme = Uri.UriSchemeHttps, Port = uri.IsDefaultPort ? -1 : uri.Port }.Uri,
+        "ws" => new UriBuilder(uri) { Scheme = Uri.UriSchemeHttp, Port = uri.IsDefaultPort ? -1 : uri.Port }.Uri,
+        _ => uri
+    };
+
     /// <summary>Where a request target goes: the static route that owns it, or — under
     /// <see cref="DynamicPrefix"/> with dynamic mode on — the upstream named in the path itself,
     /// presented as a synthetic route so Location and cookie rewriting work the same way. Null when
@@ -449,6 +470,16 @@ public sealed class MtlsGateway : IDisposable
 
             var baseUri = new Uri(upstream.GetLeftPart(UriPartial.Authority));
             var route = new GatewayRoute(DynamicPrefix + baseUri.GetLeftPart(UriPartial.Authority), baseUri);
+            // A host that is also a configured site connects as that site — its certificate, trust
+            // and sign-in — so the path a caller picks cannot choose a different identity for it.
+            // Sites that front one host with different identities leave no single answer: refused.
+            var sites = _routes.All.Where(r => Authority(r.Upstream).Equals(Authority(baseUri), StringComparison.OrdinalIgnoreCase)).ToList();
+            if (sites.Count > 0)
+            {
+                var identities = sites.Select(r => (r.Certificate?.Thumbprint ?? "") + "|" + (r.Settings?.PoolKey ?? "")).Distinct().Count();
+                if (identities > 1) throw new GatewaySiteAmbiguousException(upstream.Host);
+                route = route with { Certificate = sites[0].Certificate, Settings = sites[0].Settings, Name = sites[0].Name };
+            }
             forwardedPathAndQuery = path;
             target = Combine(baseUri, path);
             if (Authority(target) != Authority(baseUri)) throw new GatewayTargetException(pathAndQuery);
@@ -516,10 +547,15 @@ public sealed class MtlsGateway : IDisposable
 
     /// <summary>The handler the WebSocket relay should connect through to <paramref name="upstream"/>:
     /// identical configuration to the HTTP relay's, including the host's pin.</summary>
-    public SocketsHttpHandler CreateHandlerFor(Uri upstream)
+    public SocketsHttpHandler CreateHandlerFor(Uri upstream) => CreateHandlerFor(upstream, SiteFor(upstream));
+
+    /// <summary>The handler for a WebSocket to <paramref name="upstream"/> through the route the
+    /// request resolved to — the same route the HTTP relay would use, so two mounts on one host
+    /// each keep their own certificate and trust.</summary>
+    public SocketsHttpHandler CreateHandlerFor(Uri upstream, GatewayRoute? route)
     {
-        var (cert, insecure, transport, windowsAuth) = Effective(SiteFor(upstream));
-        return CreateHandler(cert, insecure, transport, _trustForHost?.Invoke(upstream.Host), windowsAuth, upstream, _guard,
+        var (cert, insecure, transport, windowsAuth) = Effective(route);
+        return CreateHandler(cert, insecure, transport, _trustForHost?.Invoke(upstream.Host), windowsAuth, HttpForm(upstream), _guard,
             systemProxy: _systemProxy);
     }
 

@@ -57,14 +57,15 @@ public class McpServerTests
     }
 
     [Fact]
-    public void Tools_call_marks_handler_errors_and_unknown_tools()
+    public void Tools_call_marks_handler_errors_and_refuses_unknown_tools()
     {
         var boom = Result(Server().HandleLine("""{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"boom","arguments":{}}}""")!);
         Assert.True(boom.GetProperty("isError").GetBoolean());
 
-        var unknown = Result(Server().HandleLine("""{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"ghost","arguments":{}}}""")!);
-        Assert.True(unknown.GetProperty("isError").GetBoolean());
-        Assert.Contains("ghost", unknown.GetProperty("content")[0].GetProperty("text").GetString());
+        // An unknown tool is a protocol error (-32602), as every revision since 2025-03-26 says.
+        using var unknown = JsonDocument.Parse(Server().HandleLine("""{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"ghost","arguments":{}}}""")!);
+        Assert.Equal(-32602, unknown.RootElement.GetProperty("error").GetProperty("code").GetInt32());
+        Assert.Contains("ghost", unknown.RootElement.GetProperty("error").GetProperty("message").GetString());
     }
 
     [Fact]

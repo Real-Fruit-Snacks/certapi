@@ -88,6 +88,15 @@ public sealed class GatewayRecorder
         string? responseOmitted = TooLarge(responseBody.LongLength, responseBodySize);
         HarPostData? postData = requestOmitted is null && requestBody.Length > 0 ? HarPostData.From(requestBody, requestContentType) : null;
         HarContent? content = responseOmitted is null ? BuildContent(responseBody, ContentTypeOf(responseHeaders)) : null;
+        // A recorded login holds the password it sent and the tokens it got back: credential fields
+        // in JSON and form bodies are redacted unless --record-include-secrets keeps them.
+        if (!_includeSecrets)
+        {
+            if (postData is { Encoding: null } sent)
+                sent.Text = MarkdownSecrets.RedactBody(sent.Text, requestContentType);
+            if (content is { Encoding: null } got)
+                got.Text = MarkdownSecrets.RedactBody(got.Text, ContentTypeOf(responseHeaders));
+        }
         // Charged by what keeping them costs: the text (or base64) the entry holds, as a string.
         requestOmitted ??= Charge(2L * (postData?.Text?.Length ?? 0), heldReservation);
         responseOmitted ??= Charge(2L * (content?.Text?.Length ?? 0), heldReservation);
@@ -118,8 +127,8 @@ public sealed class GatewayRecorder
                 Content = responseOmitted is not null
                     ? new HarContent { Size = responseBodySize ?? responseBody.LongLength, MimeType = ContentTypeOf(responseHeaders) ?? "", Text = "", Comment = responseOmitted }
                     : content!,   // built whenever the body was not left out
-                RedirectUrl = responseHeaders.FirstOrDefault(h =>
-                    h.Key.Equals("Location", StringComparison.OrdinalIgnoreCase)).Value ?? ""
+                RedirectUrl = HarWriter.RecordedUrl(responseHeaders.FirstOrDefault(h =>
+                    h.Key.Equals("Location", StringComparison.OrdinalIgnoreCase)).Value ?? "", _includeSecrets)
             },
             Timings = new HarTimings { Wait = elapsedMs, Send = -1, Receive = -1 }
         };
@@ -180,10 +189,18 @@ public sealed class GatewayRecorder
             // secrets, stripped by default and kept only under --record-include-secrets. Framing
             // headers a replay must not carry are dropped either way, matching HarReplaySource.
             .Where(h => !FramingHeaders.Contains(h.Key, StringComparer.OrdinalIgnoreCase))
-            .Select(h => _includeSecrets || !SecretHeaders.IsSecret(h.Key)
+            .Select(h => _includeSecrets
                 ? new HarNameValue(h.Key, h.Value)
-                : new HarNameValue(h.Key, "REDACTED"))
+                : SecretHeaders.IsSecret(h.Key)
+                    ? new HarNameValue(h.Key, "REDACTED")
+                    // An address a redirect or refresh points at carries tokens in its query
+                    // (?code=, ?token=) as often as the request's own address does.
+                    : UrlHeaders.Contains(h.Key, StringComparer.OrdinalIgnoreCase)
+                        ? new HarNameValue(h.Key, HarWriter.RecordedUrl(h.Value, false))
+                        : new HarNameValue(h.Key, h.Value))
             .ToList();
+
+    private static readonly string[] UrlHeaders = { "Location", "Content-Location", "Refresh", "Referer" };
 
     private static readonly string[] FramingHeaders = { "Transfer-Encoding", "Connection", "Content-Length" };
 

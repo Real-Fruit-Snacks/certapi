@@ -93,6 +93,11 @@ public sealed record TransportOptions
     /// <summary>The first backoff delay; each further attempt doubles it, with jitter, capped at 30s.</summary>
     public TimeSpan RetryDelay { get; init; } = TimeSpan.FromMilliseconds(500);
 
+    /// <summary>Keep at most this many bytes of a response body; the rest is not read. Null — every
+    /// existing caller — keeps the whole body. The MCP server sets it so one large answer cannot
+    /// exhaust memory or flood the agent's context.</summary>
+    public long? MaxResponseBytes { get; init; }
+
     /// <summary>Retry connection refused/reset, DNS failures, and timeouts.</summary>
     public bool RetryOnTransportError { get; init; } = true;
 

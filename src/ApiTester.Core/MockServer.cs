@@ -168,6 +168,18 @@ public sealed class MockServer : IAsyncDisposable
         return new MockServer(listener, actualPort, tls, serverCert, onRequest, replay, scenario);
     }
 
+    /// <summary>The largest request body the mock reads; a larger one closes the connection.</summary>
+    internal const int MaxRequestBody = 16 * 1024 * 1024;
+
+    /// <summary>How long a client has to send its request (or finish a TLS handshake) before the
+    /// connection is dropped, so a client that sends headers and stalls cannot hold it forever.</summary>
+    internal static TimeSpan RequestReadTimeout { get; set; } = TimeSpan.FromSeconds(30);
+
+    /// <summary>Connections served at once; more are closed as they arrive.</summary>
+    internal const int MaxConnections = 256;
+
+    private readonly SemaphoreSlim _connectionSlots = new(MaxConnections, MaxConnections);
+
     private async Task AcceptLoopAsync()
     {
         try
@@ -185,11 +197,12 @@ public sealed class MockServer : IAsyncDisposable
                         await Task.Delay(100, _cts.Token);
                     continue;
                 }
+                if (!_connectionSlots.Wait(0)) { client.Dispose(); continue; }
                 var handler = Task.Run(async () =>
                 {
                     try { await HandleAsync(client, _cts.Token); }
                     catch { /* a broken connection must not take the server down */ }
-                    finally { client.Dispose(); }
+                    finally { client.Dispose(); _connectionSlots.Release(); }
                 });
                 _handlers.TryAdd(handler, 0);
                 _ = handler.ContinueWith(t => _handlers.TryRemove(t, out _), TaskScheduler.Default);
@@ -219,7 +232,11 @@ public sealed class MockServer : IAsyncDisposable
                 ClientCertificateRequired = _tls == MockTlsMode.Mtls,
                 EnabledSslProtocols = SslProtocols.Tls12 | SslProtocols.Tls13
             };
-            await ssl.AuthenticateAsServerAsync(options, ct);
+            using (var handshake = CancellationTokenSource.CreateLinkedTokenSource(ct))
+            {
+                handshake.CancelAfter(RequestReadTimeout);
+                await ssl.AuthenticateAsServerAsync(options, handshake.Token);
+            }
             if (ssl.RemoteCertificate is not null)
             {
                 using var c = new X509Certificate2(ssl.RemoteCertificate);
@@ -624,8 +641,11 @@ public sealed class MockServer : IAsyncDisposable
     // ---------- request parsing ----------
 
     private static async Task<(string Method, string Target, Dictionary<string, string> Headers, string Body)?>
-        ReadRequestAsync(Stream stream, CancellationToken ct)
+        ReadRequestAsync(Stream stream, CancellationToken outer)
     {
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(outer);
+        deadline.CancelAfter(RequestReadTimeout);
+        var ct = deadline.Token;
         var buffer = new byte[8192];
         var acc = new List<byte>();
         int headerEnd = -1;
@@ -659,9 +679,11 @@ public sealed class MockServer : IAsyncDisposable
             // A streamed body: decoded, so the echo shows what was sent rather than its framing,
             // and read to its end, so the mock never answers while the client is still sending.
             var decoded = await ReadChunkedAsync(bodyBytes, stream, buffer, ct);
+            if (decoded is null) return null;   // over the size limit
             return (method, target, headers, Encoding.UTF8.GetString(decoded));
         }
         int contentLength = headers.TryGetValue("Content-Length", out var clRaw) && int.TryParse(clRaw, out var cl) ? cl : 0;
+        if (contentLength > MaxRequestBody || contentLength < 0) return null;
         while (bodyBytes.Count < contentLength)
         {
             int n = await stream.ReadAsync(buffer, ct);
@@ -674,7 +696,7 @@ public sealed class MockServer : IAsyncDisposable
 
     /// <summary>Decodes a chunked body: <paramref name="pending"/> holds what already arrived with
     /// the headers, the rest is read from <paramref name="stream"/>. Trailers are read and dropped.</summary>
-    private static async Task<byte[]> ReadChunkedAsync(List<byte> pending, Stream stream, byte[] buffer, CancellationToken ct)
+    private static async Task<byte[]?> ReadChunkedAsync(List<byte> pending, Stream stream, byte[] buffer, CancellationToken ct)
     {
         var body = new List<byte>();
         int pos = 0;
@@ -720,6 +742,7 @@ public sealed class MockServer : IAsyncDisposable
                 while (await ReadLineAsync() is { Length: > 0 }) { }   // trailers, up to the blank line
                 break;
             }
+            if ((long)body.Count + size > MaxRequestBody) return null;
             if (!await EnsureAsync(size + 2)) { body.AddRange(pending.Skip(pos)); break; }
             body.AddRange(pending.GetRange(pos, size));
             pos += size + 2;

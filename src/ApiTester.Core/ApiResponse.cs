@@ -57,6 +57,9 @@ public sealed record ApiResponse
     public IReadOnlyList<KeyValuePair<string, string>> Headers { get; init; }
         = Array.Empty<KeyValuePair<string, string>>();
     public byte[] Body { get; init; } = Array.Empty<byte>();
+    /// <summary>True when the body was cut at <see cref="TransportOptions.MaxResponseBytes"/>; the
+    /// server sent more than <see cref="Body"/> holds.</summary>
+    public bool BodyTruncated { get; init; }
     public string? ContentType { get; init; }
     public TimeSpan Elapsed { get; init; }
     public ApiError? Error { get; init; }

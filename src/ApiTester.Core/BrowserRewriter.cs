@@ -9,7 +9,7 @@ public sealed record PreflightResponse(
 /// so every switch here is off unless the caller asked for it.</summary>
 public sealed record BrowserOptions(
     bool Cors,
-    IReadOnlyList<string>? AllowedOrigins,   // null = echo the request Origin
+    IReadOnlyList<string>? AllowedOrigins,   // null = echo the request Origin when it is a page on this machine
     bool RewriteCookies,
     bool RewriteLocation,
     bool AllowUpgrade,
@@ -378,11 +378,65 @@ public static class BrowserRewriter
     }
 
     /// <summary>Whether the gateway will speak CORS for this origin. A null allowlist means "echo
-    /// whatever asked", which is the loopback-only default; an explicit list is an exact,
-    /// case-insensitive match on the whole origin string.</summary>
-    private static bool IsAllowed(string origin, BrowserOptions options) =>
-        options.AllowedOrigins is null ||
-        options.AllowedOrigins.Any(o => o.Equals(origin, StringComparison.OrdinalIgnoreCase));
+    /// pages on this machine": an origin whose host is loopback, <c>localhost</c> or a
+    /// <c>*.localhost</c> name — never a public site. An explicit list is an exact,
+    /// case-insensitive match on the whole origin string. The gateway's own origin is always
+    /// allowed: a page it serves is same-origin with it.</summary>
+    public static bool IsAllowed(string origin, BrowserOptions options)
+    {
+        if (IsOwnOrigin(origin, options)) return true;
+        return options.AllowedOrigins is null
+            ? IsLocalOrigin(origin)
+            : options.AllowedOrigins.Any(o => o.Equals(origin, StringComparison.OrdinalIgnoreCase));
+    }
+
+    /// <summary>The gateway's own origin, by any local spelling of it: http://localhost:8819 and
+    /// http://127.0.0.1:8819 are the same listener.</summary>
+    private static bool IsOwnOrigin(string origin, BrowserOptions options)
+    {
+        if (origin.TrimEnd('/').Equals(options.LocalOrigin.GetLeftPart(UriPartial.Authority), StringComparison.OrdinalIgnoreCase))
+            return true;
+        return Uri.TryCreate(origin, UriKind.Absolute, out var u) &&
+               u.Scheme == options.LocalOrigin.Scheme && u.Port == options.LocalOrigin.Port &&
+               IsLocalHostName(u.Host) && IsLocalHostName(options.LocalOrigin.Host);
+    }
+
+    /// <summary>True for an http(s) origin served from this machine: a loopback address,
+    /// <c>localhost</c>, or a <c>*.localhost</c> name, which browsers resolve to loopback and DNS
+    /// rebinding cannot produce. "null" (a sandboxed frame, a file) is not one.</summary>
+    public static bool IsLocalOrigin(string origin)
+    {
+        if (!Uri.TryCreate(origin, UriKind.Absolute, out var u) || u.Scheme is not ("http" or "https")) return false;
+        return IsLocalHostName(u.Host);
+    }
+
+    /// <summary>Loopback address, <c>localhost</c> or <c>*.localhost</c>.</summary>
+    public static bool IsLocalHostName(string host)
+    {
+        string h = host.Trim('[', ']').TrimEnd('.').ToLowerInvariant();
+        if (h == "localhost" || h.EndsWith(".localhost", StringComparison.Ordinal)) return true;
+        return System.Net.IPAddress.TryParse(h, out var ip) && System.Net.IPAddress.IsLoopback(ip);
+    }
+
+    /// <summary>Why a browser request must not be forwarded, or null. A preflight only protects
+    /// requests that need one: a form <c>POST</c>, an image or a WebSocket from another site
+    /// reaches the gateway without asking. So any request whose <c>Origin</c> is not allowed (see
+    /// <see cref="IsAllowed"/>; with CORS off, only this machine's pages are) is refused, and so is
+    /// one marked <c>Sec-Fetch-Site: cross-site</c> that is not a top-level navigation. Requests
+    /// from programs, which send neither header, are untouched.</summary>
+    public static string? RefuseCrossSite(string method, IReadOnlyList<KeyValuePair<string, string>> headers, BrowserOptions options)
+    {
+        var effective = options.Cors ? options : options with { AllowedOrigins = null };
+        if (Header(headers, "Origin") is { } origin)
+            return IsAllowed(origin.Trim(), effective) ? null : $"origin '{origin.Trim()}' is not allowed";
+        if (Header(headers, "Sec-Fetch-Site") is { } site && site.Trim().Equals("cross-site", StringComparison.OrdinalIgnoreCase))
+        {
+            bool navigation = (Header(headers, "Sec-Fetch-Mode") ?? "").Trim().Equals("navigate", StringComparison.OrdinalIgnoreCase) &&
+                              (method.Equals("GET", StringComparison.OrdinalIgnoreCase) || method.Equals("HEAD", StringComparison.OrdinalIgnoreCase));
+            if (!navigation) return "a cross-site request from a browser is not forwarded";
+        }
+        return null;
+    }
 
     /// <summary>The first value of a header, or null when the request did not send it. Header names
     /// are case-insensitive, and the request list may repeat a key.</summary>

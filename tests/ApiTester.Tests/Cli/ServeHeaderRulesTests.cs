@@ -179,7 +179,7 @@ public class ServeHeaderRulesTests
             HttpRequestMessage FromApp()
             {
                 var m = new HttpRequestMessage(HttpMethod.Get, $"{serve.Origin}/orders");
-                m.Headers.Add("Origin", "https://app.example");
+                m.Headers.Add("Origin", "http://localhost:3000");
                 return m;
             }
             var resp = await Poll(() => http.SendAsync(FromApp()));

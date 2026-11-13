@@ -364,10 +364,22 @@ public sealed record MockScenario(
             // Resolved against the scenario file's own folder, so a scenario plus its bodies moves
             // as one unit rather than depending on where the command happened to be run.
             string path = baseDirectory is null ? file : Path.Combine(baseDirectory, file);
-            try { body = read(path); }
-            catch (Exception ex)
+            // Confined to the scenario's own folder: a scenario someone was sent must not be able
+            // to serve ../../.ssh/id_rsa or C:\Windows\win.ini to whoever calls the mock.
+            string root = Path.GetFullPath(baseDirectory ?? Directory.GetCurrentDirectory());
+            string full = Path.GetFullPath(Path.Combine(root, file));
+            string rootWithSep = root.EndsWith(Path.DirectorySeparatorChar) ? root : root + Path.DirectorySeparatorChar;
+            if (Path.IsPathRooted(file) || !full.StartsWith(rootWithSep, OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal))
             {
-                warnings.Add($"{where} names bodyFile '{file}' which could not be read ({ex.Message}); it answers with an empty body.");
+                warnings.Add($"{where} names bodyFile '{file}', which is outside the scenario's folder; it answers with an empty body.");
+            }
+            else
+            {
+                try { body = read(path); }
+                catch (Exception ex)
+                {
+                    warnings.Add($"{where} names bodyFile '{file}' which could not be read ({ex.Message}); it answers with an empty body.");
+                }
             }
         }
         else if (Str(element, "body") is { } inline)

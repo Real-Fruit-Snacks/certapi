@@ -21,7 +21,8 @@ public static class McpCommand
         requests, environments, and chains are also published as read-only MCP resources.
         Configure your MCP host to launch this command.
 
-          --cert <thumb|subject>  Certificate all tools use (pinned; the agent can't change it)
+          --cert <thumb|subject>  Certificate the tools use (pinned; the agent can't change it). A saved
+                                  request that names its own certificate presents that one instead
           --store <location>      CurrentUser (default); LocalMachine searches both stores
           --cert-file <path>      Pin a certificate from a file (.pfx/.p12 or .pem/.crt) instead
           --cert-password <pw>    Password for a .pfx/.p12 certificate file
@@ -32,16 +33,21 @@ public static class McpCommand
                                   headless job is not stopped by the prompt. Prefer CERTAPI_CERT_PIN,
                                   which keeps it out of the shell history. Windows (CNG) only
           --allow <host>          Allowed upstream host (repeatable); a URL must match or be a
-                                  subdomain of one. Omit to allow any host (prints a warning).
-                                  Enforced per request — a chain step whose URL comes from an
-                                  earlier capture is still checked.
+                                  subdomain of one. A bare host name or IP address only: an empty
+                                  value, a scheme, port, path, wildcard or comma is refused. Omit
+                                  to allow any host (the start-up line says so; set it for anything
+                                  but local experiments). Enforced per request — a chain step whose
+                                  URL comes from an earlier capture is still checked.
           --insecure              Ignore upstream server-certificate errors (internal CAs)
           --timeout <seconds>     send_request and gRPC call deadline (default 100; a saved
                                   request keeps its own saved timeout)
           --workspace <file>      Load saved requests / environments / chains from a workspace
                                   file. The workspace is read once at launch; captures and tokens
                                   live in memory for the session and are never written back.
-          --no-auto-token         Don't capture/reuse bearer tokens across the session's calls
+          --no-auto-token         Don't capture/reuse bearer tokens across the session's calls, and
+                                  don't attach the workspace's stored tokens or browser cookies
+          --max-body <size>       Most of a response body a tool returns (default 1m; e.g. 64k,
+                                  8m). The rest is not read; the result says "truncated": true
           --protoset <file>       Compiled descriptor set for grpc_list/grpc_call against a
                                   server without reflection (produce it with protoc's
                                   descriptor_set_out and include_imports options). Pinned at
@@ -55,7 +61,13 @@ public static class McpCommand
 
         Tokens returned by one tool call (e.g. a login via send_request) are captured in
         memory for this session and attached to later calls to the same host. Values captured
-        by run_saved / run_chain resolve {{variables}} in later calls the same way.
+        by run_saved / run_chain resolve {{variables}} in later calls the same way. The vars
+        argument of run_saved / run_chain fills values into a saved request but cannot change
+        its scheme, host or port. Response bodies and headers go to the agent as received.
+
+        Configuration: a certapi.config.json found by walking up from the working directory is
+        NOT read by mcp — an MCP host chooses that directory. Use --config, CERTAPI_CONFIG or the
+        per-user file; the start-up line names the file in use.
 
         Global: --debug (verbose diagnostics) and --log-file <path> work here too.
 
@@ -65,8 +77,10 @@ public static class McpCommand
           certapi mcp --cert "CN=Agent Client" --allow api.example.com --workspace .\suite.json
           certapi mcp --cert "CN=Agent Client" --allow grpc.internal --protoset .\contracts.protoset
 
-        Speaks JSON-RPC 2.0 over stdin/stdout; diagnostics go to stderr. Stop with Ctrl+C or by
-        closing stdin. Exit 0 clean shutdown, 2 usage, 3 data error.
+        Speaks JSON-RPC 2.0 over stdin/stdout: protocol revisions 2024-11-05 through 2025-11-25
+        after an initialize handshake, and 2026-07-28 per request (server/discover). Diagnostics
+        go to stderr. Stop with Ctrl+C or by closing stdin. Exit 0 clean shutdown, 2 usage, 3 data
+        error.
         """;
 
     public static int Run(Args args, TextReader input, TextWriter stdout, TextWriter stderr, CliServices services)
@@ -77,6 +91,7 @@ public static class McpCommand
         string? timeoutRaw = args.Value("--timeout");
         string? workspace = args.Value("--workspace");
         bool noAutoToken = args.Flag("--no-auto-token");
+        string? maxBodyRaw = args.Value("--max-body");
         string? protosetPath = args.Value("--protoset");
         var overrides = TransportFlags.Parse(args, out _, environment: null, services.Profile);
         // Resolve the certificate before Positionals() rejects its options (store or a file).
@@ -95,16 +110,44 @@ public static class McpCommand
             catch (GrpcDescriptorSetException ex) { throw new CliDataException(ex.Message); }
         }
 
+        long maxBody = DefaultMaxBody;
+        if (maxBodyRaw is not null && (ServeCommand.ParseSize(maxBodyRaw) is not { } parsed || parsed <= 0))
+            throw new CliUsageException($"--max-body expects a size such as 64k or 8m, got '{maxBodyRaw}'.");
+        else if (maxBodyRaw is not null) maxBody = ServeCommand.ParseSize(maxBodyRaw)!.Value;
+
+        foreach (var entry in allowHosts)
+            if (HostAllowlist.EntryProblem(entry) is { } problem)
+                throw new CliUsageException($"--allow '{entry}': {problem}");
         var allow = new HostAllowlist(allowHosts);
+        // Decided from the parsed list, so the warning cannot be skipped by a value that parses to nothing.
         stderr.WriteLine($"certapi mcp ready · cert: {cert?.Subject ?? "none"} · " +
-            (allowHosts.Count == 0 ? "allow: ANY HOST (no --allow given)" : "allow: " + string.Join(", ", allowHosts)));
+            (allow.Count == 0 ? "allow: ANY HOST (no --allow given)" : "allow: " + string.Join(", ", allow.Entries)));
+        if (services.ProfileSource is { } source && services.Profile is { } profile)
+            stderr.WriteLine($"certapi mcp config · {source.Path} ({source.Rule}) · " + DescribeProfile(profile));
+        if (insecure) stderr.WriteLine("certapi mcp warning · server-certificate checks are OFF (--insecure)");
 
         var notifier = new McpNotifier();
         var (tools, resources) = Build(cert, allow, insecure, timeout, localMachine, workspace,
-            noAutoToken, services, stderr, overrides, protoset, notifier);
+            noAutoToken, services, stderr, overrides, protoset, notifier, maxBody);
         var server = new McpServer(tools, Version(), resources, notifier);
         server.Run(input, stdout, stderr, services.Cancel);
         return ExitCodes.Ok;
+    }
+
+    /// <summary>The settings a configuration profile changes for this server, named so the
+    /// operator can see them in the host's log.</summary>
+    internal static string DescribeProfile(ConfigProfile p)
+    {
+        var parts = new List<string>();
+        if (p.Insecure == true) parts.Add("insecure");
+        if (p.Proxy is not null) parts.Add("proxy " + p.Proxy);
+        if (p.NoProxy == true) parts.Add("no proxy");
+        if (p.CaFiles.Count > 0) parts.Add($"{p.CaFiles.Count} extra root certificate file(s)");
+        if (p.Cert is not null || p.CertFile is not null) parts.Add("certificate");
+        if (p.Store is not null) parts.Add("store " + p.Store);
+        if (p.Revocation is not null) parts.Add("revocation " + p.Revocation);
+        if (p.Timeout is not null) parts.Add("timeout");
+        return parts.Count == 0 ? "no settings that affect mcp" : string.Join(", ", parts);
     }
 
     private static string Version()
@@ -123,11 +166,16 @@ public static class McpCommand
         Build(cert, allow, insecure, timeout, includeLocalMachine, workspace, noAutoToken,
               services, stderr, new TransportOverrides(), null, null).Tools;
 
+    /// <summary>The body a tool result carries at most, unless --max-body says otherwise: enough
+    /// for any API answer, small enough that one large download cannot exhaust memory or an
+    /// agent's context.</summary>
+    internal const long DefaultMaxBody = 1024 * 1024;
+
     internal static (IReadOnlyList<ToolDef> Tools, IReadOnlyList<ResourceDef> Resources) Build(
         X509Certificate2? cert, HostAllowlist allow, bool insecure, int timeout,
         bool includeLocalMachine, string? workspace, bool noAutoToken, CliServices services,
         TextWriter? stderr, TransportOverrides overrides, GrpcDescriptorSet? protoset,
-        McpNotifier? notifier)
+        McpNotifier? notifier, long maxBody = DefaultMaxBody)
     {
         // The session's one workspace view, read once at launch: definitions, trust pins, and the
         // home for everything the session captures — tokens, cookies, {{variables}} — which is
@@ -140,15 +188,22 @@ public static class McpCommand
         // that. --insecure is the launch-wide override it has always been.
         TransportOptions McpTransport(TransportOptions baseline)
         {
-            var options = overrides.ApplyTo(baseline) with { FollowRedirects = false };
+            var options = overrides.ApplyTo(baseline) with { FollowRedirects = false, MaxResponseBytes = maxBody };
             if (insecure) options = options with { IgnoreServerCertificateErrors = true };
             return options;
         }
 
-        string? Gate(string url) => allow.IsAllowed(url) ? null : $"host for '{url}' is not allowed";
+        // Names the host only: the resolved URL can carry a secret variable in its path or query.
+        string? Gate(string url) => allow.IsAllowed(url) ? null : $"host '{RequestGuards.DescribeHost(url)}' is not allowed";
 
-        RequestRunContext MakeContext(List<string> notes) => new()
+        // The request now being served can be cancelled (notifications/cancelled, end of input);
+        // outside the server loop, Ctrl+C is all there is.
+        CancellationToken CallCt() => McpServer.CurrentCallCancellation ?? services.Cancel;
+
+        RequestRunContext MakeContext(List<string> notes, Func<Dictionary<string, string>>? baseline = null) => new()
         {
+            BaselineVariables = baseline,
+            RefuseHostOverride = true,
             State = state,
             Client = services.Client,
             Predicates = predicates,
@@ -170,6 +225,9 @@ public static class McpCommand
                 return new ToolResult(JsonSerializer.Serialize(new { error = refused }), true);
 
             var headerList = headers.ToList();
+            if (RequestGuards.HostHeaderMismatch(url, headerList) is { } hostProblem) return Err(hostProblem);
+            foreach (var h in headerList)
+                if (HeaderValues.Problem(h.Key, h.Value) is { } valueProblem) return Err(valueProblem);
             // A Content-Type given among the headers names the body's type, as on `certapi send`.
             if (contentType is null && headerList.LastOrDefault(h => h.Key.Equals("Content-Type", StringComparison.OrdinalIgnoreCase)) is { Key: not null } typedType)
             {
@@ -200,7 +258,7 @@ public static class McpCommand
             var response = services.Client.SendAsync(request, cert,
                     transport: transport,
                     trustServerCertificate: predicates.For(TokenService.HostOf(url)),
-                    cancellationToken: services.Cancel)
+                    cancellationToken: CallCt())
                 .GetAwaiter().GetResult();
 
             if (!noAutoToken && response.Error is null &&
@@ -215,7 +273,7 @@ public static class McpCommand
         var sendRequest = new ToolDef("send_request",
             "Send an HTTP request to an allowed host with the pinned client certificate. Returns status, headers, and body. Redirects are not followed; a 3xx comes back as itself.",
             JsonNode.Parse("""
-                {"type":"object","required":["url"],"properties":{
+                {"type":"object","additionalProperties":false,"required":["url"],"properties":{
                   "method":{"type":"string","description":"HTTP method (default GET)"},
                   "url":{"type":"string","description":"Absolute http(s):// URL on an allowed host"},
                   "headers":{"type":"object","additionalProperties":{"type":"string"}},
@@ -237,7 +295,7 @@ public static class McpCommand
         // ---- list_certificates ----
         var listCerts = new ToolDef("list_certificates",
             "List client certificates in the Windows store (subject, thumbprint, expiry).",
-            JsonNode.Parse("""{"type":"object","properties":{"filter":{"type":"string"}}}""")!,
+            JsonNode.Parse("""{"type":"object","additionalProperties":false,"properties":{"filter":{"type":"string"}}}""")!,
             a =>
             {
                 string? filter = Str(a, "filter");
@@ -265,7 +323,7 @@ public static class McpCommand
         // ---- list_saved ----
         var listSaved = new ToolDef("list_saved",
             "List saved requests from your collections as Collection/Folder/Request paths.",
-            JsonNode.Parse("""{"type":"object","properties":{}}""")!,
+            JsonNode.Parse("""{"type":"object","additionalProperties":false,"properties":{}}""")!,
             _ =>
             {
                 var items = SavedLeaves(state)
@@ -283,7 +341,7 @@ public static class McpCommand
         // ---- list_environments ----
         var listEnvironments = new ToolDef("list_environments",
             "List the workspace's environments by name, for run_saved / run_chain's env argument. Variable values are never returned.",
-            JsonNode.Parse("""{"type":"object","properties":{}}""")!,
+            JsonNode.Parse("""{"type":"object","additionalProperties":false,"properties":{}}""")!,
             _ =>
             {
                 var items = state.Environments.Select(e => new
@@ -306,7 +364,7 @@ public static class McpCommand
         var runSaved = new ToolDef("run_saved",
             "Run a saved request by its Collection/Folder/Request path, exactly as `certapi run` would: its saved transport settings, auth, assertions, and capture rules all apply. Captured values resolve {{variables}} in later calls this session.",
             JsonNode.Parse("""
-                {"type":"object","required":["path"],"properties":{
+                {"type":"object","additionalProperties":false,"required":["path"],"properties":{
                   "path":{"type":"string"},
                   "env":{"type":"string"},
                   "vars":{"type":"object","additionalProperties":{"type":"string"}}}}
@@ -321,9 +379,17 @@ public static class McpCommand
                 if (leaves.Count != 1) return Err($"'{path}' resolves to {leaves.Count} requests; name a single request");
 
                 var notes = new List<string>();
-                var vars = new RunVariables(() => CliWorkspace.BuildVars(state, Str(a, "env"), ObjKeys(a, "vars")));
+                string? env = Str(a, "env");
+                var overrides = ObjKeys(a, "vars");
+                if (overrides.FirstOrDefault(kv => HeaderValues.HasLineBreak(kv)) is { } broken)
+                    return Err($"the value of var '{broken[..broken.IndexOf('=')]}' contains a line break or NUL character");
+                var vars = new RunVariables(() => CliWorkspace.BuildVars(state, env, overrides));
+                // The agent may fill values in, but not choose where a saved request — with its saved
+                // secrets — is sent: that stays what the workspace alone resolves it to.
+                Func<Dictionary<string, string>>? baseline = overrides.Count == 0
+                    ? null : () => CliWorkspace.BuildVars(state, env, Array.Empty<string>());
                 var outcome = RequestRunner
-                    .RunAsync(leaves[0].Path, leaves[0].Node, MakeContext(notes), vars, services.Cancel)
+                    .RunAsync(leaves[0].Path, leaves[0].Node, MakeContext(notes, baseline), vars, CallCt())
                     .GetAwaiter().GetResult();
                 return OutcomeResult(outcome, notes);
             })
@@ -333,7 +399,7 @@ public static class McpCommand
         var runChain = new ToolDef("run_chain",
             "Run a saved chain by name: its requests in order as one unit, each step seeing what earlier steps captured. A failing step stops the chain unless it is marked to carry on.",
             JsonNode.Parse("""
-                {"type":"object","required":["name"],"properties":{
+                {"type":"object","additionalProperties":false,"required":["name"],"properties":{
                   "name":{"type":"string"},
                   "env":{"type":"string"},
                   "vars":{"type":"object","additionalProperties":{"type":"string"}}}}
@@ -353,9 +419,14 @@ public static class McpCommand
 
                 string? envName = Str(a, "env") ?? ChainRunner.PrepareCaptureEnvironment(state, chain);
                 var notes = new List<string>();
-                var vars = new RunVariables(() => CliWorkspace.BuildVars(state, envName, ObjKeys(a, "vars")));
+                var overrides = ObjKeys(a, "vars");
+                if (overrides.FirstOrDefault(kv => HeaderValues.HasLineBreak(kv)) is { } broken)
+                    return Err($"the value of var '{broken[..broken.IndexOf('=')]}' contains a line break or NUL character");
+                var vars = new RunVariables(() => CliWorkspace.BuildVars(state, envName, overrides));
+                Func<Dictionary<string, string>>? baseline = overrides.Count == 0
+                    ? null : () => CliWorkspace.BuildVars(state, envName, Array.Empty<string>());
                 var result = ChainRunner
-                    .RunAsync(steps, MakeContext(notes), vars, progress: null, services.Cancel)
+                    .RunAsync(steps, MakeContext(notes, baseline), vars, progress: null, CallCt())
                     .GetAwaiter().GetResult();
 
                 var stepArr = new JsonArray();
@@ -390,7 +461,7 @@ public static class McpCommand
         // ---- grpc_list ----
         var grpcList = new ToolDef("grpc_list",
             "List the services and methods a gRPC server advertises via reflection — or, when the operator pinned a descriptor set at launch, exactly what that set declares (no address needed then).",
-            JsonNode.Parse("""{"type":"object","properties":{"address":{"type":"string","description":"https:// or http:// gRPC endpoint on an allowed host"}}}""")!,
+            JsonNode.Parse("""{"type":"object","additionalProperties":false,"properties":{"address":{"type":"string","description":"https:// or http:// gRPC endpoint on an allowed host"}}}""")!,
             a =>
             {
                 string? address = Str(a, "address");
@@ -406,10 +477,11 @@ public static class McpCommand
                         if (Gate(address!) is { } refused) return Err(refused);
                         var caller = new GrpcCaller(new Uri(address!), cert, McpTransport(new TransportOptions()),
                             predicates.For(new Uri(address!).Host), protoset);
-                        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(services.Cancel);
+                        var callCt = CallCt();
+                        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(callCt);
                         deadline.CancelAfter(TimeSpan.FromSeconds(timeout));
                         try { discovered = caller.DiscoverAsync(deadline.Token).GetAwaiter().GetResult(); }
-                        catch (OperationCanceledException) when (deadline.IsCancellationRequested && !services.Cancel.IsCancellationRequested)
+                        catch (OperationCanceledException) when (deadline.IsCancellationRequested && !callCt.IsCancellationRequested)
                         { return Err($"the server did not answer within {timeout} s (--timeout)"); }
                         finally { caller.DisposeAsync().AsTask().GetAwaiter().GetResult(); }
                     }
@@ -445,20 +517,20 @@ public static class McpCommand
         var grpcCall = new ToolDef("grpc_call",
             "Invoke a gRPC method — unary, server-streaming, client-streaming, or bidirectional, chosen from the method's own definition — with the pinned certificate. `data` is one JSON message, or an array of them for a streaming request.",
             JsonNode.Parse("""
-                {"type":"object","required":["address","method"],"properties":{
+                {"type":"object","additionalProperties":false,"required":["address","method"],"properties":{
                   "address":{"type":"string","description":"https:// or http:// gRPC endpoint on an allowed host"},
                   "method":{"type":"string","description":"Service/Method; a short service name resolves when unambiguous"},
                   "data":{"description":"The request message as JSON, or an array of messages for a streaming request (default {})"},
                   "metadata":{"type":"object","additionalProperties":{"type":"string"}},
                   "maxMessages":{"type":"integer","description":"Stop a streaming response after this many messages (default 100)"}}}
                 """)!,
-            a => GrpcCallTool(a, cert, protoset, predicates, Gate, McpTransport, services, timeout))
+            a => GrpcCallTool(a, cert, protoset, predicates, Gate, McpTransport, CallCt(), timeout))
         { Annotations = new ToolAnnotations(ReadOnlyHint: false, DestructiveHint: true, IdempotentHint: false, OpenWorldHint: true) };
 
         // ---- self_test ----
         var selfTest = new ToolDef("self_test",
             "Prove the mutual-TLS path end to end against a built-in loopback server.",
-            JsonNode.Parse("""{"type":"object","properties":{}}""")!,
+            JsonNode.Parse("""{"type":"object","additionalProperties":false,"properties":{}}""")!,
             _ =>
             {
                 var result = new SelfTestRunner().RunAsync().GetAwaiter().GetResult();
@@ -505,7 +577,7 @@ public static class McpCommand
 
     private static ToolResult GrpcCallTool(
         JsonElement a, X509Certificate2? cert, GrpcDescriptorSet? protoset, TrustPredicates predicates,
-        Func<string, string?> gate, Func<TransportOptions, TransportOptions> transport, CliServices services, int timeout)
+        Func<string, string?> gate, Func<TransportOptions, TransportOptions> transport, CancellationToken callCt, int timeout)
     {
         string? address = Str(a, "address");
         string? methodSpec = Str(a, "method");
@@ -539,12 +611,18 @@ public static class McpCommand
                 return Err("maxMessages expects a positive integer");
         }
         var metadata = ObjPairs(a, "metadata");
+        foreach (var m in metadata)
+        {
+            if (m.Key.Equals("host", StringComparison.OrdinalIgnoreCase))
+                return Err("metadata may not set 'host': the allow-list judges the address");
+            if (HeaderValues.Problem(m.Key, m.Value) is { } valueProblem) return Err(valueProblem);
+        }
 
         // The MCP server answers one call at a time: a gRPC server that accepts and never answers
         // would freeze every later call too, so each call has the --timeout deadline.
-        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(services.Cancel);
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(callCt);
         deadline.CancelAfter(TimeSpan.FromSeconds(timeout));
-        bool DeadlinePassed() => deadline.IsCancellationRequested && !services.Cancel.IsCancellationRequested;
+        bool DeadlinePassed() => deadline.IsCancellationRequested && !callCt.IsCancellationRequested;
         // A stream cut off by the deadline still returns what it delivered, marked as cut off.
         ToolResult DeadlineWithPartial(IReadOnlyList<string> received) => new(
             GrpcStreamPayload(received, 4, "DEADLINE_EXCEEDED", $"stopped after {timeout} s (--timeout); the messages received until then are listed"),

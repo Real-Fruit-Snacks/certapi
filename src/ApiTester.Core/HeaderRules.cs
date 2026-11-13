@@ -55,7 +55,9 @@ public sealed class HeaderRules
         problem = FirstProblem(setRequest.Select(h => h.Key), "--request-header", "\"Name: value\"")
                   ?? FirstProblem(removeRequest, "--remove-request-header", "<name>")
                   ?? FirstProblem(setResponse.Select(h => h.Key), "--response-header", "\"Name: value\"")
-                  ?? FirstProblem(removeResponse, "--remove-response-header", "<name>");
+                  ?? FirstProblem(removeResponse, "--remove-response-header", "<name>")
+                  ?? FirstValueProblem(setRequest, "--request-header")
+                  ?? FirstValueProblem(setResponse, "--response-header");
         if (problem is not null) return null;
 
         return new HeaderRules(setRequest, removeRequest, setResponse, removeResponse);
@@ -98,6 +100,15 @@ public sealed class HeaderRules
                 : $"{flag} cannot name '{name}': it frames the HTTP message and the HTTP stack " +
                   "manages it, so a rule here would corrupt the exchange.";
         }
+        return null;
+    }
+
+    /// <summary>A value with CR, LF or NUL would be written as further header lines on the wire.</summary>
+    private static string? FirstValueProblem(IEnumerable<KeyValuePair<string, string>> rules, string flag)
+    {
+        foreach (var r in rules)
+            if (HeaderValues.HasLineBreak(r.Value))
+                return $"{flag} '{r.Key}': the value contains a line break or NUL character, which would be sent as another header line.";
         return null;
     }
 

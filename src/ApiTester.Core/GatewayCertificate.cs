@@ -5,18 +5,80 @@ namespace ApiTester.Core;
 
 /// <summary>The TLS certificate `certapi serve --tls` presents on loopback: CN=127.0.0.1 with a
 /// Subject Alternative Name (SAN) covering 127.0.0.1 and localhost, cached under
-/// %AppData%\CertApiTester\gateway-tls\ and reused across runs — a fresh certificate every run would
-/// retrain the browser's trust prompt every time.</summary>
+/// %LocalAppData%\CertApiTester\gateway-tls\ and reused across runs — a fresh certificate every run
+/// would retrain the browser's trust prompt every time. The key file is encrypted for the Windows
+/// user (DPAPI) and kept out of the roaming profile, so it does not travel to other machines.</summary>
 public static class GatewayCertificate
 {
     private const string PfxFileName = "gateway.pfx";
     private const string CerFileName = "gateway.cer";
     private const string PreviousFileName = "previous-thumbprints.txt";
 
-    /// <summary>%AppData%\CertApiTester\gateway-tls</summary>
-    public static string DefaultDirectory =>
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-                     "CertApiTester", "gateway-tls");
+    /// <summary>%LocalAppData%\CertApiTester\gateway-tls. A cache an earlier version left in the
+    /// roaming folder is moved here on first use.</summary>
+    public static string DefaultDirectory
+    {
+        get
+        {
+            string dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                                      "CertApiTester", "gateway-tls");
+            MoveFromRoaming(dir);
+            return dir;
+        }
+    }
+
+    private static void MoveFromRoaming(string localDir)
+    {
+        try
+        {
+            string roaming = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+                                          "CertApiTester", "gateway-tls");
+            if (string.Equals(Path.GetFullPath(roaming), Path.GetFullPath(localDir), StringComparison.OrdinalIgnoreCase)) return;
+            if (!Directory.Exists(roaming) || File.Exists(Path.Combine(localDir, PfxFileName))) return;
+            Directory.CreateDirectory(localDir);
+            foreach (var file in Directory.GetFiles(roaming))
+            {
+                string target = Path.Combine(localDir, Path.GetFileName(file));
+                if (Path.GetFileName(file).Equals(PfxFileName, StringComparison.OrdinalIgnoreCase))
+                    WritePfx(target, ReadPfx(file));          // encrypted on the way across
+                else
+                    File.Copy(file, target, overwrite: false);
+                File.Delete(file);
+            }
+            try { Directory.Delete(roaming); } catch (IOException) { }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Security.Cryptography.CryptographicException)
+        {
+            // A cache that cannot be moved is regenerated in the new place.
+        }
+    }
+
+    /// <summary>The PKCS#12 bytes of a cached key file: decrypted when it was stored encrypted, as
+    /// they are when an earlier version wrote it in the clear.</summary>
+    internal static byte[] ReadPfx(string path) => ReadPfx(path, out _);
+
+    internal static byte[] ReadPfx(string path, out bool wasSealed)
+    {
+        byte[] raw = File.ReadAllBytes(path);
+        var prefix = System.Text.Encoding.ASCII.GetBytes(SecretProtection.Prefix);
+        wasSealed = raw.AsSpan().StartsWith(prefix);
+        if (!wasSealed) return raw;
+        string asText = System.Text.Encoding.ASCII.GetString(raw);
+        string? base64 = SecretProtection.Default.Unprotect(asText.Trim());
+        if (base64 is null) throw new System.Security.Cryptography.CryptographicException("the cached gateway key could not be decrypted");
+        return Convert.FromBase64String(base64);
+    }
+
+    /// <summary>Writes the key file encrypted for this user where that is possible (DPAPI), and
+    /// in the clear only where no protector exists.</summary>
+    internal static void WritePfx(string path, byte[] pfx)
+    {
+        var protector = SecretProtection.Default;
+        string? sealedText = protector.IsAvailable ? protector.Protect(Convert.ToBase64String(pfx)) : null;
+        string temp = path + ".tmp";
+        File.WriteAllBytes(temp, sealedText is null ? pfx : System.Text.Encoding.ASCII.GetBytes(sealedText));
+        File.Move(temp, path, overwrite: true);
+    }
 
     /// <summary>The cached certificate, generated and cached on first use, and regenerated when the
     /// cached one is missing, unreadable, or within 7 days of expiry.</summary>
@@ -39,8 +101,10 @@ public static class GatewayCertificate
         {
             try
             {
-                var cached = X509CertificateLoader.LoadPkcs12(
-                    File.ReadAllBytes(pfxPath), (string?)null, X509KeyStorageFlags.Exportable);
+                byte[] stored = ReadPfx(pfxPath, out bool wasSealed);
+                var cached = X509CertificateLoader.LoadPkcs12(stored, (string?)null, X509KeyStorageFlags.Exportable);
+                // A key file an earlier version wrote in the clear is encrypted now.
+                if (!wasSealed) try { WritePfx(pfxPath, stored); } catch (IOException) { }
                 var has = DnsNames(cached);
                 bool covers = dnsNames is null || dnsNames.All(n => has.Contains(n, StringComparer.OrdinalIgnoreCase));
                 if (cached.NotAfter > DateTime.Now.AddDays(7) && covers) return cached;
@@ -60,7 +124,7 @@ public static class GatewayCertificate
 
         if (dnsNames is not null) names.AddRange(dnsNames);
         var cert = Create(names.Distinct(StringComparer.OrdinalIgnoreCase).ToList());
-        File.WriteAllBytes(pfxPath, cert.Export(X509ContentType.Pfx));
+        WritePfx(pfxPath, cert.Export(X509ContentType.Pfx));
         File.WriteAllBytes(Path.Combine(dir, CerFileName), cert.Export(X509ContentType.Cert));
         return cert;
     }
@@ -75,7 +139,7 @@ public static class GatewayCertificate
         try
         {
             return X509CertificateLoader.LoadPkcs12(
-                File.ReadAllBytes(pfxPath), (string?)null, X509KeyStorageFlags.Exportable);
+                ReadPfx(pfxPath), (string?)null, X509KeyStorageFlags.Exportable);
         }
         catch
         {

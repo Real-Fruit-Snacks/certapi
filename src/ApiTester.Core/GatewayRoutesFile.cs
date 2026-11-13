@@ -143,7 +143,10 @@ public static class GatewayRoutesFile
                 {
                     if (h.Value.ValueKind != JsonValueKind.String)
                         throw new InvalidDataException($"{where}: site '{label}': header \"{h.Name}\" must have a string value.");
-                    headers.Add(new(h.Name, expand(h.Value.GetString()!, "headers." + h.Name)));
+                    string headerValue = expand(h.Value.GetString()!, "headers." + h.Name);
+                    if (HeaderValues.HasLineBreak(headerValue))
+                        throw new InvalidDataException($"{where}: site '{label}': header '{h.Name}' has a line break or NUL character in its value.");
+                    headers.Add(new(h.Name, headerValue));
                 }
             }
 

@@ -234,7 +234,10 @@ public static class CliApp
                 // The streaming commands take the same profile as everything else: a configuration
                 // that applies to `send` but not to `ws` would be a trap rather than a convenience.
                 if (PrintedHelp(cmd, g.Remaining, stdout)) return ExitCodes.Ok;
-                services.Profile = ResolveProfile(g.Config, g.Profile, g.NoConfig, services, log);
+                // mcp skips the walk-up rule: an MCP host picks its working directory, which may hold
+                // files the operator never chose (a cloned repository), and a profile there could
+                // turn off certificate checks or add a proxy for an agent's traffic.
+                services.Profile = ResolveProfile(g.Config, g.Profile, g.NoConfig, services, log, walkUp: cmd != "mcp");
                 // mcp reads stdin line by line; fuzz with "-w -" reads it to the end.
                 SecondCtrlCQuits = cmd == "mcp" || (cmd == "fuzz" && g.Remaining.Contains("-"));
                 return cmd switch
@@ -375,7 +378,7 @@ public static class CliApp
     /// to apply. <c>--no-config</c> short-circuits every discovery rule, which is what makes a run
     /// reproducible regardless of what happens to sit in the working directory.</summary>
     internal static ConfigProfile? ResolveProfile(
-        string? configPath, string? profileName, bool noConfig, CliServices services, CliLog log)
+        string? configPath, string? profileName, bool noConfig, CliServices services, CliLog log, bool walkUp = true)
     {
         if (noConfig) return null;
 
@@ -383,7 +386,7 @@ public static class CliApp
         try
         {
             source = ConfigLoader.Discover(
-                configPath, services.WorkingDirectory, services.UserConfigPath,
+                configPath, walkUp ? services.WorkingDirectory : "", services.UserConfigPath,
                 environment: services.Environment, fileExists: services.FileExists);
         }
         catch (ConfigException ex) { throw new CliDataException(ex.Message); }

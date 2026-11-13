@@ -42,6 +42,15 @@ public sealed class ApiClient : IDisposable
                     Error = new ApiError(ApiErrorKind.Unknown,
                         $"Invalid request: '{header.Key}' is not a valid header name (letters, digits and !#$%&'*+-.^_`|~ only).")
                 };
+        // A value carrying CR or LF would be written as further header lines, or as a second request
+        // on the same connection: the stack sends values without validating them.
+        foreach (var header in request.Headers)
+            if (HeaderValues.HasLineBreak(header.Value))
+                return new ApiResponse
+                {
+                    Error = new ApiError(ApiErrorKind.Unknown,
+                        $"Invalid request: the value of header '{header.Key}' contains a line break or NUL character.")
+                };
 
         // A URL this client cannot send (htps://, data:, a browser HAR's chrome-extension:) is one
         // failed request, not an exception that ends a whole run.
@@ -444,8 +453,11 @@ public sealed class ApiClient : IDisposable
                 if (!string.IsNullOrEmpty(cookieHeader))
                     message.Headers.TryAddWithoutValidation("Cookie", cookieHeader);
 
+                // With a body cap the body is streamed and cut, so it is never buffered whole first.
                 using var response = await http.SendAsync(
-                    message, HttpCompletionOption.ResponseContentRead, cancellationToken);
+                    message,
+                    transport.MaxResponseBytes is null ? HttpCompletionOption.ResponseContentRead : HttpCompletionOption.ResponseHeadersRead,
+                    cancellationToken);
 
                 // Applied before the redirect decision below, so the next hop carries what this one
                 // just set.
@@ -528,7 +540,12 @@ public sealed class ApiClient : IDisposable
 
                 stopwatch.Stop();
 
-                var bytes = await response.Content.ReadAsByteArrayAsync(cancellationToken);
+                bool truncated = false;
+                byte[] bytes;
+                if (transport.MaxResponseBytes is long cap)
+                    (bytes, truncated) = await ReadCappedAsync(response.Content, cap, cancellationToken);
+                else
+                    bytes = await response.Content.ReadAsByteArrayAsync(cancellationToken);
                 var headers = response.Headers
                     .Concat(response.Content.Headers)
                     .SelectMany(h => h.Value.Select(v => new KeyValuePair<string, string>(h.Key, v)))
@@ -540,6 +557,7 @@ public sealed class ApiClient : IDisposable
                     ReasonPhrase = response.ReasonPhrase,
                     Headers = headers,
                     Body = bytes,
+                    BodyTruncated = truncated,
                     ContentType = response.Content.Headers.ContentType?.ToString(),
                     Elapsed = stopwatch.Elapsed,
                     Redirects = hops,
@@ -938,6 +956,25 @@ public sealed class ApiClient : IDisposable
     // host:port, lowercased, IPv6 brackets stripped, computed from a Uri on both the recording side
     // (inside the ConnectCallback above) and the lookup side (BuildConnection in SendOnceAsync) so
     // the two can never disagree about which origin a connection belongs to.
+    /// <summary>Reads at most <paramref name="cap"/> bytes of a body and reports whether more was
+    /// there. The rest is never buffered: the connection is dropped instead of being drained.</summary>
+    private static async Task<(byte[] Bytes, bool Truncated)> ReadCappedAsync(
+        HttpContent content, long cap, CancellationToken ct)
+    {
+        await using var stream = await content.ReadAsStreamAsync(ct).ConfigureAwait(false);
+        using var buffer = new MemoryStream();
+        var chunk = new byte[81920];
+        while (buffer.Length <= cap)
+        {
+            int toRead = (int)Math.Min(chunk.Length, cap + 1 - buffer.Length);
+            int read = await stream.ReadAsync(chunk.AsMemory(0, toRead), ct).ConfigureAwait(false);
+            if (read == 0) return (buffer.ToArray(), false);
+            buffer.Write(chunk, 0, read);
+        }
+        var all = buffer.GetBuffer();
+        return (all.AsSpan(0, (int)cap).ToArray(), true);
+    }
+
     private static string OriginKey(Uri uri) => uri.Host.Trim('[', ']').ToLowerInvariant() + ":" + uri.Port;
 
     private static bool IsTokenChar(char c) =>

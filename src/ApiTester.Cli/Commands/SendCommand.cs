@@ -990,6 +990,8 @@ public static class SendCommand
         {
             if (binary) obj["bodyBase64"] = Convert.ToBase64String(r.Body);
             else obj["body"] = text;
+            // Only when a cap cut the body, so every other envelope keeps its shape.
+            if (r.BodyTruncated) obj["truncated"] = true;
         }
         return JsonSerializer.Serialize(obj, new JsonSerializerOptions { WriteIndented = true });
     }

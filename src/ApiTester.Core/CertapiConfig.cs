@@ -305,8 +305,10 @@ public static class ConfigLoader
                 {
                     string? raw = header.Value.GetString();
                     if (HasEnvironmentReference(raw)) secretHeaders.Add(header.Name);
-                    headers.Add(new(header.Name,
-                        Expand(raw, "headers." + header.Name, profileName, source, environment) ?? ""));
+                    string value = Expand(raw, "headers." + header.Name, profileName, source, environment) ?? "";
+                    if (HeaderValues.HasLineBreak(value))
+                        throw new ConfigException($"profile '{profileName}' in {source?.Path ?? "the configuration"}: header '{header.Name}' has a line break or NUL character in its value.");
+                    headers.Add(new(header.Name, value));
                 }
 
         ServeProfile? serve = null;

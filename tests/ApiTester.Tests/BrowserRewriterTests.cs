@@ -42,7 +42,7 @@ public class BrowserRewriterTests
     public void Preflight_is_answered_locally_with_204_and_the_exact_origin_echoed()
     {
         var request = Request("OPTIONS",
-            ("Origin", "https://app.example"),
+            ("Origin", "http://localhost:3000"),
             ("Access-Control-Request-Method", "PUT"),
             ("Access-Control-Request-Headers", "authorization, x-trace"));
 
@@ -50,7 +50,7 @@ public class BrowserRewriterTests
 
         Assert.NotNull(response);
         Assert.Equal(204, response!.StatusCode);
-        Assert.Equal("https://app.example", Value(response.Headers, "Access-Control-Allow-Origin"));
+        Assert.Equal("http://localhost:3000", Value(response.Headers, "Access-Control-Allow-Origin"));
         Assert.Equal("PUT", Value(response.Headers, "Access-Control-Allow-Methods"));
         Assert.Equal("authorization, x-trace", Value(response.Headers, "Access-Control-Allow-Headers"));
         Assert.Equal("true", Value(response.Headers, "Access-Control-Allow-Credentials"));
@@ -62,7 +62,7 @@ public class BrowserRewriterTests
     public void A_preflight_that_asks_for_private_network_access_in_echo_mode_is_granted_it()
     {
         var request = Request("OPTIONS",
-            ("Origin", "https://app.example"),
+            ("Origin", "http://localhost:3000"),
             ("Access-Control-Request-Method", "PUT"),
             ("Access-Control-Request-Private-Network", "true"));
 
@@ -70,7 +70,7 @@ public class BrowserRewriterTests
 
         Assert.NotNull(response);
         Assert.Equal(204, response!.StatusCode);
-        Assert.Equal("https://app.example", Value(response.Headers, "Access-Control-Allow-Origin"));
+        Assert.Equal("http://localhost:3000", Value(response.Headers, "Access-Control-Allow-Origin"));
         Assert.Equal("PUT", Value(response.Headers, "Access-Control-Allow-Methods"));
         Assert.Equal("true", Value(response.Headers, "Access-Control-Allow-Credentials"));
         Assert.Equal("true", Value(response.Headers, "Access-Control-Allow-Private-Network"));
@@ -80,12 +80,12 @@ public class BrowserRewriterTests
     public void A_private_network_request_from_an_origin_inside_an_explicit_allowlist_is_granted_it()
     {
         var request = Request("OPTIONS",
-            ("Origin", "https://app.example"),
+            ("Origin", "http://localhost:3000"),
             ("Access-Control-Request-Method", "PUT"),
             ("Access-Control-Request-Private-Network", "true"));
 
         var response = BrowserRewriter.TryPreflight(
-            request, Options(cors: true, allowedOrigins: new[] { "https://app.example" }));
+            request, Options(cors: true, allowedOrigins: new[] { "http://localhost:3000" }));
 
         Assert.NotNull(response);
         Assert.Equal(204, response!.StatusCode);
@@ -101,7 +101,7 @@ public class BrowserRewriterTests
             ("Access-Control-Request-Private-Network", "true"));
 
         var response = BrowserRewriter.TryPreflight(
-            request, Options(cors: true, allowedOrigins: new[] { "https://app.example" }));
+            request, Options(cors: true, allowedOrigins: new[] { "http://localhost:3000" }));
 
         Assert.NotNull(response);
         Assert.Equal(403, response!.StatusCode);
@@ -132,7 +132,7 @@ public class BrowserRewriterTests
         // Explicitly empty is not null: null means "echo whatever asked", empty means the
         // operator listed nothing, so nothing may pass.
         var request = Request("OPTIONS",
-            ("Origin", "https://app.example"),
+            ("Origin", "http://localhost:3000"),
             ("Access-Control-Request-Method", "PUT"));
 
         var response = BrowserRewriter.TryPreflight(request,
@@ -147,7 +147,7 @@ public class BrowserRewriterTests
     public void A_preflight_that_does_not_ask_for_private_network_access_gets_no_such_header()
     {
         var request = Request("OPTIONS",
-            ("Origin", "https://app.example"),
+            ("Origin", "http://localhost:3000"),
             ("Access-Control-Request-Method", "PUT"));
 
         var response = BrowserRewriter.TryPreflight(request, Options(cors: true));
@@ -164,7 +164,7 @@ public class BrowserRewriterTests
         string value)
     {
         var request = Request("OPTIONS",
-            ("Origin", "https://app.example"),
+            ("Origin", "http://localhost:3000"),
             ("Access-Control-Request-Method", "PUT"),
             ("Access-Control-Request-Private-Network", value));
 
@@ -181,7 +181,7 @@ public class BrowserRewriterTests
         string headerName, string headerValue)
     {
         var request = Request("OPTIONS",
-            ("Origin", "https://app.example"),
+            ("Origin", "http://localhost:3000"),
             ("Access-Control-Request-Method", "PUT"),
             (headerName, headerValue));
 
@@ -195,7 +195,7 @@ public class BrowserRewriterTests
     public void A_private_network_preflight_is_still_forwarded_when_cors_handling_is_off()
     {
         var request = Request("OPTIONS",
-            ("Origin", "https://app.example"),
+            ("Origin", "http://localhost:3000"),
             ("Access-Control-Request-Method", "PUT"),
             ("Access-Control-Request-Private-Network", "true"));
 
@@ -208,7 +208,7 @@ public class BrowserRewriterTests
     public void Access_control_max_age_reflects_the_configured_value(int seconds, string expected)
     {
         var request = Request("OPTIONS",
-            ("Origin", "https://app.example"),
+            ("Origin", "http://localhost:3000"),
             ("Access-Control-Request-Method", "PUT"));
 
         var response = BrowserRewriter.TryPreflight(
@@ -222,7 +222,7 @@ public class BrowserRewriterTests
     public void Preflight_omits_allow_headers_when_the_request_asked_for_none()
     {
         var request = Request("OPTIONS",
-            ("Origin", "https://app.example"),
+            ("Origin", "http://localhost:3000"),
             ("Access-Control-Request-Method", "GET"));
 
         var response = BrowserRewriter.TryPreflight(request, Options(cors: true));
@@ -233,9 +233,9 @@ public class BrowserRewriterTests
     }
 
     [Theory]
-    [InlineData("GET", "https://app.example", "PUT")]     // not an OPTIONS at all
+    [InlineData("GET", "http://localhost:3000", "PUT")]     // not an OPTIONS at all
     [InlineData("OPTIONS", null, "PUT")]                  // no Origin: not a cross-origin request
-    [InlineData("OPTIONS", "https://app.example", null)]  // a plain OPTIONS the upstream should answer
+    [InlineData("OPTIONS", "http://localhost:3000", null)]  // a plain OPTIONS the upstream should answer
     [InlineData("OPTIONS", null, null)]
     public void A_request_that_is_not_a_preflight_is_left_to_be_forwarded(
         string method, string? origin, string? requestMethod)
@@ -252,7 +252,7 @@ public class BrowserRewriterTests
     public void A_preflight_is_forwarded_untouched_when_cors_handling_is_off()
     {
         var request = Request("OPTIONS",
-            ("Origin", "https://app.example"),
+            ("Origin", "http://localhost:3000"),
             ("Access-Control-Request-Method", "PUT"));
 
         Assert.Null(BrowserRewriter.TryPreflight(request, Options(cors: false)));
@@ -266,7 +266,7 @@ public class BrowserRewriterTests
             ("Access-Control-Request-Method", "POST"));
 
         var response = BrowserRewriter.TryPreflight(
-            request, Options(cors: true, allowedOrigins: new[] { "https://app.example" }));
+            request, Options(cors: true, allowedOrigins: new[] { "http://localhost:3000" }));
 
         Assert.NotNull(response);
         Assert.Equal(403, response!.StatusCode);
@@ -274,8 +274,8 @@ public class BrowserRewriterTests
     }
 
     [Theory]
-    [InlineData("https://app.example")]
-    [InlineData("https://APP.example")]   // an origin comparison is case-insensitive
+    [InlineData("http://localhost:3000")]
+    [InlineData("http://LOCALHOST:3000")]   // an origin comparison is case-insensitive
     public void A_preflight_from_an_origin_inside_the_allowlist_is_answered(string origin)
     {
         var request = Request("OPTIONS",
@@ -283,7 +283,7 @@ public class BrowserRewriterTests
             ("Access-Control-Request-Method", "POST"));
 
         var response = BrowserRewriter.TryPreflight(
-            request, Options(cors: true, allowedOrigins: new[] { "https://app.example" }));
+            request, Options(cors: true, allowedOrigins: new[] { "http://localhost:3000" }));
 
         Assert.NotNull(response);
         Assert.Equal(204, response!.StatusCode);
@@ -300,11 +300,11 @@ public class BrowserRewriterTests
             ("access-control-allow-credentials", "false"));
 
         var result = BrowserRewriter.RewriteResponseHeaders(
-            upstream, "https://app.example", Route(), Options(cors: true), out var warnings);
+            upstream, "http://localhost:3000", Route(), Options(cors: true), out var warnings);
 
         // A duplicate Access-Control-Allow-Origin is a hard browser failure, so the count matters
         // as much as the value.
-        Assert.Equal(new[] { "https://app.example" }, Values(result, "Access-Control-Allow-Origin"));
+        Assert.Equal(new[] { "http://localhost:3000" }, Values(result, "Access-Control-Allow-Origin"));
         Assert.Equal(new[] { "true" }, Values(result, "Access-Control-Allow-Credentials"));
         Assert.Empty(Values(result, "Access-Control-Allow-Methods"));
         Assert.Equal("Origin", Value(result, "Vary"));
@@ -323,7 +323,7 @@ public class BrowserRewriterTests
             ("x-request-id", "def"));   // a repeated header is still one name
 
         var result = BrowserRewriter.RewriteResponseHeaders(
-            upstream, "https://app.example", Route(), Options(cors: true), out _);
+            upstream, "http://localhost:3000", Route(), Options(cors: true), out _);
 
         // A wildcard is not honored under Access-Control-Allow-Credentials: true, so the names are
         // spelled out — in the order they appear, de-duplicated case-insensitively.
@@ -342,7 +342,7 @@ public class BrowserRewriterTests
         string name, string value)
     {
         var result = BrowserRewriter.RewriteResponseHeaders(
-            Headers((name, value)), "https://app.example", Route(), Options(cors: true), out _);
+            Headers((name, value)), "http://localhost:3000", Route(), Options(cors: true), out _);
 
         Assert.Empty(Values(result, "Access-Control-Expose-Headers"));
     }
@@ -356,7 +356,7 @@ public class BrowserRewriterTests
 
         var result = BrowserRewriter.RewriteResponseHeaders(
             upstream, "https://evil.example", Route(),
-            Options(cors: true, allowedOrigins: new[] { "https://app.example" }), out var warnings);
+            Options(cors: true, allowedOrigins: new[] { "http://localhost:3000" }), out var warnings);
 
         // The upstream's own policy is stripped even though ours is not injected: the browser must
         // not be handed a permission the operator did not grant.
@@ -401,7 +401,7 @@ public class BrowserRewriterTests
             ("Content-Type", "application/json"));
 
         var result = BrowserRewriter.RewriteResponseHeaders(
-            upstream, "https://app.example", Route(), Options(cors: false), out var warnings);
+            upstream, "http://localhost:3000", Route(), Options(cors: false), out var warnings);
 
         Assert.Equal(upstream, result);
         Assert.Empty(warnings);
@@ -668,10 +668,10 @@ public class BrowserRewriterTests
         var before = upstream.ToList();
 
         var result = BrowserRewriter.RewriteResponseHeaders(
-            upstream, "https://app.example", Route("/api", "https://api.internal/"),
+            upstream, "http://localhost:3000", Route("/api", "https://api.internal/"),
             Options(cors: true, rewriteCookies: true, rewriteLocation: true), out var warnings);
 
-        Assert.Equal(new[] { "https://app.example" }, Values(result, "Access-Control-Allow-Origin"));
+        Assert.Equal(new[] { "http://localhost:3000" }, Values(result, "Access-Control-Allow-Origin"));
         Assert.Equal("Set-Cookie, Location", Value(result, "Access-Control-Expose-Headers"));
         // Path re-rooted under the /api mount, so the cookie comes back for that upstream only.
         Assert.Equal("__Host-session=abc; Path=/api; SameSite=Lax", Value(result, "Set-Cookie"));

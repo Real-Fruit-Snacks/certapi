@@ -26,6 +26,14 @@ public sealed class RequestRunContext
     /// sets it to its host allowlist; checked per request, after variables resolve, so a chain step
     /// whose URL comes from an earlier step's capture is still gated.</summary>
     public Func<string, string?>? AllowUrl { get; init; }
+    /// <summary>The variables a request would resolve against without the caller's own overrides.
+    /// When set, a request whose resolved scheme, host or port differs from what these give is
+    /// refused: a caller may fill values into a saved request but not choose where it — with its
+    /// saved credentials — is sent. Null (every existing caller) applies no such check.</summary>
+    public Func<Dictionary<string, string>>? BaselineVariables { get; init; }
+    /// <summary>Refuse a <c>Host</c> header that names a different authority than the URL. Set by
+    /// the MCP server, whose allow-list judges the URL.</summary>
+    public bool RefuseHostOverride { get; init; }
     public bool NoAutoToken { get; init; }
     public bool StrictVars { get; init; }
     public bool Record { get; init; }
@@ -152,10 +160,22 @@ public static class RequestRunner
         string host = TokenService.HostOf(url);
         string? body = string.IsNullOrEmpty(m.Body) ? null : R(m.Body!);
 
+        // Checked before anything is attached or sent: a saved request's secrets go where the
+        // operator saved it to send them, whatever values the caller fills in.
+        if (ctx.BaselineVariables is { } baselineOf)
+        {
+            var savedVars = baselineOf();
+            string savedUrl = m.EffectiveUrl(t => VariableResolver.Resolve(t ?? "", savedVars).Result);
+            if (RequestGuards.OriginChanged(savedUrl, url) is { } moved)
+                return (new ApiResponse { Error = new ApiError(ApiErrorKind.Unknown, moved) }, url);
+        }
+
         // Gated before the auto-token attach below, not just before the send: a captured token
         // must never even be offered to a host the gate refuses.
         if (ctx.AllowUrl?.Invoke(url) is { } refused)
             return (new ApiResponse { Error = new ApiError(ApiErrorKind.Unknown, refused) }, url);
+        if (ctx.RefuseHostOverride && RequestGuards.HostHeaderMismatch(url, headers) is { } hostProblem)
+            return (new ApiResponse { Error = new ApiError(ApiErrorKind.Unknown, hostProblem) }, url);
 
         if (!ctx.NoAutoToken && m.AuthType == "Auto" &&
             TokenService.AutoAttach(ctx.State, url, headers, out _) is { } used)

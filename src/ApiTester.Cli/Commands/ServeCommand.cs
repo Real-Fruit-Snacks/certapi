@@ -315,6 +315,10 @@ public static class ServeCommand
         if (winPass is not null && winUser is null)
             throw new CliUsageException("--windows-password needs --windows-user.");
         string? token = args.Value("--token") ?? sp?.Token;
+        // An empty value — an unset variable in a script, say — would satisfy the token check for
+        // anyone who sends an empty header, while the banner says a token is required.
+        if (token is not null && token.Trim().Length == 0)
+            throw new CliUsageException("--token needs a value: an empty token would let any caller in.");
         string? timeoutRaw = args.Value("--timeout") ?? sp?.Timeout?.ToString();
         string? workspace = args.Value("--workspace");
         bool quiet = args.Flag("-q", "--quiet");
@@ -457,6 +461,10 @@ public static class ServeCommand
                     throw new CliUsageException($"--allow entries are host names, not URLs or host:port, got '{e}'.");
             allow = new UpstreamAllowlist(entries);
         }
+        // The signed-in Windows account answers whatever Negotiate/NTLM challenge an upstream sends.
+        // With --allow * a caller can name any host, and that host can ask for it.
+        if (allow is { AllowsAnyHost: true } && (windowsAuth || winUser is not null))
+            throw new CliUsageException("--windows-auth cannot be combined with --allow *: any host a caller names could ask for your Windows sign-in. List the hosts instead.");
 
         int corsMaxAge = BrowserOptions.DefaultCorsMaxAgeSeconds;
         if (corsMaxAgeRaw is not null)
@@ -593,7 +601,7 @@ public static class ServeCommand
         // The table of sites and what the gateway does to all of them — the startup banner and the
         // whole output of --check, built once so the two can never disagree.
         var browserParts = new List<string>();
-        if (cors) browserParts.Add("cors");
+        if (cors) browserParts.Add(corsOrigins is null ? "cors (pages on this machine)" : "cors (" + corsOrigins + ")");
         if (rewriteCookies) browserParts.Add("rewrite-cookies");
         if (rewriteLocation) browserParts.Add("rewrite-location");
         if (allowUpgrade) browserParts.Add("allow-upgrade");
@@ -637,11 +645,15 @@ public static class ServeCommand
         }
         if (allow is { AllowsAnyHost: true })
             summary.Add("  warning: --allow * makes this an open relay carrying your client certificate to any host a local caller names.");
+        if (allow is not null && allow.Entries.Any(e => e.StartsWith("*.", StringComparison.Ordinal)) && (windowsAuth || winUser is not null))
+            summary.Add("  warning: --windows-auth with a wildcard --allow entry answers a Windows sign-in challenge from any host under it that a caller names.");
+        if (token is not null && token.Length < 16)
+            summary.Add("  warning: the --token is shorter than 16 characters; use a long random value.");
         if (cookieJarFile is not null) summary.Add($"  the cookie jar is written to {cookieJarFile} (encrypted) at shutdown.");
         if (replay is not null)
             summary.Add($"  replay mode: answering from {replayPath} ({replay.Count} recorded exchange(s)) — the upstream is never contacted.");
         if (recorder is not null)
-            summary.Add($"  recording every forwarded exchange to {recordPath}" + (recordIncludeSecrets ? " (secrets included)." : " (secrets redacted; --record-include-secrets keeps them)."));
+            summary.Add($"  recording every forwarded exchange to {recordPath}" + (recordIncludeSecrets ? " (secrets included)." : " (credential headers, credential query values — redirect addresses included — and credential fields in JSON and form bodies are redacted; other body content is kept; --record-include-secrets keeps everything)."));
 
         // --check stops here: every site, certificate, file and flag has been resolved and
         // validated, and nothing has been bound, installed or contacted.
@@ -889,7 +901,14 @@ public static class ServeCommand
             string p = LoopbackTlsBinding.NormalizeThumbprint(previous);
             if (!p.Equals(thumb, StringComparison.OrdinalIgnoreCase) && GatewayCertificate.Untrust(p))
                 stderr.WriteLine($"removed an earlier gateway certificate {p} from CurrentUser\\Root.");
+            if (LoopbackTlsBinding.RemoveMachineCopy(p))
+                stderr.WriteLine($"removed the copy of {p} that --tls installed in LocalMachine\\My.");
         }
+        // The copy --tls installed for http.sys, with a key persisted for the machine.
+        if (LoopbackTlsBinding.RemoveMachineCopy(thumb))
+            stderr.WriteLine($"removed the copy of {thumb} that --tls installed in LocalMachine\\My.");
+        else if (OperatingSystem.IsWindows())
+            stderr.WriteLine($"if --tls bound a port, a copy of {thumb} may remain in LocalMachine\\My; run this from an elevated prompt to remove it.");
         return ExitCodes.Ok;
     }
 
@@ -903,7 +922,10 @@ public static class ServeCommand
         {
             int colon = entry.IndexOf(':');
             if (colon <= 0) throw new CliUsageException($"{flag} expects \"Name: value\", got '{entry}'.");
-            result.Add(new(entry[..colon].Trim(), entry[(colon + 1)..].Trim()));
+            string value = entry[(colon + 1)..].Trim();
+            if (HeaderValues.HasLineBreak(value))
+                throw new CliUsageException($"{flag} '{entry[..colon].Trim()}': the value contains a line break or NUL character, which would be sent as another header line.");
+            result.Add(new(entry[..colon].Trim(), value));
         }
         return result;
     }
@@ -1138,7 +1160,7 @@ public static class ServeCommand
 
         try
         {
-            await relay.RelayAsync(accepted.WebSocket, upstream, subProtocols, headers, ct);
+            await relay.RelayAsync(accepted.WebSocket, upstream, route, subProtocols, headers, ct);
             log($"{method,-6} {pathAndQuery}  -> 101 (websocket closed)");
         }
         catch (Exception ex)
@@ -1190,6 +1212,18 @@ public static class ServeCommand
                 return;
             }
 
+            // DNS rebinding: a page on attacker.example whose name now resolves to 127.0.0.1 is
+            // same-origin with the gateway, so no CORS rule applies to it. Its Host header still
+            // names attacker.example, which no loopback-only gateway has any reason to answer.
+            // With --listen beyond loopback callers use other names, and the token guards them.
+            if (policy.LoopbackOnly && HostRefused(req.Headers["Host"]) is { } badHost)
+            {
+                res.StatusCode = 421;
+                res.Close();
+                log($"{method,-6} {pathAndQuery}  -> 421 (Host '{badHost}' is not a name this gateway answers)");
+                return;
+            }
+
             // A request to a virtual host is the same request to its mount: the Host header picks
             // the prefix, and from here on the path-based gateway answers it. What the browser then
             // sees — Location, cookies, Origin — is measured against that host's own origin, with
@@ -1229,6 +1263,16 @@ public static class ServeCommand
                     log($"{method,-6} {pathAndQuery}  -> {early.StatusCode} (preflight)");
                     return;
                 }
+            }
+
+            // A preflight protects only what needs one: a form POST, an image or a WebSocket from
+            // another site arrives without asking. Refused here, before anything is forwarded.
+            if (BrowserRewriter.RefuseCrossSite(method, HeaderList(req), browser) is { } crossSite)
+            {
+                res.StatusCode = 403;
+                res.Close();
+                log($"{method,-6} {pathAndQuery}  -> 403 ({crossSite})");
+                return;
             }
 
             if (policy.Token is not null && !TokenOk(req, policy.Token))
@@ -1609,6 +1653,22 @@ public static class ServeCommand
     }
 
     /// <summary>No --listen, or one naming this machine's loopback: only local callers are answered.</summary>
+    /// <summary>The Host header's name when it is not one a loopback-only gateway answers —
+    /// a loopback address, <c>localhost</c> or <c>*.localhost</c> (which covers --vhost names) —
+    /// or null when it is fine. A request with no Host is HTTP/1.0 and is let through.</summary>
+    internal static string? HostRefused(string? hostHeader)
+    {
+        if (string.IsNullOrWhiteSpace(hostHeader)) return null;
+        string host = hostHeader.Trim();
+        if (host.StartsWith('['))
+        {
+            int close = host.IndexOf(']');
+            host = close > 0 ? host[..(close + 1)] : host;
+        }
+        else if (host.LastIndexOf(':') is var colon and > 0) host = host[..colon];
+        return BrowserRewriter.IsLocalHostName(host) ? null : host;
+    }
+
     internal static bool IsLoopbackListen(string? listen) =>
         listen is null || listen.Trim() is "127.0.0.1" or "::1" or "[::1]" or "localhost";
 
