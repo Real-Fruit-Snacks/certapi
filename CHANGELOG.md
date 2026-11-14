@@ -42,6 +42,55 @@ All notable changes to this project are documented here. The format follows
 - `serve --allow-framing [<origins>]`: let pages be framed by this machine's pages or the origins
   listed. `X-Frame-Options` and CSP `frame-ancestors` are replaced. Not part of `--browser`.
 - `serve --open [<path>]`: open the browser at the first site once the gateway is listening.
+- `certapi call <spec> <operationId>`: calls one OpenAPI operation by name, with each `--param`
+  placed where the document puts it (path, query, header, cookie), then checks the status and the
+  body against the document's schema. A missing required parameter stops the call; `--list` lists
+  the operations; every `send` option applies.
+- `certapi tls <host[:port]>`: a TLS handshake with any service (HTTPS, LDAPS, a database, a
+  broker; `--starttls` for SMTP, IMAP, POP3, FTP, LDAP and PostgreSQL) and what it showed:
+  protocol, cipher, ALPN, the chain with each key's SHA-256, trust, and whether a client
+  certificate was asked for, with the issuers it accepts.
+- `certapi crawl <url>`: walks a site's links with the client certificate and reports each page and
+  resource, with broken links listed and exit 1 when there are any. Scope, depth, include/exclude,
+  `robots.txt`, parallelism and `--mirror <dir>` for an offline copy.
+- `certapi browse <url>`: renders a page in WebView2 with every request sent by certapi with the
+  client certificate, then saves a screenshot (`--full-page` too), a PDF, the rendered DOM, or the
+  result of `--script`. `--wait-for <selector>` waits for a single-page app; headers go to the
+  page's own origin only.
+- `certapi signalr <hub-url>`: negotiates (following an Azure SignalR redirect), does the JSON hub
+  handshake over a WebSocket with the certificate, calls methods (`--invoke`, `--send`, `--stream`)
+  and prints the events the hub sends (`--on`, `--count`, `--seconds`).
+- `certapi mqtt <broker-url>`: an MQTT 3.1.1 / 5.0 client over `mqtts://` or `wss://` that presents
+  the client certificate; subscribe, publish (QoS 0 or 1, retained), and the broker's reason when it
+  refuses a connection or a subscription.
+- `grpc --grpc-web` and `--grpc-web-text`: gRPC-Web for services behind Envoy, grpcwebproxy,
+  `UseGrpcWeb` or a Connect server. Unary and server-streaming methods; needs `--protoset`.
+- `token --client-auth private_key_jwt`: an RFC 7523 client assertion signed by the certificate's
+  key (RS256, ES256/384/512) instead of a secret, as Entra ID's certificate credentials expect;
+  `--assertion-aud` sets the audience. `--client-auth tls_client_auth` (RFC 8705) lets the
+  handshake authenticate the client. A token bound to the certificate (`cnf.x5t#S256`) is reported.
+- `token --grant code`: browser sign-in with PKCE from the command line, the redirect caught on
+  loopback; `--authorize-url`, `--redirect-port`, `--no-browser`.
+- `send` takes more of curl: `-b`/`--cookie` (a string or a Netscape cookie file),
+  `--data-urlencode`, `-w`/`--write-out` with curl's variables, `-r`/`--range`, `-C`/`--continue-at`
+  to resume a download, and `--max-filesize`.
+- `certapi cors <url> --origin <o>`: checks a URL the way a browser checks a cross-origin request.
+  Says whether a preflight is needed and why, sends it as a browser does (no cookies or
+  `Authorization`), sends the request with `Origin` (GET and HEAD only, unless `--actual`), and
+  lists each CORS rule that passed or failed, the verdict (exit 0 or 1) and the headers a script
+  could read. `--credentials` applies the stricter rules.
+- `send --origin <o>`: sends the `Origin` header and says on stderr whether a page on that origin
+  could read the response, with and without credentials.
+- `mock --cors [<origins>]`: the mock answers preflights and sets CORS headers like a server with a
+  policy; an origin not listed gets a 403 preflight and no CORS headers.
+- `serve --cors-headers` and `--cors-expose`: fixed lists for `Access-Control-Allow-Headers` and
+  `Access-Control-Expose-Headers` instead of echoing and exposing everything.
+- `mcp`: a `cors_check` tool, the same check for an agent, on allowed hosts only.
+- Transport options: `--connect-to` (send a host's connections elsewhere, port included),
+  `--interface` (a local address or adapter to send from), `--unix-socket` and `--named-pipe` (the
+  Docker engine API, among others), `--pinnedpubkey` (curl's public-key pins, checked as well as
+  the chain), `--proxy-header` (headers for the proxy's `CONNECT` only) and
+  `--http2-prior-knowledge` (h2c).
 
 ### Changed
 - `serve` always drops response headers that would leave lasting state on the gateway's own
@@ -53,6 +102,9 @@ All notable changes to this project are documented here. The format follows
   which sent the page's own requests to an https port nothing answers, and drops a cookie's
   `Partitioned` attribute, which needs `Secure`.
 - `serve --rewrite-location` also rewrites the URLs in `Link` and `Content-Location`.
+- `-b`, `--cookie`, `--data-urlencode` and `-w`/`--write-out` are no longer refused as curl habits
+  with another meaning: they now do what curl does.
+- `certapi.exe` carries the WebView2 loader inside it, for `browse`.
 
 ## [1.97.0] - 2026-11-13
 

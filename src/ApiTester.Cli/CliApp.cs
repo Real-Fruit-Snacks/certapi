@@ -133,12 +133,19 @@ public static class CliApp
 
         Commands:
           send <url>        Send a one-off request (client cert from the Windows store)
+          call <spec> <op>  Call an OpenAPI operation by operationId, checked against the spec
           token             Fetch an OAuth 2.0 access token (and optionally save it)
           run <path>        Run saved requests from your collections (or --all)
           fuzz <base-url>   Discover endpoints from a wordlist (which ones exist?)
           bench <url>       Measure an endpoint's latency under load (how fast is it?)
           sse <url>         Stream Server-Sent Events (text/event-stream)
           ws <url>          Open a WebSocket, send messages, print what arrives
+          signalr <hub>     Connect to a SignalR hub: invoke methods, print events
+          mqtt <broker>     Subscribe and publish over MQTT (mqtts:// or wss://)
+          browse <url>      Render a page in WebView2 with the certificate: screenshot, PDF, DOM
+          crawl <url>       Crawl a site with the certificate: broken links, or a mirror
+          tls <host>        Inspect any TLS service: chain, protocol, the CAs it asks a cert from
+          cors <url>        Would a browser on --origin allow this request? Preflight and all
           doctor <url>      Diagnose a connection stage by stage (why can't I reach this?)
           proxy [<url>]     Show the machine's proxy settings, and which proxy a URL gets
           connections <url> Are connections actually being reused? (pool inspector)
@@ -247,6 +254,8 @@ public static class CliApp
                     "ws"   => Commands.WsCommand.Run(new Args(g.Remaining), input, stdout, err, services),
                     "sse"  => Commands.SseCommand.Run(new Args(g.Remaining), stdout, err, services),
                     "grpc" => Commands.GrpcCommand.Run(new Args(g.Remaining), input, stdout, err, services),
+                    "mqtt" => Commands.MqttCommand.Run(new Args(g.Remaining), input, stdout, err, services),
+                    "signalr" => Commands.SignalRCommand.Run(new Args(g.Remaining), input, stdout, err, services),
                     _      => throw new CliUsageException($"Unknown command '{cmd}'.\n{Usage}")
                 };
             }
@@ -264,7 +273,9 @@ public static class CliApp
         arg.Equals("fuzz", StringComparison.OrdinalIgnoreCase) ||
         arg.Equals("ws", StringComparison.OrdinalIgnoreCase) ||
         arg.Equals("sse", StringComparison.OrdinalIgnoreCase) ||
-        arg.Equals("grpc", StringComparison.OrdinalIgnoreCase);
+        arg.Equals("grpc", StringComparison.OrdinalIgnoreCase) ||
+        arg.Equals("mqtt", StringComparison.OrdinalIgnoreCase) ||
+        arg.Equals("signalr", StringComparison.OrdinalIgnoreCase);
 
     public static int Run(string[] args, TextWriter stdout, TextWriter stderr,
                           Stream? bodyOut = null, CliServices? services = null)
@@ -324,6 +335,13 @@ public static class CliApp
                 "config" => Commands.ConfigCommand.Run(new Args(rest), stdout, err, services),
                 "completion" => Commands.CompletionCommand.Run(new Args(rest), stdout, err),
                 "update" => Commands.UpdateCommand.Run(new Args(rest), stdout, err, services),
+                "call" => Commands.CallCommand.Run(new Args(rest), stdout, err, bodyOut ?? new MemoryStream(), services),
+                "tls" => Commands.TlsCommand.Run(new Args(rest), stdout, err, services),
+                "cors" => Commands.CorsCommand.Run(new Args(rest), stdout, err, services),
+                "crawl" => Commands.CrawlCommand.Run(new Args(rest), stdout, err, services),
+                "browse" => Commands.BrowseCommand.Run(new Args(rest), TextReader.Null, stdout, err, services),
+                "signalr" => Commands.SignalRCommand.Run(new Args(rest), TextReader.Null, stdout, err, services),
+                "mqtt" => Commands.MqttCommand.Run(new Args(rest), TextReader.Null, stdout, err, services),
                 _ => throw new CliUsageException($"Unknown command '{g.Remaining[0]}'.\n{Usage}")
             };
         }
@@ -465,6 +483,13 @@ public static class CliApp
         "config" => Commands.ConfigCommand.Help,
         "completion" => Commands.CompletionCommand.Help,
         "update" => Commands.UpdateCommand.Help,
+        "call" => Commands.CallCommand.Help,
+        "tls" => Commands.TlsCommand.Help,
+        "cors" => Commands.CorsCommand.Help,
+        "crawl" => Commands.CrawlCommand.Help,
+        "browse" => Commands.BrowseCommand.Help,
+        "signalr" => Commands.SignalRCommand.Help,
+        "mqtt" => Commands.MqttCommand.Help,
         _ => null
     };
 

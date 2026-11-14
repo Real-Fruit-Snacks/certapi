@@ -18,7 +18,7 @@ public static class McpCommand
         Runs a Model Context Protocol server on stdio so an AI agent can make mutual-TLS calls
         with a pinned Windows-store client certificate. Tools: send_request, run_saved, run_chain,
         list_saved, list_environments, list_certificates, grpc_list, grpc_call, ws_exchange,
-        sse_read, self_test. Saved
+        sse_read, cors_check, self_test. Saved
         requests, environments, and chains are also published as read-only MCP resources.
         Configure your MCP host to launch this command.
 
@@ -586,6 +586,59 @@ public static class McpCommand
                                          noAutoToken, timeout, maxBody, CallCt()))
         { Annotations = new ToolAnnotations(ReadOnlyHint: false, DestructiveHint: false, IdempotentHint: false, OpenWorldHint: true) };
 
+        // ---- cors_check ----
+        var corsCheck = new ToolDef("cors_check",
+            "Check whether a browser page on `origin` may make this request to an allowed host and read the response: sends the preflight a browser would (when one is needed) and the request itself with an Origin header, with the pinned certificate, and judges both against the CORS rules. Returns the verdict, each rule that passed or failed, and which response headers a script can read. An unsafe method (not GET/HEAD) is only preflighted unless sendActual is true.",
+            JsonNode.Parse("""
+                {"type":"object","additionalProperties":false,"required":["url","origin"],"properties":{
+                  "url":{"type":"string","description":"Absolute http(s):// URL on an allowed host"},
+                  "origin":{"type":"string","description":"The page's origin, e.g. https://app.example.com"},
+                  "method":{"type":"string","description":"The method the page's script uses (default GET)"},
+                  "headers":{"type":"object","additionalProperties":{"type":"string"},"description":"Headers the script sets"},
+                  "body":{"type":"string"},
+                  "contentType":{"type":"string","description":"The body's type (default application/json when there is a body)"},
+                  "credentials":{"type":"boolean","description":"The page sends cookies / credentials: 'include' (default false)"},
+                  "sendActual":{"type":"boolean","description":"Also send the request itself for an unsafe method (default false)"}}}
+                """)!,
+            a =>
+            {
+                string? url = Str(a, "url");
+                string? originArg = Str(a, "origin");
+                if (string.IsNullOrWhiteSpace(url)) return Err("url is required");
+                if (string.IsNullOrWhiteSpace(originArg)) return Err("origin is required");
+                if (!Uri.TryCreate(url, UriKind.Absolute, out var target) || target.Scheme is not ("http" or "https"))
+                    return Err("url must be an absolute http:// or https:// URL");
+                if (Gate(url!) is { } refused) return Err(refused);
+                string origin;
+                try { origin = CorsCommand.NormalizeOrigin(originArg!); }
+                catch (CliUsageException ex) { return Err(ex.Message); }
+                string method = (Str(a, "method") ?? "GET").ToUpperInvariant();
+                if (method.Length == 0 || method.Any(char.IsWhiteSpace)) return Err(MethodOption.Describe("method", method));
+                var headerList = ObjPairs(a, "headers").ToList();
+                if (RequestGuards.HostHeaderMismatch(url!, headerList) is { } hostProblem) return Err(hostProblem);
+                foreach (var h in headerList)
+                    if (HeaderValues.Problem(h.Key, h.Value) is { } valueProblem) return Err(valueProblem);
+                string? body = Str(a, "body");
+                string? type = Str(a, "contentType");
+                if (type is not null)
+                {
+                    headerList.RemoveAll(h => h.Key.Equals("Content-Type", StringComparison.OrdinalIgnoreCase));
+                    headerList.Add(new("Content-Type", type));
+                }
+                else if (body is not null && !headerList.Any(h => h.Key.Equals("Content-Type", StringComparison.OrdinalIgnoreCase)))
+                    headerList.Add(new("Content-Type", "application/json"));
+                bool credentials = a.TryGetProperty("credentials", out var cr) && cr.ValueKind == JsonValueKind.True;
+                bool sendActual = a.TryGetProperty("sendActual", out var sa) && sa.ValueKind == JsonValueKind.True;
+                var transport = McpTransport(new TransportOptions()) with { FollowRedirects = false };
+                if (ApiClient.ValidateTransport(transport, url!) is { } transportProblem) return Err(transportProblem);
+                var corsRequest = new CorsRequest(origin, method, headerList, credentials);
+                var result = CorsProbe.RunAsync(url!, corsRequest, body, type, sendActual ? true : null,
+                    r => services.Client.SendAsync(r, cert, transport, predicates.For(TokenService.HostOf(url!)), cancellationToken: CallCt()),
+                    TimeSpan.FromSeconds(timeout)).GetAwaiter().GetResult();
+                return new ToolResult(CorsCommand.Json(result, corsRequest, MarkdownSecrets.RedactUrl(url!)), false);
+            })
+        { Annotations = new ToolAnnotations(ReadOnlyHint: false, DestructiveHint: true, IdempotentHint: false, OpenWorldHint: true) };
+
         // ---- self_test ----
         var selfTest = new ToolDef("self_test",
             "Prove the mutual-TLS path end to end against a built-in loopback server.",
@@ -605,7 +658,7 @@ public static class McpCommand
         var tools = new[]
         {
             sendRequest, runSaved, runChain, listSaved, listEnvironments, listCerts,
-            grpcList, grpcCall, wsExchange, sseRead, selfTest
+            grpcList, grpcCall, wsExchange, sseRead, corsCheck, selfTest
         };
         return (tools, BuildResources(state));
     }

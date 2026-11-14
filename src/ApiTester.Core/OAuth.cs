@@ -18,7 +18,13 @@ public enum OAuthClientAuth
     /// <summary>client_id / client_secret in the form body (client_secret_post).</summary>
     Body,
     /// <summary>HTTP Basic with client_id:client_secret (client_secret_basic).</summary>
-    Basic
+    Basic,
+    /// <summary>A JWT client assertion signed with the client certificate's private key
+    /// (private_key_jwt, RFC 7523). No secret exists; the key can stay in the Windows store.</summary>
+    PrivateKeyJwt,
+    /// <summary>The TLS client certificate itself authenticates the client (RFC 8705
+    /// tls_client_auth / self_signed_tls_client_auth); only client_id is sent.</summary>
+    TlsClientAuth
 }
 
 /// <summary>Everything needed to ask a token endpoint for a token. Only the fields a given grant
@@ -50,6 +56,10 @@ public sealed record OAuthRequest
 
     /// <summary>Extra form parameters (audience, resource, custom vendor fields).</summary>
     public IReadOnlyList<KeyValuePair<string, string>>? ExtraParams { get; init; }
+
+    /// <summary>For <see cref="OAuthClientAuth.PrivateKeyJwt"/>: the assertion's audience, when the
+    /// server wants something other than the token endpoint (some want their issuer URL).</summary>
+    public string? AssertionAudience { get; init; }
 }
 
 /// <summary>The outcome of a token request. <see cref="Success"/> is true only when the endpoint
@@ -112,7 +122,27 @@ public static class OAuthClient
 
         // client_secret_post puts the credentials in the body; client_secret_basic uses a header.
         // A public client (PKCE, no secret) still sends its client_id in the body.
-        if (req.ClientAuth == OAuthClientAuth.Body)
+        if (req.ClientAuth == OAuthClientAuth.PrivateKeyJwt)
+        {
+            if (clientCertificate is null)
+                return Failure("no_certificate", "private_key_jwt signs with the client certificate: give one (--cert).", "");
+            if (string.IsNullOrEmpty(req.ClientId))
+                return Failure("no_client_id", "private_key_jwt needs a client id.", "");
+            string assertion;
+            try { assertion = ClientAssertion.Create(clientCertificate, req.ClientId, req.AssertionAudience ?? req.TokenEndpoint, DateTimeOffset.UtcNow); }
+            catch (Exception ex) when (ex is CryptographicException or InvalidOperationException or NotSupportedException)
+            { return Failure("signing_failed", ex.Message, ""); }
+            Add(form, "client_id", req.ClientId);
+            Add(form, "client_assertion_type", ClientAssertion.Type);
+            Add(form, "client_assertion", assertion);
+        }
+        else if (req.ClientAuth == OAuthClientAuth.TlsClientAuth)
+        {
+            if (clientCertificate is null)
+                return Failure("no_certificate", "tls_client_auth authenticates with the client certificate: give one (--cert).", "");
+            Add(form, "client_id", req.ClientId);
+        }
+        else if (req.ClientAuth == OAuthClientAuth.Body)
         {
             Add(form, "client_id", req.ClientId);
             Add(form, "client_secret", req.ClientSecret);
@@ -461,4 +491,74 @@ public static class OAuthRedirect
         if (error is null && code is null) error = "invalid_request";
         return new(code, state, error, desc);
     }
+}
+
+
+/// <summary>RFC 7523 client assertions signed by a certificate's private key — the form Microsoft
+/// Entra ID, Okta, Ping and Keycloak call "certificate credentials". RS256 for an RSA key (what
+/// Entra requires), ES256/384/512 for an EC key. The header names the certificate by its SHA-1 and
+/// SHA-256 thumbprints (x5t, x5t#S256), which is how the server finds the key it registered.</summary>
+public static class ClientAssertion
+{
+    public const string Type = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer";
+
+    public static string Create(X509Certificate2 certificate, string clientId, string audience, DateTimeOffset now)
+    {
+        string alg;
+        Func<byte[], byte[]> sign;
+        if (certificate.GetRSAPrivateKey() is { } rsa)
+        {
+            alg = "RS256";
+            sign = data => rsa.SignData(data, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+        }
+        else if (certificate.GetECDsaPrivateKey() is { } ec)
+        {
+            int bits = ec.KeySize;
+            (alg, var hash) = bits switch { <= 256 => ("ES256", HashAlgorithmName.SHA256), <= 384 => ("ES384", HashAlgorithmName.SHA384), _ => ("ES512", HashAlgorithmName.SHA512) };
+            sign = data => ec.SignData(data, hash, DSASignatureFormat.IeeeP1363FixedFieldConcatenation);
+        }
+        else throw new InvalidOperationException("The certificate has no RSA or EC private key this machine can sign with.");
+
+        var header = new Dictionary<string, object>
+        {
+            ["alg"] = alg,
+            ["typ"] = "JWT",
+            ["x5t"] = B64Url(certificate.GetCertHash(HashAlgorithmName.SHA1)),
+            ["x5t#S256"] = B64Url(certificate.GetCertHash(HashAlgorithmName.SHA256))
+        };
+        long iat = now.ToUnixTimeSeconds();
+        var payload = new Dictionary<string, object>
+        {
+            ["iss"] = clientId,
+            ["sub"] = clientId,
+            ["aud"] = audience,
+            ["jti"] = Guid.NewGuid().ToString(),
+            ["iat"] = iat,
+            ["nbf"] = iat,
+            ["exp"] = iat + 300
+        };
+        string signingInput = B64Url(JsonSerializer.SerializeToUtf8Bytes(header)) + "." + B64Url(JsonSerializer.SerializeToUtf8Bytes(payload));
+        return signingInput + "." + B64Url(sign(Encoding.ASCII.GetBytes(signingInput)));
+    }
+
+    /// <summary>Whether a JWT access token is bound to <paramref name="certificate"/> (RFC 8705
+    /// cnf.x5t#S256): true or false when it carries a binding, null when it carries none or is not
+    /// a JWT at all — most tokens are opaque to their client, and that is allowed.</summary>
+    public static bool? BoundTo(string accessToken, X509Certificate2 certificate)
+    {
+        var parts = accessToken.Split('.');
+        if (parts.Length != 3) return null;
+        try
+        {
+            string b64 = parts[1].Replace('-', '+').Replace('_', '/');
+            b64 = b64.PadRight((b64.Length + 3) / 4 * 4, '=');
+            using var doc = JsonDocument.Parse(Convert.FromBase64String(b64));
+            if (!doc.RootElement.TryGetProperty("cnf", out var cnf) || cnf.ValueKind != JsonValueKind.Object ||
+                !cnf.TryGetProperty("x5t#S256", out var bound) || bound.ValueKind != JsonValueKind.String) return null;
+            return bound.GetString() == B64Url(certificate.GetCertHash(HashAlgorithmName.SHA256));
+        }
+        catch (Exception ex) when (ex is FormatException or JsonException) { return null; }
+    }
+
+    private static string B64Url(byte[] bytes) => Convert.ToBase64String(bytes).TrimEnd('=').Replace('+', '-').Replace('/', '_');
 }

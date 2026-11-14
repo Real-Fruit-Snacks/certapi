@@ -75,4 +75,19 @@ paths. `--no-auto-token` opts out of token capture/attach.
 certapi fuzz https://api.example.com -w .\paths.txt --save-collection "discovered" --json -o report.json
 ```
 
+## Crawling a site instead
+
+When the target is a web site rather than an API, its links already say what exists.
+`certapi crawl` walks them with your client certificate and reports every page and resource it
+reaches — status, time, size, and the page that linked to it — and lists the broken ones at the end
+(exit 1 when there are any, so it works as a CI check). `robots.txt` is obeyed unless you say
+otherwise, and `--mirror <dir>` keeps an offline copy of a certificate-protected site.
+
+```powershell
+certapi crawl https://portal.corp/ --cert "CN=me"
+certapi crawl https://docs.internal/guide/ --depth 5 --exclude logout --mirror .\docs-copy
+```
+
+See the [CLI Reference](21-CLI-Reference.md#crawl).
+
 Next: [Live Streaming](15-Live-Streaming.md).

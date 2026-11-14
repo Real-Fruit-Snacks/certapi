@@ -31,11 +31,11 @@ public class CommandOptionSweepTests
     }
 
     [Fact]
-    public void Token_client_auth_must_be_body_or_basic()
+    public void Token_client_auth_must_be_a_known_method()
     {
         var (code, err) = Run("--no-config", "token", "--token-url", "https://idp.example/token", "--client-id", "c", "--client-secret", "s", "--client-auth", "basci");
         Assert.Equal(ExitCodes.Usage, code);
-        Assert.Contains("body or basic", err);
+        Assert.Contains("body, basic, private_key_jwt or tls_client_auth", err);
     }
 
     [Theory]

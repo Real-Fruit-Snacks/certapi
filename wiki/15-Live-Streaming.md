@@ -1,7 +1,8 @@
-# 15. Live Streaming (WebSocket & SSE)
+# 15. Live Streaming (WebSocket, SSE, SignalR & MQTT)
 
 Beyond request/response: connect to a **WebSocket** and exchange messages, or watch a **Server-Sent
-Events (SSE)** stream arrive. Both reuse your selected client certificate and the insecure toggle, so
+Events (SSE)** stream arrive — and, on the command line, talk to a **SignalR** hub or an **MQTT**
+broker the same way. Both reuse your selected client certificate and the insecure toggle, so
 they work against mTLS (mutual Transport Layer Security) endpoints.
 
 ## In the app
@@ -66,6 +67,57 @@ transport error.
 same host, and refuses one to another origin, because the request's headers and client certificate would go with it — connect to that
 URL directly if it is the right one. `ws` does not follow redirects: a handshake answered with one
 fails. Neither has redirect options.
+
+## SignalR hubs on the CLI
+
+`certapi signalr` speaks ASP.NET Core SignalR's JSON hub protocol over a WebSocket, with your client
+certificate: it negotiates (following an Azure SignalR Service redirect), does the handshake, keeps
+the connection alive, calls hub methods and prints the events the hub sends.
+
+```powershell
+# call a method and print its result
+certapi signalr https://api.example.com/hubs/orders --cert "CN=My Client" --invoke 'GetOrder [42]'
+
+# send a message, then wait for the event it causes
+certapi signalr https://api.example.com/hubs/chat --cert "CN=My Client" `
+  --send 'SendMessage ["ann", "hello"]' --on ReceiveMessage --count 1
+
+# watch a hub for a minute; consume a streaming method
+certapi signalr https://api.example.com/hubs/prices --on PriceChanged --seconds 60
+certapi signalr https://api.example.com/hubs/feed --stream 'Counter [10, 500]'
+```
+
+- **`--invoke`** waits for each method's result (printed as JSON); **`--send`** does not;
+  **`--stream`** prints each item of a streaming method. Arguments are a JSON array, or one JSON
+  value for a single argument.
+- Events print as `Event arg1 arg2`; **`--on`** filters them, **`--count`** and **`--seconds`** end
+  the wait. **`--json`** prints the raw hub records instead.
+- **`--access-token`** is the bearer token a JavaScript client's `accessTokenFactory` would return;
+  a token captured for the host is used otherwise.
+- A `HubException` from a method is printed and makes the exit code 1.
+
+## MQTT brokers on the CLI
+
+IoT brokers usually authenticate a device by its client certificate. `certapi mqtt` is a small MQTT
+3.1.1 / 5.0 client that presents it, over TLS (`mqtts://`, port 8883) or a secure WebSocket
+(`wss://…/mqtt`):
+
+```powershell
+# subscribe and print five messages
+certapi mqtt mqtts://a1b2c3-ats.iot.eu-west-1.amazonaws.com --cert-file sensor-7.pfx --client-id sensor-7 -t 'sensors/#' --count 5
+
+# publish, waiting for the broker's acknowledgement
+certapi mqtt mqtts://broker.example.com --cert "CN=Device 7" --publish sensors/7/temp -m '{"c":21.5}' --qos 1
+
+# over a WebSocket, as JSON lines
+certapi mqtt wss://broker.example.com/mqtt --cert-file device.pfx -t alerts --seconds 60 --json
+```
+
+Messages print as `topic payload`. A broker that refuses the connection or a subscription says why
+— a bad user name or password, not authorized, a client identifier the policy does not allow —
+which is most of what goes wrong with a new device certificate. AWS IoT on port 443 needs
+`--alpn x-amzn-mqtt-ca`; Azure IoT Hub wants `--username {hub}.azure-devices.net/{device}/?api-version=2021-04-12`.
+See the [CLI Reference](21-CLI-Reference.md#mqtt) for every option.
 
 ## Try it locally
 

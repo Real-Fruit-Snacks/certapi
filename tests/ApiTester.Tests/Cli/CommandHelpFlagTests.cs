@@ -11,6 +11,7 @@ public class CommandHelpFlagTests
     {
         "send", "certs", "run", "token", "fuzz", "bench", "sse", "ws", "selftest", "mock", "import",
         "export", "trust", "serve", "mcp", "grpc", "doctor", "proxy", "connections", "config", "completion", "update",
+        "call", "tls", "crawl", "browse", "signalr", "mqtt", "cors",
     };
 
     private static (int Code, string Out, string Err) Run(params string[] args)

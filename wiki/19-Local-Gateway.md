@@ -213,6 +213,8 @@ secret masked.
 | `--browser` | The bundle: the seven browser accommodations below at once |
 | `--cors [<origins>]` | Answer CORS (Cross-Origin Resource Sharing) preflights and add the headers a script needs; with no value, for pages on this machine only (`localhost`, `*.localhost`, loopback), or for exactly the origins listed. Requests and upgrades from an origin it does not accept are refused. Repeatable |
 | `--cors-max-age <seconds>` | How long a browser may cache a preflight answer (default 600). Only with `--cors` (or `--browser`) |
+| `--cors-headers <list>` | The request headers every preflight is allowed, instead of whatever it asked for — so a header the front end sends that is not on the list fails in the browser, as it would against a strict server. Only with `--cors` |
+| `--cors-expose <list>` | The response headers a script may read, instead of every header the upstream sent. Only with `--cors` |
 | `--rewrite-cookies` | Strip `Domain=` and `Secure` from each `Set-Cookie` and turn `SameSite=None` into `Lax`, so the browser stores the cookie against the gateway |
 | `--rewrite-location` | Bring a 3xx `Location` (and a `Refresh` header's URL) aimed at the upstream, another site or an allowed host back through the gateway |
 | `--rewrite-origin` | `Origin` and `Referer` on a forwarded request point at the upstream |

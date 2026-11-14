@@ -248,7 +248,12 @@ public sealed class ApiClient : IDisposable
         // The cost, stated rather than hidden: an H3 send reports the server certificate (the
         // SslOptions callback still runs under QUIC) but not the cipher or negotiated protocol,
         // which only the hand-driven path can observe.
-        bool handlerDrivesTls = viaProxy || transport.Version is HttpVersionMode.Http3;
+        // A hand-made tunnel (--proxy-header) is proxied but dialled on the direct path, whose
+        // ConnectCallback can write the CONNECT itself.
+        bool handTunnel = viaProxy && Uri.TryCreate(request.Url, UriKind.Absolute, out var tunnelTarget) &&
+                          tunnelTarget.Scheme == Uri.UriSchemeHttps &&
+                          ConnectionDialer.TunnelProxy(transport, new DnsEndPoint(tunnelTarget.Host, tunnelTarget.Port)) is not null;
+        bool handlerDrivesTls = (viaProxy && !handTunnel) || transport.Version is HttpVersionMode.Http3;
 
         // The two paths differ only in which handler answers the send, whether this call owns it
         // outright, and where its handshake diagnostics can be found. Everything else below — the
@@ -314,8 +319,8 @@ public sealed class ApiClient : IDisposable
                         return trustServerCertificate(c);
                     }));
                 revocationStatus = decision.Status;
-                if (decision.Accepted) return true;
-                proxiedRefusal = decision.RefusedByRevocation;
+                if (decision.Accepted && PinAllows(transport, cert)) return true;
+                proxiedRefusal = decision.Accepted ? null : decision.RefusedByRevocation;
                 serverUntrusted = true;
                 return false;
             }
@@ -781,6 +786,10 @@ public sealed class ApiClient : IDisposable
         WireLog? wireLog = null)
     {
         var handler = BuildCommonHandler(transport, windowsAuth);
+        // A named pipe or Unix socket has no proxy in front of it, and with --proxy-header the
+        // dialler opens the tunnel itself: the stack's own proxy would get in the way of both.
+        if (transport.NamedPipe is not null || transport.UnixSocket is not null || transport.ProxyHeaders.Count > 0)
+            handler.UseProxy = false;
 
         var certificateCopy = clientCertificate is null ? null : new X509Certificate2(clientCertificate);
 
@@ -793,28 +802,11 @@ public sealed class ApiClient : IDisposable
         // opens — never once per request — because the handler itself is now shared across requests.
         handler.ConnectCallback = async (context, ct) =>
         {
-            var socket = new Socket(SocketType.Stream, ProtocolType.Tcp) { NoDelay = true };
-            // A --resolve override replaces the address we dial and nothing else: TargetHost
-            // (SNI) below and the Host header the handler wrote both keep the original name,
-            // so the server sees an ordinary request for the hostname the user typed.
-            var pinned = transport.Resolve.FirstOrDefault(r =>
-                r.Port == context.DnsEndPoint.Port &&
-                string.Equals(r.Host, context.DnsEndPoint.Host, StringComparison.OrdinalIgnoreCase));
-            try
-            {
-                if (pinned is not null)
-                    await socket.ConnectAsync(new IPEndPoint(IPAddress.Parse(pinned.Address), context.DnsEndPoint.Port), ct);
-                else if (transport.AddressFamily == AddressFamilyPreference.Any)
-                    await socket.ConnectAsync(context.DnsEndPoint, ct);
-                else
-                    // -4 / -6: resolve here and dial only the family asked for.
-                    await socket.ConnectAsync(
-                        await AddressSelection.ResolveAsync(context.DnsEndPoint.Host, transport.AddressFamily, ct),
-                        context.DnsEndPoint.Port, ct);
-            }
-            catch { socket.Dispose(); throw; }
-
-            var network = new NetworkStream(socket, ownsSocket: true);
+            // A --resolve or --connect-to override replaces the address we dial and nothing else:
+            // TargetHost (SNI) below and the Host header the handler wrote both keep the original
+            // name, so the server sees an ordinary request for the hostname the user typed. A named
+            // pipe, a Unix socket, --interface and a hand-made proxy tunnel are dialled here too.
+            var network = await ConnectionDialer.DialAsync(transport, context.DnsEndPoint, ct);
             if (context.InitialRequestMessage.RequestUri!.Scheme != Uri.UriSchemeHttps)
                 return network;
 
@@ -870,8 +862,8 @@ public sealed class ApiClient : IDisposable
                         return trustServerCertificate(c);
                     }));
                 revocationStatus = decision.Status;
-                if (decision.Accepted) return true;
-                revocationRefusal = decision.RefusedByRevocation;
+                if (decision.Accepted && PinAllows(transport, cert)) return true;
+                revocationRefusal = decision.Accepted ? null : decision.RefusedByRevocation;
                 untrusted = true;
                 return false;
             }
@@ -950,7 +942,7 @@ public sealed class ApiClient : IDisposable
                     {
                         using var c = cert is null ? null : new X509Certificate2(cert);
                         return trustServerCertificate(c);
-                    })).Accepted;
+                    })).Accepted && PinAllows(transport, cert);
             }
         };
         RevocationCheck.Apply(handler.SslOptions, transport);
@@ -961,6 +953,23 @@ public sealed class ApiClient : IDisposable
         var entry = new HandlerEntry(handler, certificateCopy);
         self = entry;
         return entry;
+    }
+
+    private static bool IsBase64Sha256(string value)
+    {
+        try { return Convert.FromBase64String(value).Length == 32; }
+        catch (FormatException) { return false; }
+    }
+
+    /// <summary><c>--pinnedpubkey</c>: the server's key must be one of the pins, whatever else
+    /// accepted it — a pin narrows trust, it never widens it.</summary>
+    internal static bool PinAllows(TransportOptions transport, X509Certificate? cert)
+    {
+        if (transport.PinnedPublicKeys.Count == 0) return true;
+        if (cert is null) return false;
+        using var c = new X509Certificate2(cert);
+        string spki = TrustService.SpkiSha256(c);
+        return transport.PinnedPublicKeys.Any(p => p.Equals(spki, StringComparison.Ordinal));
     }
 
     /// <summary>The thumbprint of the certificate directly above the leaf in the presented chain —
@@ -1162,6 +1171,28 @@ public sealed class ApiClient : IDisposable
             return $"--sni cannot be used through a proxy ({ProxyUriFor(url, transport) ?? "one applies to this URL"}): the " +
                    "tunnel's TLS is negotiated from the URL's host. Use --no-proxy to send it direct.";
 
+        foreach (var rule in transport.ConnectTo)
+            if (rule.ToHost.Length == 0 && rule.ToPort is null)
+                return $"--connect-to '{rule}' names nowhere to connect to.";
+        if (transport.LocalAddress is { } local && !IPAddress.TryParse(local, out _))
+            return $"--interface expects a local IP address or an adapter name, got '{local}'.";
+        if (transport.NamedPipe is not null && transport.UnixSocket is not null)
+            return "--named-pipe and --unix-socket both say where to connect: give one.";
+        if ((transport.NamedPipe is not null || transport.UnixSocket is not null) &&
+            (transport.ConnectTo.Count > 0 || transport.Resolve.Count > 0 || transport.LocalAddress is not null))
+            return "--named-pipe and --unix-socket replace the network connection, so --connect-to, --resolve and --interface have nothing to change.";
+        foreach (var pin in transport.PinnedPublicKeys)
+            if (!IsBase64Sha256(pin))
+                return $"--pinnedpubkey expects sha256//<base64 SHA-256 of the public key>, got '{pin}'.";
+        if (transport.Version is HttpVersionMode.Http3 &&
+            (transport.CustomDial || transport.ProxyHeaders.Count > 0))
+            return "--http3 connects inside the HTTP stack, so --connect-to, --interface, --named-pipe, --unix-socket and --proxy-header cannot apply to it.";
+        if (transport.ProxyHeaders.Count > 0 &&
+            (transport.Proxy != ProxyMode.Explicit || !Uri.TryCreate(transport.ProxyUrl, UriKind.Absolute, out var headerProxy) || headerProxy.Scheme != Uri.UriSchemeHttp))
+            return "--proxy-header needs an explicit http:// proxy (--proxy http://host:port): the headers go into its CONNECT.";
+        if (transport.CustomDial && ProxyWillBeUsed(url, transport))
+            return $"--connect-to and --interface choose the connection, which a proxy ({ProxyUriFor(url, transport) ?? "one applies to this URL"}) makes for you. Use --no-proxy to send it direct.";
+
         if (transport.Resolve.Count > 0 && ProxyWillBeUsed(url, transport))
             return $"--resolve cannot be used together with a proxy (the connection is tunnelled " +
                    $"through {ProxyUriFor(url, transport) ?? "a proxy"}, so the address cannot be " +
@@ -1196,6 +1227,7 @@ public sealed class ApiClient : IDisposable
             if (!Uri.TryCreate(url, UriKind.Absolute, out var uri)) return (ProxyDisposition.Direct, null);
             if (uri.Scheme is not ("http" or "https")) return (ProxyDisposition.Direct, null);
             if (transport.Proxy is ProxyMode.None) return (ProxyDisposition.Direct, null);
+            if (transport.NamedPipe is not null || transport.UnixSocket is not null) return (ProxyDisposition.Direct, null);
 
             bool wouldProxy;
             if (transport.PacUrl is { } pac)

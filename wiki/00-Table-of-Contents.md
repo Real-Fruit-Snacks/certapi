@@ -24,7 +24,7 @@ know what you want to do but not what it is called.
 |---|---|---|
 | 6 | [Certificates & mTLS](06-Certificates-and-mTLS.md) | Picking a client certificate from the Windows store or a file |
 | 7 | [Building Requests](07-Building-Requests.md) | Method, URL, query parameters, headers, bodies, file uploads |
-| 8 | [Authentication](08-Authentication.md) | Auto, Bearer, Basic, OAuth 2.0, Windows Integrated |
+| 8 | [Authentication](08-Authentication.md) | Auto, Bearer, Basic, Digest, AWS SigV4, HMAC, OAuth 2.0 (certificate client credentials too), Windows Integrated |
 | 9 | [Environments & Variables](09-Environments-and-Variables.md) | `{{variable}}` values per environment, and `{{env:NAME}}` from the process environment |
 | 10 | [Collections & History](10-Collections-and-History.md) | Saving requests into folders, and what was sent before |
 
@@ -36,7 +36,7 @@ know what you want to do but not what it is called.
 | 12 | [Capturing Values](12-Capturing-Values.md) | Grabbing a token from one response for the next request — and chains |
 | 13 | [Data-Driven Runs](13-Data-Driven-Runs.md) | Repeating a request once per row of a CSV or JSON dataset |
 | 14 | [Endpoint Discovery](14-Endpoint-Discovery.md) | Probing a wordlist to map an undocumented API |
-| 15 | [Live Streaming](15-Live-Streaming.md) | WebSocket and Server-Sent Events |
+| 15 | [Live Streaming](15-Live-Streaming.md) | WebSocket, Server-Sent Events, SignalR and MQTT |
 | 16 | [Response Views](16-Response-Views.md) | Pretty, Raw, Headers, Diagnostics, Diff, Rendered, Network |
 | 26 | [Session Capture](26-Session-Capture.md) | Log in once in a browser, reuse that session here |
 | 27 | [Configuration](27-Configuration.md) | Profiles that carry the tedious half of every command line — and whole gateways |
@@ -98,13 +98,32 @@ and [CLI Reference](21-CLI-Reference.md) does the same for every command-line op
 [Configuration](27-Configuration.md) for keeping the command line short.
 
 **"I already have this API described somewhere else."**
-[Import & Export](17-Import-and-Export.md) reads cURL, OpenAPI, Postman, Insomnia, WSDL and HAR.
+[Import & Export](17-Import-and-Export.md) reads cURL, OpenAPI, Postman, Insomnia, Bruno, WSDL and HAR,
+and [`certapi call`](17-Import-and-Export.md#import-openapi--swagger) calls an OpenAPI operation by name.
 
 **"I want a record I can keep or share."**
 [Import & Export](17-Import-and-Export.md#export-to-markdown-notes-obsidian-logseq-a-docs-repo)
 writes the workspace as linked markdown notes;
 [Troubleshooting](23-Troubleshooting.md#keeping-a-diagnosis-doctor---md) keeps a diagnosis, and
 [Testing & Assertions](11-Testing-and-Assertions.md#keeping-a-run---md) keeps a run.
+
+**"Which certificate will this server accept?"**
+[`certapi tls`](23-Troubleshooting.md#which-of-my-certificates-will-this-server-take) lists the CAs
+it asks for, for any TLS service — not only HTTPS.
+
+**"It's a web page or an app, not an API."**
+[`certapi browse`](16-Response-Views.md#rendered-website) renders it with the certificate and saves
+a screenshot, a PDF or the DOM; [`certapi crawl`](14-Endpoint-Discovery.md#crawling-a-site-instead)
+checks every link, or keeps an offline copy.
+
+**"The browser says CORS."**
+[`certapi cors`](21-CLI-Reference.md#cors) sends the preflight and the request a browser would and
+names the rule that fails; [`mock --cors`](18-Mock-Server.md#behaving-like-a-server-with-a-cors-policy)
+is a server to test the front end against.
+
+**"It isn't plain HTTP."**
+[Live Streaming](15-Live-Streaming.md) covers WebSocket, Server-Sent Events, SignalR hubs and MQTT
+brokers; [`grpc`](21-CLI-Reference.md#grpc) does gRPC, gRPC-Web included.
 
 **"I need something to test against."**
 [Mock Server](18-Mock-Server.md) — including expired certificates, wrong hostnames, slow responses

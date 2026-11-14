@@ -155,7 +155,75 @@ public sealed record TransportOptions
     /// <summary>Which address family to dial — <c>-4</c> / <c>-6</c>. Direct connections only: a
     /// proxy resolves the target itself. Null, the default, takes the resolver's order.</summary>
     public AddressFamilyPreference AddressFamily { get; init; } = AddressFamilyPreference.Any;
+
+    /// <summary><c>--connect-to</c>: dial another host and port for a given one, keeping the URL's
+    /// name for SNI, the Host header and certificate checks. Direct connections only.</summary>
+    public IReadOnlyList<ConnectToOverride> ConnectTo { get; init; } = Array.Empty<ConnectToOverride>();
+
+    /// <summary><c>--interface</c>: the local address connections are made from. Direct only.</summary>
+    public string? LocalAddress { get; init; }
+
+    /// <summary><c>--unix-socket</c>: connect to this Unix domain socket instead of a TCP address.</summary>
+    public string? UnixSocket { get; init; }
+
+    /// <summary><c>--named-pipe</c>: connect to this Windows named pipe (a name, or <c>\\server\pipe\name</c>).</summary>
+    public string? NamedPipe { get; init; }
+
+    /// <summary><c>--pinnedpubkey</c>: the server's public key (base64 SHA-256 of its
+    /// SubjectPublicKeyInfo) must be one of these, on top of every other check.</summary>
+    public IReadOnlyList<string> PinnedPublicKeys { get; init; } = Array.Empty<string>();
+
+    /// <summary><c>--proxy-header</c>: headers sent to an explicit HTTP proxy in the CONNECT that
+    /// opens an https tunnel, and never to the origin.</summary>
+    public IReadOnlyList<KeyValuePair<string, string>> ProxyHeaders { get; init; } = Array.Empty<KeyValuePair<string, string>>();
+
+    /// <summary>How gRPC calls are framed: native HTTP/2 gRPC, or gRPC-Web (binary or base64 text)
+    /// over HTTP/1.1 for services behind gateways such as Envoy that only speak gRPC-Web.</summary>
+    public GrpcWire GrpcWire { get; init; } = GrpcWire.Native;
+
+    /// <summary>Whether a request must be dialled by this product rather than by the HTTP stack.</summary>
+    public bool CustomDial => ConnectTo.Count > 0 || LocalAddress is not null || UnixSocket is not null || NamedPipe is not null;
+
+    /// <summary>The connection-shaping settings as one string, for the handler cache key.</summary>
+    internal string DialKey =>
+        string.Join("|", string.Join(";", ConnectTo.Select(c => c.ToString())), LocalAddress, UnixSocket, NamedPipe,
+            string.Join(";", PinnedPublicKeys), string.Join(";", ProxyHeaders.Select(h => h.Key + ":" + h.Value)));
 }
+
+/// <summary>One <c>--connect-to HOST1:PORT1:HOST2:PORT2</c> rule. An empty source host or port
+/// matches any; an empty target keeps the original.</summary>
+public sealed record ConnectToOverride(string FromHost, int? FromPort, string ToHost, int? ToPort)
+{
+    public bool Matches(string host, int port) =>
+        (FromHost.Length == 0 || FromHost.Equals(host, StringComparison.OrdinalIgnoreCase)) &&
+        (FromPort is null || FromPort == port);
+
+    /// <summary>curl's spelling; null when it is not four colon-separated parts. An IPv6 host is
+    /// written in brackets.</summary>
+    public static ConnectToOverride? Parse(string spec)
+    {
+        var parts = new List<string>();
+        var sb = new System.Text.StringBuilder();
+        bool bracket = false;
+        foreach (char c in spec)
+        {
+            if (c == '[') bracket = true;
+            else if (c == ']') bracket = false;
+            if (c == ':' && !bracket) { parts.Add(sb.ToString()); sb.Clear(); }
+            else sb.Append(c);
+        }
+        parts.Add(sb.ToString());
+        if (parts.Count != 4) return null;
+        int? Port(string p) => p.Length == 0 ? null : int.TryParse(p, out int n) && n is > 0 and < 65536 ? n : -1;
+        int? fromPort = Port(parts[1]), toPort = Port(parts[3]);
+        if (fromPort == -1 || toPort == -1) return null;
+        return new ConnectToOverride(parts[0].Trim('[', ']'), fromPort, parts[2].Trim('[', ']'), toPort);
+    }
+
+    public override string ToString() => $"{FromHost}:{FromPort}:{ToHost}:{ToPort}";
+}
+
+public enum GrpcWire { Native, Web, WebText }
 
 public enum AddressFamilyPreference
 {

@@ -56,14 +56,20 @@ Two front ends over one engine (`ApiTester.Core`). The desktop app covers everyt
 
 | Command | Does |
 |---|---|
-| `certapi send <url>` | Sends one request with a store certificate; `--capture`, `--cookie-jar`, `--diff`, `--har`, `--trace`, `--wire`, `--retry` |
+| `certapi send <url>` | Sends one request with a store certificate; `--capture`, `--cookie-jar`, `--diff`, `--har`, `--trace`, `--wire`, `--retry`, and curl's `-b`, `-w`, `-C`, `--data-urlencode`, `--connect-to`, `--unix-socket`, `--pinnedpubkey` |
+| `certapi call <spec> <operationId>` | Calls an OpenAPI operation by name and checks the answer against the spec |
 | `certapi run <name\|path\|.har>` | Runs saved requests, a collection, a chain or a HAR as a pass/fail suite with exit codes |
 | `certapi doctor <url>` | Connects stage by stage and names the stage that broke, with the CAs the server accepts |
+| `certapi cors <url> --origin <o>` | Would a browser on that origin allow this request? Preflight, rules and verdict |
+| `certapi tls <host[:port]>` | Handshakes with any TLS service (STARTTLS too) and shows the chain and which CAs it asks a client certificate from |
 | `certapi serve` | Local mTLS gateway for apps that can't do client certificates, in front of one site or many: named sites, a certificate and settings per site, one origin each with `--vhost`, `--browser` for SSO flows, a whole gateway in a profile |
 | `certapi mock` | Standing test server over HTTP, HTTPS or mTLS, or a replay of a captured HAR |
-| `certapi grpc list\|call` | gRPC behind mutual TLS, via server reflection or `--protoset` |
-| `certapi token` | OAuth 2.0 client-credentials, password, refresh, device code (auth-code + PKCE is in the app) |
+| `certapi grpc list\|call` | gRPC behind mutual TLS, via server reflection or `--protoset`; gRPC-Web with `--grpc-web` |
+| `certapi token` | OAuth 2.0 client-credentials, password, refresh, device code, auth-code + PKCE; the certificate as the client credential (`private_key_jwt`, `tls_client_auth`) |
 | `certapi ws` / `certapi sse` | WebSocket and Server-Sent Events through the same certificate |
+| `certapi signalr` / `certapi mqtt` | A SignalR hub (invoke, stream, listen) and an MQTT broker (`mqtts://`, `wss://`) with the certificate |
+| `certapi browse <url>` | Renders a certificate-protected page in WebView2: screenshot, PDF, DOM, a script's result |
+| `certapi crawl <url>` | Walks a site's links with the certificate: broken links, or an offline mirror |
 | `certapi fuzz <url>` | Probes a wordlist to map an undocumented API |
 | `certapi bench <url>` | p50/p90/p99 latency over a pooled connection; retries forced off |
 | `certapi import` / `certapi export` | cURL, Postman, OpenAPI, HAR, workspaces, markdown notes |
@@ -94,7 +100,9 @@ Body goes to stdout, diagnostics to stderr. Exit codes: 0 success Â· 1 failure Â
 
 ## Known issues
 
-- The Rendered view needs the Edge WebView2 runtime. Windows 11 ships it; without it that one tab says so and everything else works.
+- The Rendered view and `certapi browse` need the Edge WebView2 runtime. Windows 10 and 11 ship it; without it that one tab (or command) says so and everything else works.
+- `grpc --grpc-web` carries unary and server-streaming calls only (gRPC-Web cannot stream requests) and needs `--protoset`.
+- `certapi mqtt` does QoS 0 and 1, not 2; `certapi signalr` speaks the JSON hub protocol over WebSockets only.
 - `certapi serve` does not proxy gRPC.
 - `--protoset` needs a descriptor set you already have. certapi does not compile `.proto` files.
 - `--http3` is Windows 11 / Server 2022 and direct connections only, and needs the release's `msquic.dll` beside the exe (`certapi update` and Scoop install it).

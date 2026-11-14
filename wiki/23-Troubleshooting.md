@@ -57,6 +57,26 @@ follows. When those disagree, the command says so, and you have your explanation
 A PAC script is JavaScript, so nothing can predict its answer by reading configuration alone;
 this runs the real engine rather than guessing.
 
+When the proxy is not it and the page is an app — the HTML arrives but the content is drawn by
+scripts that call an API — `certapi send` shows only the shell. `certapi browse <url> --screenshot
+page.png -v` renders it in a real browser engine with the certificate on every request, and `-v`
+lists each request the page made with its status, so the one that fails is in front of you.
+
+## "The browser says it was blocked by CORS"
+
+The request works from `certapi send` and fails from the page: the server answered, and the
+browser refused to hand the answer to the script. Run the check the browser ran:
+
+```powershell
+certapi cors https://api.example.com/orders --origin https://app.example.com -X PUT -H "X-Api-Key: k" --credentials
+```
+
+It says whether a preflight was needed and why, what the preflight got back, and which rule failed
+— in words: "the preflight was answered 401; a browser needs a 2xx" (the server wants
+authentication on `OPTIONS`, which a preflight never carries), "Access-Control-Allow-Origin: *,
+which a browser refuses for a request with credentials", "the preflight does not allow the header
+x-api-key". `send --origin <o>` adds the same readout to any send.
+
 ## "It's slow" — reading the timings
 
 Three different measurements answer three different questions, and mixing them up wastes an
@@ -318,6 +338,23 @@ Add `--debug` (optionally `--log-file diag.log`) to any CLI (command-line interf
 full trace — resolved URL (Uniform Resource Locator),
 headers (Authorization masked), certificate lookup, TLS version/cipher, timings, and full stack
 traces. In the app, the **Diagnostics** response tab shows the connection details.
+
+## "Which of my certificates will this server take?"
+
+Ask the server. `certapi tls` handshakes with any TLS service — HTTPS, LDAPS, SMTP with STARTTLS, a
+database, an MQTT broker — and prints whether it asks for a client certificate and the **issuing
+CAs it will accept**, along with its own chain, protocol, cipher and ALPN:
+
+```powershell
+certapi tls api.example.com
+certapi tls ldap.corp:636 --cert "CN=svc-ldap"      # was mine sent?
+certapi tls mail.corp --starttls smtp
+```
+
+Pick a certificate issued by one of the CAs it names. A server that asks without naming any (IIS
+and many others leave the list out by default) is saying nothing about issuers, not "any": try the
+certificate the service's owner gave you, and `--cert` shows whether it was sent. The report also gives each certificate's public-key SHA-256,
+which is what [`--pinnedpubkey`](21-CLI-Reference.md#trust-and-tls) takes.
 
 ## "The server refused the certificate"
 

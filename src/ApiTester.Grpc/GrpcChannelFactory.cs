@@ -95,9 +95,19 @@ internal static class GrpcChannelFactory
         if (clientCertificate is not null)
             handler.SslOptions.ClientCertificates = new X509CertificateCollection { clientCertificate };
 
+        // gRPC-Web: the same handler underneath (certificate, proxy, trust), framed by
+        // GrpcWebHandler and sent over HTTP/1.1, which is what a gRPC-Web gateway expects.
+        HttpMessageHandler outer = transport.GrpcWire == GrpcWire.Native
+            ? handler
+            : new global::Grpc.Net.Client.Web.GrpcWebHandler(
+                transport.GrpcWire == GrpcWire.WebText ? global::Grpc.Net.Client.Web.GrpcWebMode.GrpcWebText : global::Grpc.Net.Client.Web.GrpcWebMode.GrpcWeb,
+                handler);
+
         return GrpcChannel.ForAddress(address, new GrpcChannelOptions
         {
-            HttpHandler = handler,
+            HttpHandler = outer,
+            HttpVersion = transport.GrpcWire == GrpcWire.Native ? null : System.Net.HttpVersion.Version11,
+            HttpVersionPolicy = transport.GrpcWire == GrpcWire.Native ? null : System.Net.Http.HttpVersionPolicy.RequestVersionOrLower,
             DisposeHttpClient = true,
             // A testing tool that silently truncated a large response would be reporting a
             // falsehood; removing the library's 4 MB default cap is deliberate.

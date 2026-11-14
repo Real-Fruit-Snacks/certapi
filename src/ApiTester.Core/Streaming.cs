@@ -138,10 +138,13 @@ public sealed class WebSocketSession : IAsyncDisposable
         bool ignoreServerCertificateErrors = false,
         TransportOptions? transport = null,
         Func<X509Certificate2?, bool>? trustServerCertificate = null,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        IEnumerable<string>? subProtocols = null)
     {
         if (headers is not null)
             foreach (var h in headers) _ws.Options.SetRequestHeader(h.Key, h.Value);
+        if (subProtocols is not null)
+            foreach (var p in subProtocols) _ws.Options.AddSubProtocol(p);
 
         // The handshake goes through an invoker built on the shared stream-transport handler
         // rather than ClientWebSocketOptions' own certificate/validation knobs: the invoker owns
@@ -169,6 +172,12 @@ public sealed class WebSocketSession : IAsyncDisposable
 
     public Task SendTextAsync(string text, CancellationToken ct = default) =>
         _ws.SendAsync(Encoding.UTF8.GetBytes(text), WebSocketMessageType.Text, endOfMessage: true, ct);
+
+    public Task SendBinaryAsync(ReadOnlyMemory<byte> bytes, CancellationToken ct = default) =>
+        _ws.SendAsync(bytes, WebSocketMessageType.Binary, endOfMessage: true, ct).AsTask();
+
+    /// <summary>The subprotocol the server accepted in the handshake, or null.</summary>
+    public string? SubProtocol => _ws.SubProtocol;
 
     /// <summary>Yield each whole message as it arrives until the peer closes, the token cancels, or the
     /// socket faults. A fragmented message is reassembled before it is yielded.</summary>

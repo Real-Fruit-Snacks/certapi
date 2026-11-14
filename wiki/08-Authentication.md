@@ -146,6 +146,7 @@ Supported grants:
 | **Password** | Resource-owner password (username + password) |
 | **Refresh token** | Exchange a refresh token for a new access token |
 | **Authorization code** | Interactive — opens your browser, catches the redirect on a loopback port, with **PKCE** (Proof Key for Code Exchange) |
+| **Certificate client** | `private_key_jwt` or `tls_client_auth` — the client certificate instead of a secret (command line: `certapi token --client-auth`) |
 
 The dialog sends client credentials in the body (`client_secret_post`) or as a Basic header
 (`client_secret_basic`), supports scopes and extra parameters, and the **token endpoint itself can
@@ -164,10 +165,37 @@ certapi token --token-url https://auth.example.com/token --client-id app --clien
 certapi send https://api.example.com/orders
 ```
 
-`--grant password|refresh`, `--client-auth basic`, `--param k=v`, and `--json` are all supported. The
-interactive authorization-code grant is app-only (it needs a browser); its headless counterpart is
-the **device-code flow** (RFC 8628), which was designed for exactly the machine that cannot open
-one:
+`--grant password|refresh`, `--client-auth basic`, `--param k=v`, and `--json` are all supported.
+
+**The certificate as the client credential.** Many identity providers let a confidential client
+prove itself with its certificate instead of a shared secret, and `certapi token` does both forms:
+
+```powershell
+# private_key_jwt (RFC 7523): a JWT signed by the certificate's key — Entra ID "certificate credentials"
+certapi token --token-url https://login.microsoftonline.com/<tenant>/oauth2/v2.0/token `
+  --client-id <app-id> --client-auth private_key_jwt --cert "CN=svc-orders" --scope "api://orders/.default"
+
+# tls_client_auth (RFC 8705): the mutual-TLS handshake is the authentication
+certapi token --token-url https://idp.corp/oauth2/token --client-id orders-svc --client-auth tls_client_auth --cert "CN=svc-orders"
+```
+
+There is no `--client-secret` with either, and none to leak. A token the server binds to the
+certificate (RFC 8705, a `cnf.x5t#S256` claim in a JWT access token) is reported as bound or not, so
+you know it will only be accepted over a connection presenting the same certificate.
+
+**Browser sign-in from the command line.** `--grant code` runs the authorization-code grant with
+PKCE: it opens your browser at the sign-in page, catches the redirect on a loopback port, and
+exchanges the code — the same flow as the app's dialog.
+
+```powershell
+certapi token --grant code --authorize-url https://idp.example.com/authorize --token-url https://idp.example.com/token `
+  --client-id cli-app --scope "openid api.read" --save --for https://api.example.com
+```
+
+`--no-browser` prints the URL instead (open it on the same machine, which must receive the
+redirect), and `--redirect-port` fixes the port for a provider that needs the exact redirect URI
+registered. For a machine with no browser at all, use the **device-code flow** (RFC 8628), which was
+designed for exactly that machine:
 
 ```powershell
 certapi token --grant device --device-url https://auth.example.com/device --token-url https://auth.example.com/token `

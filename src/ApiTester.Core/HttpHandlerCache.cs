@@ -81,7 +81,8 @@ internal sealed record HandlerKey(
     TimeSpan? ConnectTimeout,
     string? PacUrl,
     bool Offline,
-    AddressFamilyPreference AddressFamily)
+    AddressFamilyPreference AddressFamily,
+    string DialKey)
 {
     /// <summary>The one place this key is ever built, so every caller agrees on exactly what goes
     /// into it.</summary>
@@ -113,7 +114,8 @@ internal sealed record HandlerKey(
         transport.ConnectTimeout,
         transport.PacUrl,
         transport.Offline,
-        transport.AddressFamily);
+        transport.AddressFamily,
+        transport.DialKey);
 
     /// <summary>"none" when there is no Windows auth at all, "default" for the signed-in account
     /// (indistinguishable from any other caller asking for the same thing), otherwise the explicit

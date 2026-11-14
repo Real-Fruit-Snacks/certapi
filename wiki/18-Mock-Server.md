@@ -202,6 +202,29 @@ This is what turns the mock into a test bed for the client: `doctor`'s TLS stage
 `ServerCertificateUntrusted`, and the `--insecure` override can all be exercised without a real
 broken endpoint to point at.
 
+## Behaving like a server with a CORS policy
+
+By default the built-in routes answer `Access-Control-Allow-Origin: *`, which lets any page read
+them — and hides every CORS problem a front end will meet against the real API. `--cors` makes the
+mock behave like a server with a policy: it answers preflights itself and puts the exact origin,
+`Access-Control-Allow-Credentials: true`, `Vary: Origin` and an `Access-Control-Expose-Headers` list
+on every response to a page.
+
+```powershell
+# any origin allowed, credentials too
+certapi mock --cors
+
+# only the app's origin: everything else gets a 403 preflight and no CORS headers
+certapi mock --cors http://localhost:3000 --routes .\api.json
+```
+
+Check what a browser would make of it with [`certapi cors`](21-CLI-Reference.md#cors):
+
+```powershell
+certapi cors http://127.0.0.1:8770/orders --origin http://localhost:3000 -X PUT -H "X-Api-Key: k" --credentials
+certapi cors http://127.0.0.1:8770/orders --origin https://evil.example      # blocked
+```
+
 ## Modes and certificates
 
 - **`--http`** (default) — plain HTTP; hit it with anything (curl, a browser, the app), no

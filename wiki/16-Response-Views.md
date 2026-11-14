@@ -65,6 +65,16 @@ CSS (Cascading Style Sheets), JS (JavaScript), images, XHR (XMLHttpRequest)) is 
 runs until you open the tab); **Reload** fetches again. It uses the Windows WebView2 runtime; if that's
 unavailable the tab says so and the rest of the app is unaffected.
 
+The command-line counterpart is `certapi browse`: the same engine, the same certificate on every
+request, and the result saved — a screenshot (`--screenshot`, `--full-page`), a PDF (`--pdf`), the
+rendered DOM after scripts ran (`--html`), or the value of a script (`--script`). `--wait-for
+<selector>` waits for a single-page app to finish drawing:
+
+```powershell
+certapi browse https://portal.corp/dashboard --cert "CN=me" --wait-for "#chart svg" --screenshot dash.png --full-page
+certapi browse https://portal.corp/report --cert "CN=me" --pdf report.pdf
+```
+
 ## Network trace
 
 The **Network** tab is like a browser's network panel: every HTTP call is logged — the request you

@@ -154,12 +154,23 @@ certapi run "internal api" --env Prod --json
 certapi send https://internal.corp/api/orders --wire
 <span class="c"># gRPC behind mutual TLS</span>
 certapi grpc call api.internal:5001 my.pkg.Greeter/SayHello -d '{"name":"Ada"}'
-<span class="c"># stream, bench, mock, MCP</span>
+<span class="c"># which CAs will this server take a certificate from?</span>
+certapi tls ldap.corp:636
+<span class="c"># an OpenAPI operation by name, checked against the spec</span>
+certapi call orders.json getOrder --param id=42
+<span class="c"># a page that only renders with the certificate</span>
+certapi browse https://portal.corp/ --screenshot portal.png
+<span class="c"># would a page on this origin be allowed to call it?</span>
+certapi cors https://api.corp/orders --origin https://app.corp -X PUT --credentials
+<span class="c"># OAuth with the certificate as the client credential</span>
+certapi token --token-url https://idp.corp/token --client-id svc --client-auth private_key_jwt
+<span class="c"># stream, IoT, bench, mock, MCP</span>
 certapi sse https://internal.corp/events --max-events 5
+certapi mqtt mqtts://broker.corp -t 'sensors/#' --count 5
 certapi bench https://api.internal/health -n 500 -c 20
 certapi mock --har session.har --port 8770
 certapi mcp --cert "CN=matt" --allow internal.corp</code></pre>
-        <p class="note">Hosts here are examples. <code>certapi &lt;command&gt; --help</code> lists every flag, curl habits like <code>-k</code>, <code>-i</code> and <code>send -d @file</code> work, and a mistyped flag names the one you meant. The <a href="https://github.com/Real-Fruit-Snacks/certapi/blob/main/wiki/21-CLI-Reference.md">CLI reference</a> has them on one page.</p>
+        <p class="note">Hosts here are examples. <code>certapi &lt;command&gt; --help</code> lists every flag, curl habits like <code>-k</code>, <code>-i</code>, <code>-b</code>, <code>-w</code>, <code>-C</code>, <code>--connect-to</code> and <code>send -d @file</code> work, and a mistyped flag names the one you meant. The <a href="https://github.com/Real-Fruit-Snacks/certapi/blob/main/wiki/21-CLI-Reference.md">CLI reference</a> has them on one page.</p>
       </div>
     </div>
   </div>
@@ -188,11 +199,12 @@ GET    /badssl/  -&gt; <b class="ok">200</b>  4787 ms
     <h2 id="contents-h">One engine, two front ends</h2>
     <p class="lede">The desktop app and <code>certapi</code> share one engine, one request model and one workspace on disk, so a request built in the window runs from a script.</p>
     <dl class="fields">
-      <div><dt>Certificates and networks</dt><dd>The Windows certificate store (your Personal store or the machine's), picked by subject, issuer or serial, or a <code>.pfx</code>/<code>.pem</code> file; a smart-card PIN supplied ahead for headless jobs. Server pins by leaf, issuer or key; a private root from a file with <code>--ca-file</code>; revocation checking. System proxy, PAC, SOCKS, bypass lists, <code>--offline</code>.</dd></div>
-      <div><dt>Requests</dt><dd>Tabs, collections, environments with <code>{{variables}}</code>, response captures, request chains, assertions, data-driven runs from CSV/JSON, response diffing against a baseline. Import cURL, Postman, OpenAPI, HAR; export OpenAPI, HAR, markdown notes.</dd></div>
-      <div><dt>Diagnostics</dt><dd><code>doctor</code> connects one stage at a time and names the one that broke, including the CAs the server accepts client certificates from, matched against yours. <code>--trace</code>, <code>--wire</code> and <code>--frames</code> show what the stack did, down to the plaintext bytes. No driver, no admin.</dd></div>
+      <div><dt>Certificates and networks</dt><dd>The Windows certificate store (your Personal store or the machine's), picked by subject, issuer or serial, or a <code>.pfx</code>/<code>.pem</code> file; a smart-card PIN supplied ahead for headless jobs. Server pins by leaf, issuer or key; a private root from a file with <code>--ca-file</code>; revocation checking. System proxy, PAC, SOCKS, bypass lists, <code>--offline</code>; <code>--connect-to</code>, <code>--interface</code>, public-key pins, Unix sockets and named pipes.</dd></div>
+      <div><dt>Requests</dt><dd>Tabs, collections, environments with <code>{{variables}}</code>, response captures, request chains, assertions, data-driven runs from CSV/JSON, response diffing against a baseline. Import cURL, Postman, Insomnia, Bruno, OpenAPI, HAR; export OpenAPI, HAR, markdown notes. <code>call</code> sends an OpenAPI operation by name and checks the answer against the spec.</dd></div>
+      <div><dt>Diagnostics</dt><dd><code>doctor</code> connects one stage at a time and names the one that broke, including the CAs the server accepts client certificates from, matched against yours. <code>tls</code> does the same handshake with any TLS service, STARTTLS included. <code>--trace</code>, <code>--wire</code> and <code>--frames</code> show what the stack did, down to the plaintext bytes. No driver, no admin.</dd></div>
+      <div><dt>Beyond request and response</dt><dd>WebSocket, Server-Sent Events, SignalR hubs, MQTT brokers over <code>mqtts://</code> and <code>wss://</code>, gRPC and gRPC-Web, each with the same certificate. <code>browse</code> renders a certificate-protected page and saves a screenshot, a PDF or the DOM; <code>crawl</code> checks every link on a site, or keeps a copy.</dd></div>
       <div><dt>Gateway and mock</dt><dd><code>serve</code> adds your certificate for apps that can't. <code>mock</code> is a standing test server over HTTP, HTTPS or mTLS, or a replay of a captured HAR.</dd></div>
-      <div><dt>Auth</dt><dd>Bearer, Basic, OAuth 2.0 (client credentials, password, refresh, auth-code with PKCE, device code), Windows Integrated (Kerberos/NTLM), browser session capture, and automatic token reuse per host. Secrets are DPAPI-encrypted at rest.</dd></div>
+      <div><dt>Auth</dt><dd>Bearer, Basic, Digest, AWS Signature v4, HMAC and HTTP Message Signatures, OAuth 2.0 (client credentials, password, refresh, auth-code with PKCE, device code, and the certificate as the client credential: <code>private_key_jwt</code>, <code>tls_client_auth</code>), Windows Integrated (Kerberos/NTLM), browser session capture, and automatic token reuse per host. Secrets are DPAPI-encrypted at rest.</dd></div>
       <div><dt>Automation</dt><dd><code>run</code> turns a collection into a pass/fail suite with exit codes for CI. <code>bench</code> reports p50/p90/p99 latency over a pooled connection. <code>grpc</code> calls services via reflection or a descriptor set. <code>mcp</code> exposes all of it to an AI agent behind a host allowlist.</dd></div>
     </dl>
   </div>
@@ -213,7 +225,7 @@ GET    /badssl/  -&gt; <b class="ok">200</b>  4787 ms
     <div>
       <h2 id="tested-h">Tested on</h2>
       <ul class="plain">
-        <li>Windows 11 23H2 · .NET 9 SDK 9.0.320 or later</li>
+        <li>Windows 11 23H2 · .NET 10 SDK 10.0.404 or later</li>
         <li>Windows Server 2022 · headless <code>certapi</code> only</li>
         <li>GitHub Actions <code>windows-latest</code> on every push: build with warnings as errors, then the test suite</li>
         <li><em>Not</em> tested: Windows 10 before 22H2, ARM64 Windows. Probably works, no promises.</li>
@@ -222,7 +234,8 @@ GET    /badssl/  -&gt; <b class="ok">200</b>  4787 ms
     <div>
       <h2>Known issues</h2>
       <ul class="plain">
-        <li>The Rendered view needs the Edge WebView2 runtime. Windows 11 ships it; without it that tab says so and the rest works.</li>
+        <li>The Rendered view and <code>certapi browse</code> need the Edge WebView2 runtime. Windows 10 and 11 ship it; without it that tab says so and the rest works.</li>
+        <li><code>grpc --grpc-web</code> is unary and server-streaming only; <code>mqtt</code> does QoS 0 and 1.</li>
         <li><code>certapi serve</code> does not proxy gRPC.</li>
         <li><code>--protoset</code> needs a descriptor set you already have; certapi does not compile <code>.proto</code> files.</li>
         <li><code>--http3</code> is Windows 11 / Server 2022 and direct connections only.</li>

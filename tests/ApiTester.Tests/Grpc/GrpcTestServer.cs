@@ -1,6 +1,7 @@
 using System.Net;
 using System.Security.Cryptography.X509Certificates;
 using Certapi.Test;
+using Grpc.AspNetCore.Web;
 using Grpc.Core;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
@@ -41,13 +42,18 @@ internal sealed class GrpcTestServer : IAsyncDisposable
     public static Task<GrpcTestServer> StartAsync(bool reflection = true) =>
         StartInternalAsync(serverCertificate: null, requireClientCertificate: false, reflection);
 
+    /// <summary>Plaintext HTTP/1.1 and HTTP/2 with gRPC-Web turned on for every service, the way a
+    /// browser-facing ASP.NET Core server (UseGrpcWeb) or an Envoy filter would serve it.</summary>
+    public static Task<GrpcTestServer> StartWebAsync() =>
+        StartInternalAsync(serverCertificate: null, requireClientCertificate: false, reflection: true, web: true);
+
     /// <summary>HTTPS on a free loopback port. <paramref name="requireClientCertificate"/> makes
     /// the mutual-TLS variant: the handshake fails unless the client presents one.</summary>
     public static Task<GrpcTestServer> StartTlsAsync(X509Certificate2 serverCertificate, bool requireClientCertificate) =>
         StartInternalAsync(serverCertificate, requireClientCertificate, reflection: true);
 
     private static async Task<GrpcTestServer> StartInternalAsync(
-        X509Certificate2? serverCertificate, bool requireClientCertificate, bool reflection)
+        X509Certificate2? serverCertificate, bool requireClientCertificate, bool reflection, bool web = false)
     {
         var builder = WebApplication.CreateBuilder(new WebApplicationOptions
         {
@@ -67,7 +73,8 @@ internal sealed class GrpcTestServer : IAsyncDisposable
 
         builder.WebHost.ConfigureKestrel(o => o.Listen(IPAddress.Loopback, 0, listen =>
         {
-            listen.Protocols = HttpProtocols.Http2;
+            // gRPC-Web is HTTP/1.1 by design (that is its point); plain h2c cannot also offer it.
+            listen.Protocols = web ? HttpProtocols.Http1 : HttpProtocols.Http2;
             if (kestrelCertificate is not null)
             {
                 listen.UseHttps(https =>
@@ -87,6 +94,7 @@ internal sealed class GrpcTestServer : IAsyncDisposable
         if (reflection) builder.Services.AddGrpcReflection();
 
         var app = builder.Build();
+        if (web) app.UseGrpcWeb(new GrpcWebOptions { DefaultEnabled = true });
         app.MapGrpcService<EchoService>();
         if (reflection) app.MapGrpcReflectionService();
 

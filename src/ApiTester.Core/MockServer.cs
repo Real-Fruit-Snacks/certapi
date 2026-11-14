@@ -14,6 +14,61 @@ namespace ApiTester.Core;
 /// certificate (mTLS).</summary>
 public enum MockTlsMode { Http, Https, Mtls }
 
+/// <summary>`mock --cors`: answer preflights and put CORS headers on every response, as a server
+/// with a real CORS policy would — so a front end can be tested against both outcomes.
+/// <paramref name="Origins"/> null allows any origin (echoed back, credentials allowed); a list
+/// allows only those, and every other origin gets no CORS headers at all, which a browser blocks.</summary>
+public sealed record MockCors(IReadOnlyList<string>? Origins)
+{
+    public bool Allows(string origin) =>
+        Origins is null || Origins.Any(o => o == "*" || o.Equals(origin, StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>The answer to a preflight: 204 with the grants, or 403 for an origin not allowed.</summary>
+    public (int Status, IReadOnlyList<KeyValuePair<string, string>> Headers) Preflight(string origin, string method, string? requestHeaders)
+    {
+        if (!Allows(origin)) return (403, new[] { new KeyValuePair<string, string>("Vary", "Origin") });
+        var headers = new List<KeyValuePair<string, string>>
+        {
+            new("Access-Control-Allow-Origin", origin),
+            new("Access-Control-Allow-Credentials", "true"),
+            new("Access-Control-Allow-Methods", string.Join(", ", new[] { method.ToUpperInvariant(), "GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS" }.Distinct())),
+            new("Access-Control-Max-Age", "600"),
+            new("Vary", "Origin")
+        };
+        if (!string.IsNullOrWhiteSpace(requestHeaders)) headers.Add(new("Access-Control-Allow-Headers", requestHeaders));
+        return (204, headers);
+    }
+
+    /// <summary>A response head with any Access-Control-* lines replaced by this policy's for
+    /// <paramref name="origin"/>; every other header the response carries is exposed to scripts.</summary>
+    public string Rewrite(string head, string origin)
+    {
+        var lines = head.Split("\r\n").ToList();
+        if (lines.Count == 0) return head;
+        var kept = new List<string> { lines[0] };
+        var names = new List<string>();
+        foreach (var line in lines.Skip(1))
+        {
+            if (line.Length == 0) continue;
+            int colon = line.IndexOf(':');
+            string name = colon > 0 ? line[..colon].Trim() : line;
+            if (name.StartsWith("Access-Control-", StringComparison.OrdinalIgnoreCase)) continue;
+            kept.Add(line);
+            if (!CorsRules.SafelistedResponse.Contains(name) && !name.Equals("Connection", StringComparison.OrdinalIgnoreCase) &&
+                !name.Equals("Set-Cookie", StringComparison.OrdinalIgnoreCase) && !names.Contains(name, StringComparer.OrdinalIgnoreCase))
+                names.Add(name);
+        }
+        if (Allows(origin))
+        {
+            kept.Add("Access-Control-Allow-Origin: " + origin);
+            kept.Add("Access-Control-Allow-Credentials: true");
+            kept.Add("Vary: Origin");
+            if (names.Count > 0) kept.Add("Access-Control-Expose-Headers: " + string.Join(", ", names));
+        }
+        return string.Join("\r\n", kept) + "\r\n\r\n";
+    }
+}
+
 /// <summary>Generates the self-signed certificates a TLS/mTLS mock server uses and writes the public
 /// certs (and, for mTLS, a ready-to-use client .pfx) to a folder. Shared by the CLI and the GUI so
 /// both produce identical files.</summary>
@@ -129,6 +184,7 @@ public sealed class MockServer : IAsyncDisposable
     private readonly Action<MockRequestLog>? _onRequest;
     private readonly HarReplaySource? _replay;
     private readonly MockScenario? _scenario;
+    private readonly MockCors? _cors;
     private bool _disposed;
 
     public string BaseUrl { get; }
@@ -136,8 +192,9 @@ public sealed class MockServer : IAsyncDisposable
 
     private MockServer(TcpListener listener, int port, MockTlsMode tls,
         X509Certificate2? serverCert, Action<MockRequestLog>? onRequest, HarReplaySource? replay,
-        MockScenario? scenario)
+        MockScenario? scenario, MockCors? cors)
     {
+        _cors = cors;
         _listener = listener;
         Port = port;
         _tls = tls;
@@ -157,7 +214,7 @@ public sealed class MockServer : IAsyncDisposable
     /// routes you care about, and the recording covers everything else.</para></summary>
     public static MockServer Start(int port, MockTlsMode tls,
         X509Certificate2? serverCert = null, Action<MockRequestLog>? onRequest = null,
-        HarReplaySource? replay = null, MockScenario? scenario = null)
+        HarReplaySource? replay = null, MockScenario? scenario = null, MockCors? cors = null)
     {
         if (tls != MockTlsMode.Http && serverCert is null)
             throw new ArgumentException("A server certificate is required for HTTPS/mTLS.", nameof(serverCert));
@@ -165,7 +222,7 @@ public sealed class MockServer : IAsyncDisposable
         var listener = new TcpListener(IPAddress.Loopback, port);
         listener.Start();
         int actualPort = ((IPEndPoint)listener.LocalEndpoint).Port;
-        return new MockServer(listener, actualPort, tls, serverCert, onRequest, replay, scenario);
+        return new MockServer(listener, actualPort, tls, serverCert, onRequest, replay, scenario, cors);
     }
 
     /// <summary>The largest request body the mock reads; a larger one closes the connection.</summary>
@@ -247,13 +304,35 @@ public sealed class MockServer : IAsyncDisposable
             stream = ssl;
         }
 
-        await using (stream)
+        try
         {
             var request = await ReadRequestAsync(stream, ct);
             if (request is null) return;
             var (method, target, headers, body) = request.Value;
             string path = target.Split('?')[0];
             string query = target.Contains('?') ? target[(target.IndexOf('?') + 1)..] : "";
+
+            // --cors: a preflight is answered by the policy before anything else (a browser sends
+            // it without credentials, so not even a scenario's requirements apply), and every
+            // other response to a page's request has its CORS headers set by the policy.
+            if (_cors is not null && headers.TryGetValue("Origin", out var corsOrigin))
+            {
+                if (method == "OPTIONS" && headers.TryGetValue("Access-Control-Request-Method", out var wanted))
+                {
+                    var (preflightStatus, preflightHeaders) = _cors.Preflight(corsOrigin, wanted,
+                        headers.TryGetValue("Access-Control-Request-Headers", out var asked) ? asked : null);
+                    var head = new StringBuilder();
+                    head.Append("HTTP/1.1 ").Append(preflightStatus).Append(' ').Append(ReasonPhrase(preflightStatus)).Append("\r\n");
+                    foreach (var h in preflightHeaders) head.Append(h.Key).Append(": ").Append(h.Value).Append("\r\n");
+                    head.Append("Content-Length: 0\r\nConnection: close\r\n\r\n");
+                    await stream.WriteAsync(Encoding.ASCII.GetBytes(head.ToString()), ct);
+                    await stream.FlushAsync(ct);
+                    _onRequest?.Invoke(new MockRequestLog(method, path, preflightStatus, clientCertSubject) { Replay = "preflight" });
+                    return;
+                }
+                if (!(headers.TryGetValue("Upgrade", out var upgrade) && upgrade.Contains("websocket", StringComparison.OrdinalIgnoreCase)))
+                    stream = new CorsHeadStream(stream, head => _cors.Rewrite(head, corsOrigin));
+            }
 
             // Before any route: what the scenario says every caller must present. A protected
             // endpoint refuses before it routes, and a mock that echoed instead would teach a
@@ -395,6 +474,7 @@ public sealed class MockServer : IAsyncDisposable
 
             _onRequest?.Invoke(new(method, path, status, clientCertSubject));
         }
+        finally { await stream.DisposeAsync(); }
     }
 
     private static string BuildEcho(string method, string path, string query,
@@ -416,6 +496,58 @@ public sealed class MockServer : IAsyncDisposable
             WriteIndented = true,
             Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping
         });
+    }
+
+    /// <summary>Passes a response through, rewriting its head (everything up to the blank line) on
+    /// the way: every writer here sends the whole head in its first write.</summary>
+    private sealed class CorsHeadStream : Stream
+    {
+        private readonly Stream _inner;
+        private readonly Func<string, string> _rewrite;
+        private bool _headDone;
+
+        public CorsHeadStream(Stream inner, Func<string, string> rewrite)
+        {
+            _inner = inner;
+            _rewrite = rewrite;
+        }
+
+        public override async ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken ct = default)
+        {
+            if (!_headDone)
+            {
+                _headDone = true;
+                string text = Encoding.ASCII.GetString(buffer.Span);
+                int end = text.IndexOf("\r\n\r\n", StringComparison.Ordinal);
+                if (end >= 0 && text.StartsWith("HTTP/", StringComparison.Ordinal))
+                {
+                    var head = Encoding.ASCII.GetBytes(_rewrite(text[..(end + 4)]));
+                    await _inner.WriteAsync(head, ct);
+                    if (end + 4 < buffer.Length) await _inner.WriteAsync(buffer[(end + 4)..], ct);
+                    return;
+                }
+            }
+            await _inner.WriteAsync(buffer, ct);
+        }
+
+        public override Task WriteAsync(byte[] buffer, int offset, int count, CancellationToken ct) =>
+            WriteAsync(buffer.AsMemory(offset, count), ct).AsTask();
+
+        public override void Write(byte[] buffer, int offset, int count) => WriteAsync(buffer, offset, count).GetAwaiter().GetResult();
+        public override int Read(byte[] buffer, int offset, int count) => _inner.Read(buffer, offset, count);
+        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken ct = default) => _inner.ReadAsync(buffer, ct);
+        public override Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken ct) => _inner.ReadAsync(buffer, offset, count, ct);
+        public override void Flush() => _inner.Flush();
+        public override Task FlushAsync(CancellationToken ct) => _inner.FlushAsync(ct);
+        public override bool CanRead => _inner.CanRead;
+        public override bool CanSeek => false;
+        public override bool CanWrite => _inner.CanWrite;
+        public override long Length => throw new NotSupportedException();
+        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        protected override void Dispose(bool disposing) { if (disposing) _inner.Dispose(); base.Dispose(disposing); }
+        public override ValueTask DisposeAsync() => _inner.DisposeAsync();
     }
 
     private static async Task WriteResponseAsync(Stream stream, int status, string contentType, string body,

@@ -100,7 +100,7 @@ public static class CompletionCommand
     [
         "send", "run", "token", "fuzz", "bench", "sse", "ws", "doctor", "proxy", "connections", "config",
         "certs", "selftest", "mock", "import", "export", "trust", "serve", "grpc", "mcp", "completion",
-        "update", "help",
+        "update", "call", "tls", "crawl", "browse", "signalr", "mqtt", "cors", "help",
     ];
 
     private static readonly string[] GlobalValueOptions = ["--log-file", "--profile", "--config", "--trace-file", "--trace-filter"];
@@ -179,6 +179,7 @@ public static class CompletionCommand
     {
         "--proxy", "--proxy-user", "--noproxy", "--pac", "--ca-file", "--cacert", "--revocation", "--tls-min",
         "--connect-timeout", "--sni", "--resolve", "--max-redirs", "--timeout", "--max-time", "-x", "-U",
+        "--connect-to", "--interface", "--local-address", "--unix-socket", "--named-pipe", "--pinnedpubkey", "--proxy-header",
     };
 
     internal static bool TakesValue(string help, string option)

@@ -47,6 +47,14 @@ public sealed record BrowserOptions(
     /// <see cref="DefaultCorsMaxAgeSeconds"/> unless the caller asked otherwise.</summary>
     public int CorsMaxAgeSeconds { get; init; } = DefaultCorsMaxAgeSeconds;
 
+    /// <summary>`serve --cors-headers`: the request headers a preflight is told it may send. Null
+    /// echoes whatever the preflight asked for, which allows every header.</summary>
+    public IReadOnlyList<string>? CorsAllowHeaders { get; init; }
+
+    /// <summary>`serve --cors-expose`: the response headers a script may read. Null exposes every
+    /// header the upstream sent.</summary>
+    public IReadOnlyList<string>? CorsExposeHeaders { get; init; }
+
     /// <summary>Rewrite the request's <c>Origin</c> and <c>Referer</c> from the gateway's origin to
     /// the upstream's — `serve --rewrite-origin`. A login form's CSRF check compares them with its
     /// own host, and a browser talking to the gateway sends the gateway's.</summary>
@@ -108,7 +116,13 @@ public static class BrowserRewriter
         };
         // Echoed only when asked for: an empty Access-Control-Allow-Headers is not the same as no
         // header at all, and the browser only needs an answer to a question it posed.
-        if (Header(request.Headers, "Access-Control-Request-Headers") is { } requested)
+        if (options.CorsAllowHeaders is { } allowList)
+        {
+            // A fixed list answers every preflight the same way, so a header outside it is refused
+            // by the browser — the point of the option is testing exactly that.
+            if (allowList.Count > 0) headers.Add(new("Access-Control-Allow-Headers", string.Join(", ", allowList)));
+        }
+        else if (Header(request.Headers, "Access-Control-Request-Headers") is { } requested)
             headers.Add(new("Access-Control-Allow-Headers", requested));
         headers.Add(new("Access-Control-Allow-Credentials", "true"));
         // Only ever the answer to a question an allowed origin actually asked: the allowlist check
@@ -221,7 +235,7 @@ public static class BrowserRewriter
             {
                 // Computed over the upstream's own headers, before the gateway adds its own — the
                 // browser needs to be told about the response it is reading, not about this policy.
-                string exposed = ExposedNames(result);
+                string exposed = options.CorsExposeHeaders is { } exposeList ? string.Join(", ", exposeList) : ExposedNames(result);
                 // The exact origin rather than "*", for the same reason as on a preflight: a
                 // wildcard is not valid alongside Allow-Credentials, and a relay carries credentials.
                 result.Add(new("Access-Control-Allow-Origin", requestOrigin));

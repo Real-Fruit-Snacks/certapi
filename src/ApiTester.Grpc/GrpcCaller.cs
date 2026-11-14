@@ -28,6 +28,7 @@ public sealed class GrpcCaller : IAsyncDisposable
     // around (rather than only consulted once, to build _descriptors) because DiscoverAsync also
     // needs to know whether to skip reflection's ListServicesAsync entirely — see ruling 2.
     private readonly GrpcDescriptorSet? _protoset;
+    private readonly bool _web;
 
     // A pass-through marshaller: every call's request is already encoded, and its response is
     // decoded by ProtoJsonReader afterwards, so nothing here needs Grpc.Core to know about Protobuf
@@ -51,6 +52,7 @@ public sealed class GrpcCaller : IAsyncDisposable
         // Eager: a bad address (wrong scheme, unreachable channel construction) should fail fast,
         // before the caller has invested in a discovery or invoke call.
         _channel = GrpcChannelFactory.Create(address, clientCertificate, transport, trustServerCertificate);
+        _web = transport.GrpcWire != GrpcWire.Native;
         _reflection = new ReflectionClient(_channel);
         _protoset = descriptors;
         _descriptors = descriptors is null ? new DescriptorPool(_reflection) : descriptors.Pool;
@@ -229,6 +231,8 @@ public sealed class GrpcCaller : IAsyncDisposable
     {
         var methodDescriptor = await ResolveMethodAsync(service, method, ct);
         RequireKind(methodDescriptor, service, method, wantClientStreaming: true, wantServerStreaming: false);
+        if (_web)
+            throw new GrpcUnsupportedMethodException($"'{service}/{method}' streams requests, which gRPC-Web cannot carry (it is unary and server-streaming only). Drop --grpc-web to call it over native gRPC.");
 
         var callMetadata = BuildMetadata(metadata);
         var grpcMethod = new Method<byte[], byte[]>(MethodType.ClientStreaming, service, method, ByteMarshaller, ByteMarshaller);
@@ -312,6 +316,8 @@ public sealed class GrpcCaller : IAsyncDisposable
     {
         var methodDescriptor = await ResolveMethodAsync(service, method, ct);
         RequireKind(methodDescriptor, service, method, wantClientStreaming: true, wantServerStreaming: true);
+        if (_web)
+            throw new GrpcUnsupportedMethodException($"'{service}/{method}' streams requests, which gRPC-Web cannot carry (it is unary and server-streaming only). Drop --grpc-web to call it over native gRPC.");
 
         var callMetadata = BuildMetadata(metadata);
         var grpcMethod = new Method<byte[], byte[]>(MethodType.DuplexStreaming, service, method, ByteMarshaller, ByteMarshaller);

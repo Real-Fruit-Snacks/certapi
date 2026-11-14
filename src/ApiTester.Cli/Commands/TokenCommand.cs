@@ -18,13 +18,29 @@ public static class TokenCommand
           --grant device               Device-code flow (RFC 8628): prints a verification URL and
                                        code, then polls until you approve in a browser anywhere.
                                        Needs --device-url and --client-id; Ctrl+C abandons it.
+          --grant code                 Browser sign-in (authorization code with PKCE): opens the
+                                       browser at --authorize-url, catches the redirect on
+                                       http://127.0.0.1:<port>/ and exchanges the code. Needs
+                                       --authorize-url and --client-id
 
         Endpoint & client:
           --token-url <url>            The token endpoint (required)
           --device-url <url>           The device-authorization endpoint (device grant only)
           --client-id <id>
           --client-secret <secret>
-          --client-auth <body|basic>   Send client creds in the body (default) or a Basic header
+          --client-auth <how>          How the client proves who it is:
+                                         body (default)   client_id and client_secret in the form
+                                         basic            client_id:client_secret as HTTP Basic
+                                         private_key_jwt  a JWT signed with --cert's private key
+                                                          (RFC 7523; no secret — Entra ID, Okta,
+                                                          Ping and Keycloak "certificate credentials")
+                                         tls_client_auth  the TLS client certificate itself
+                                                          (RFC 8705); only client_id is sent
+          --assertion-aud <aud>        private_key_jwt's audience, when not the token endpoint
+          --authorize-url <url>        The authorization endpoint (code grant)
+          --redirect-port <n>          Loopback port for the code grant's redirect (default: any
+                                       free port; register http://127.0.0.1:<n>/ with the server)
+          --no-browser                 Print the sign-in URL instead of opening the browser
           --scope "<a b c>"            Space-separated scopes
           --username <u> / --password <p>   For the password grant
           --refresh-token <t>          For the refresh grant
@@ -71,10 +87,16 @@ public static class TokenCommand
         string? clientSecret = args.Value("--client-secret");
         var clientAuth = args.Value("--client-auth")?.Trim().ToLowerInvariant() switch
         {
-            null or "body" => OAuthClientAuth.Body,
-            "basic" => OAuthClientAuth.Basic,
-            var other => throw new CliUsageException($"--client-auth is body or basic, got '{other}'.")
+            null or "body" or "client_secret_post" => OAuthClientAuth.Body,
+            "basic" or "client_secret_basic" => OAuthClientAuth.Basic,
+            "private_key_jwt" or "jwt" => OAuthClientAuth.PrivateKeyJwt,
+            "tls_client_auth" or "self_signed_tls_client_auth" or "mtls" => OAuthClientAuth.TlsClientAuth,
+            var other => throw new CliUsageException($"--client-auth is body, basic, private_key_jwt or tls_client_auth, got '{other}'.")
         };
+        string? assertionAud = args.Value("--assertion-aud");
+        string? authorizeUrl = args.Value("--authorize-url");
+        string? redirectPortRaw = args.Value("--redirect-port");
+        bool noBrowser = args.Flag("--no-browser");
         string? scope = args.Value("--scope");
         string? username = args.Value("--username");
         string? password = args.Value("--password");
@@ -105,7 +127,22 @@ public static class TokenCommand
                 throw new CliUsageException("the refresh grant needs --refresh-token.");
             case OAuthGrant.DeviceCode when string.IsNullOrWhiteSpace(deviceUrl) || string.IsNullOrEmpty(clientId):
                 throw new CliUsageException("the device grant needs --device-url and --client-id.");
+            case OAuthGrant.AuthorizationCode when string.IsNullOrWhiteSpace(authorizeUrl) || string.IsNullOrEmpty(clientId):
+                throw new CliUsageException("the code grant needs --authorize-url and --client-id.");
         }
+        if (clientAuth is OAuthClientAuth.PrivateKeyJwt or OAuthClientAuth.TlsClientAuth)
+        {
+            if (cert is null) throw new CliUsageException($"--client-auth {args.Value("--client-auth")} needs the client certificate: give --cert or --cert-file.");
+            if (string.IsNullOrEmpty(clientId)) throw new CliUsageException("--client-auth private_key_jwt and tls_client_auth need --client-id.");
+            if (clientSecret is not null) throw new CliUsageException("--client-secret has no place with a certificate client: the certificate is the credential.");
+        }
+        if (assertionAud is not null && clientAuth != OAuthClientAuth.PrivateKeyJwt)
+            throw new CliUsageException("--assertion-aud only applies with --client-auth private_key_jwt.");
+        int redirectPort = 0;
+        if (redirectPortRaw is not null && (!int.TryParse(redirectPortRaw, out redirectPort) || redirectPort is < 1 or > 65535))
+            throw new CliUsageException($"--redirect-port expects a port number, got '{redirectPortRaw}'.");
+        if ((authorizeUrl is not null || redirectPortRaw is not null || noBrowser) && grant != OAuthGrant.AuthorizationCode)
+            throw new CliUsageException("--authorize-url, --redirect-port and --no-browser are for --grant code.");
         if (save && forUrls.Count == 0)
             throw new CliUsageException("--save needs at least one --for <api-url> so the token can be scoped to an origin.");
 
@@ -129,7 +166,8 @@ public static class TokenCommand
             Username = username,
             Password = password,
             RefreshToken = refreshToken,
-            ExtraParams = extra.Count > 0 ? extra : null
+            ExtraParams = extra.Count > 0 ? extra : null,
+            AssertionAudience = assertionAud
         };
 
         // Pins come from the same state file --save writes to; read here so an internal auth
@@ -146,6 +184,40 @@ public static class TokenCommand
 
         services.Log.Debug($"OAuth {grant} → {MarkdownSecrets.RedactUrl(tokenUrl)} · client {clientId ?? "—"} · auth {clientAuth} · cert {(cert is null ? "none" : cert.Subject)}");
         if (!quiet) stderr.WriteLine($"requesting a token ({GrantLabel(grant)}) from {tokenUrl} …");
+
+        if (grant == OAuthGrant.AuthorizationCode)
+        {
+            // PKCE (S256) and a state value; the redirect is caught on loopback, the only redirect a
+            // command line can receive, and a state that does not match is refused.
+            int port = redirectPort != 0 ? redirectPort : OAuthRedirect.FreeLoopbackPort();
+            string redirectUri = $"http://127.0.0.1:{port}/";
+            string verifier = OAuthAuthorization.CreateCodeVerifier();
+            string state = OAuthAuthorization.CreateState();
+            string signIn = OAuthAuthorization.BuildAuthorizationUrl(authorizeUrl!, clientId!, redirectUri, scope, state,
+                OAuthAuthorization.CodeChallenge(verifier));
+            var waiting = OAuthRedirect.WaitForCodeAsync(port, services.Cancel);
+            if (noBrowser) stderr.WriteLine($"To sign in, open: {signIn}");
+            else
+            {
+                stderr.WriteLine($"opening the browser to sign in (redirect {redirectUri}) …");
+                try { services.OpenFile(signIn); }
+                catch (Exception ex) { stderr.WriteLine($"could not open the browser ({ex.Message}); open this instead: {signIn}"); }
+            }
+            OAuthRedirectResult redirect;
+            try { redirect = waiting.GetAwaiter().GetResult(); }
+            catch (OperationCanceledException) { stderr.WriteLine("cancelled."); return ExitCodes.Failure; }
+            if (redirect.Error is not null)
+            {
+                stderr.WriteLine($"error: sign-in failed: {redirect.Error}{(redirect.ErrorDescription is { } d ? ": " + d : "")}");
+                return ExitCodes.Failure;
+            }
+            if (redirect.State != state)
+            {
+                stderr.WriteLine("error: the redirect's state does not match this sign-in; nothing was exchanged.");
+                return ExitCodes.Failure;
+            }
+            request = request with { Code = redirect.Code, RedirectUri = redirectUri, CodeVerifier = verifier };
+        }
 
         var result = grant == OAuthGrant.DeviceCode
             ? OAuthClient.RequestDeviceTokenAsync(request,
@@ -171,6 +243,11 @@ public static class TokenCommand
             string exp = result.ExpiresInSeconds is { } s ? $", expires in {s / 60} min" : "";
             stderr.WriteLine($"got an access token ({result.TokenType ?? "Bearer"}{exp})" +
                              (result.RefreshToken is not null ? " with a refresh token" : ""));
+            // RFC 8705 §3: a token bound to the certificate only works when sent with it.
+            if (cert is not null && ClientAssertion.BoundTo(result.AccessToken!, cert) is { } bound)
+                stderr.WriteLine(bound
+                    ? "the token is bound to this certificate (cnf x5t#S256): send it with the same --cert"
+                    : "warning: the token is bound to a different certificate than --cert");
         }
 
         if (save)
@@ -251,7 +328,8 @@ public static class TokenCommand
         "password" or "pw" => OAuthGrant.Password,
         "refresh" or "refresh_token" or "refresh-token" => OAuthGrant.RefreshToken,
         "device" or "device_code" or "device-code" => OAuthGrant.DeviceCode,
-        _ => throw new CliUsageException($"unknown --grant '{raw}'. Use client_credentials, password, refresh, or device.")
+        "code" or "authorization_code" or "authorization-code" or "pkce" => OAuthGrant.AuthorizationCode,
+        _ => throw new CliUsageException($"unknown --grant '{raw}'. Use client_credentials, password, refresh, device, or code.")
     };
 
     private static string GrantLabel(OAuthGrant g) => g switch
@@ -260,6 +338,7 @@ public static class TokenCommand
         OAuthGrant.Password => "password",
         OAuthGrant.RefreshToken => "refresh token",
         OAuthGrant.DeviceCode => "device code",
+        OAuthGrant.AuthorizationCode => "browser sign-in",
         _ => g.ToString()
     };
 }

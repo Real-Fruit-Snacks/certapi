@@ -25,6 +25,7 @@
          version everywhere it appears, so no NU1605 downgrade warning trips -warnaserror. -->
     <PackageReference Include="Grpc.AspNetCore" Version="2.80.0" />
     <PackageReference Include="Grpc.AspNetCore.Server.Reflection" Version="2.80.0" />
+    <PackageReference Include="Grpc.AspNetCore.Web" Version="2.80.0" />
     <PackageReference Include="Google.Protobuf" Version="3.35.1" />
   </ItemGroup>
 

@@ -41,6 +41,7 @@ public static class StreamTransport
             // default path is behaviorally the platform's own validation.
             RemoteCertificateValidationCallback = (sender, cert, chain, errors) =>
                 Judge(options, TrustContext.HostOf(sender, options.Sni), cert, chain, errors, trustServerCertificate)
+                && ApiClient.PinAllows(options, cert)
         };
         RevocationCheck.Apply(ssl, options);
         TlsPolicy.Apply(ssl, options with { Sni = null });
@@ -49,6 +50,41 @@ public static class StreamTransport
             ssl.ClientCertificates = new X509CertificateCollection { clientCertificate };
         handler.SslOptions = ssl;
         return handler;
+    }
+
+    /// <summary>A raw TLS connection (no HTTP) under the same rules every stream follows: dialled
+    /// through <see cref="ConnectionDialer"/> (so --connect-to, --resolve and --interface apply),
+    /// validated by the same revocation/pin/trust table, presenting the client certificate. Used by
+    /// protocols that are not HTTP at all, such as MQTT over TLS.</summary>
+    public static async Task<Stream> OpenTlsAsync(
+        string host, int port, X509Certificate2? clientCertificate, TransportOptions options,
+        Func<X509Certificate2?, bool>? trustServerCertificate, IEnumerable<string>? alpn, CancellationToken ct)
+    {
+        var network = await ConnectionDialer.DialAsync(options, new DnsEndPoint(host, port), ct);
+        var ssl = new SslStream(network, leaveInnerStreamOpen: false);
+        var auth = new SslClientAuthenticationOptions
+        {
+            TargetHost = options.Sni ?? host,
+            RemoteCertificateValidationCallback = (_, cert, chain, errors) =>
+                Judge(options, options.Sni ?? host, cert, chain, errors, trustServerCertificate)
+                && ApiClient.PinAllows(options, cert)
+        };
+        if (alpn is not null)
+            auth.ApplicationProtocols = alpn.Select(a => new SslApplicationProtocol(a)).ToList();
+        RevocationCheck.Apply(auth, options);
+        TlsPolicy.Apply(auth, options with { Sni = null });
+        if (clientCertificate is not null)
+            auth.ClientCertificates = new X509CertificateCollection { clientCertificate };
+        try
+        {
+            await ssl.AuthenticateAsClientAsync(auth, ct);
+        }
+        catch
+        {
+            await ssl.DisposeAsync();
+            throw;
+        }
+        return ssl;
     }
 
     /// <summary>One validation for every stream: the user's extra roots (--ca-file) reconsidered

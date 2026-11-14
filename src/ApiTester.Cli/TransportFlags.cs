@@ -32,6 +32,23 @@ public static class TransportFlags
                                   Windows 11 / Server 2022 or later, and cannot go through a
                                   proxy or a --resolve pin
           --resolve <host:port:ip>  Pin a host to an address (repeatable; not valid with a proxy)
+          --connect-to <h1:p1:h2:p2>  Connect to h2:p2 whenever h1:p1 is asked for, keeping h1 for
+                                  SNI, Host and the certificate check — one node behind a load
+                                  balancer, a blue/green slot. Empty parts match any / keep the
+                                  original. Repeatable; direct connections only
+          --interface <ip|adapter>  Connect from this local address, or the first one of the named
+                                  adapter (ipconfig's name or description). Direct only
+          --unix-socket <path>    Connect to this Unix domain socket instead of the URL's host
+          --named-pipe <name>     Connect to this Windows named pipe instead: docker_engine,
+                                  \\.\pipe\docker_engine or \\server\pipe\name. The URL still
+                                  names the path and Host, e.g. http://localhost/v1.47/info
+          --pinnedpubkey <sha256//b64>  The server's public key must be one of these (separate
+                                  several with ;), on top of every other check. The value
+                                  `certapi trust` and doctor print as the key's SHA-256
+          --proxy-header <H: v>   A header for the proxy's CONNECT only, never the origin
+                                  (repeatable; needs an explicit http:// --proxy)
+          --http2-prior-knowledge HTTP/2 from the first byte on a plain http:// URL (h2c), as
+                                  internal gRPC and h2c services speak it. Same as --http2
           --noproxy <list>        Hosts that bypass the proxy, comma-separated (repeatable), NO_PROXY-style:
                                   internal.corp, .corp, *.corp, 10.0.0.0/8, or * for everything
                                   (append :port to pin one port). Narrows --proxy or the system
@@ -145,6 +162,13 @@ public static class TransportFlags
         bool http11 = args.Flag("--http1.1");
         bool http2 = args.Flag("--http2");
         bool http3 = args.Flag("--http3");
+        bool h2PriorKnowledge = args.Flag("--http2-prior-knowledge");
+        var connectToSpecs = args.Values("--connect-to");
+        string? interfaceRaw = args.Value("--interface", "--local-address");
+        string? unixSocket = args.Value("--unix-socket");
+        string? namedPipe = args.Value("--named-pipe");
+        string? pinnedRaw = args.Value("--pinnedpubkey");
+        var proxyHeaderSpecs = args.Values("--proxy-header");
         var resolveSpecs = args.Values("--resolve");
         // A bypass list belongs to whichever proxy is in play, so it takes the profile's value the
         // same way the proxy itself does — and a typed --no-proxy suppresses it, since there would
@@ -215,8 +239,32 @@ public static class TransportFlags
             maxRedirects = n;
         }
 
+        // curl's name for HTTP/2 spoken straight away on a plain http:// connection (h2c): what
+        // --http2 does on http://, since a pinned version is never negotiated down.
+        if (h2PriorKnowledge) http2 = true;
         if ((http11 ? 1 : 0) + (http2 ? 1 : 0) + (http3 ? 1 : 0) > 1)
-            throw new CliUsageException("--http1.1, --http2, and --http3 are mutually exclusive — pin one version.");
+            throw new CliUsageException("--http1.1, --http2 (or --http2-prior-knowledge), and --http3 are mutually exclusive — pin one version.");
+
+        var connectTo = new List<ConnectToOverride>();
+        foreach (var raw in connectToSpecs)
+            connectTo.Add(ConnectToOverride.Parse(raw)
+                ?? throw new CliUsageException($"--connect-to expects HOST1:PORT1:HOST2:PORT2 (parts may be empty), got '{raw}'."));
+        string? localAddress = interfaceRaw is null ? null : LocalAddressFor(interfaceRaw, family);
+        var pins = new List<string>();
+        if (pinnedRaw is not null)
+            foreach (var part in pinnedRaw.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            {
+                if (!part.StartsWith("sha256//", StringComparison.OrdinalIgnoreCase))
+                    throw new CliUsageException($"--pinnedpubkey takes sha256//<base64>[;sha256//<base64>…] (a key file is not read), got '{part}'.");
+                pins.Add(part[8..]);
+            }
+        var proxyHeaders = new List<KeyValuePair<string, string>>();
+        foreach (var raw in proxyHeaderSpecs)
+        {
+            int colon = raw.IndexOf(':');
+            if (colon <= 0) throw new CliUsageException($"--proxy-header must be \"Name: value\", got '{raw}'.");
+            proxyHeaders.Add(new(raw[..colon].Trim(), raw[(colon + 1)..].Trim()));
+        }
 
         var resolve = new List<ResolveOverride>();
         foreach (var raw in resolveSpecs) resolve.Add(ParseResolve(raw));
@@ -278,8 +326,35 @@ public static class TransportFlags
             ConnectTimeout = connectTimeout,
             Sni = sni,
             Offline = offline ? true : null,
-            AddressFamily = family == AddressFamilyPreference.Any ? null : family
+            AddressFamily = family == AddressFamilyPreference.Any ? null : family,
+            ConnectTo = connectTo,
+            LocalAddress = localAddress,
+            UnixSocket = unixSocket,
+            NamedPipe = namedPipe,
+            PinnedPublicKeys = pins,
+            ProxyHeaders = proxyHeaders
         };
+    }
+
+    /// <summary>An IP address as given, or the first address of that family on the adapter named
+    /// (by name or description, as `ipconfig` shows it).</summary>
+    internal static string LocalAddressFor(string raw, AddressFamilyPreference family)
+    {
+        if (System.Net.IPAddress.TryParse(raw, out var ip)) return ip.ToString();
+        var adapter = System.Net.NetworkInformation.NetworkInterface.GetAllNetworkInterfaces()
+            .FirstOrDefault(n => n.Name.Equals(raw, StringComparison.OrdinalIgnoreCase) ||
+                                 n.Description.Equals(raw, StringComparison.OrdinalIgnoreCase));
+        if (adapter is null)
+            throw new CliUsageException($"--interface '{raw}' is neither an IP address nor an adapter on this machine.");
+        var address = adapter.GetIPProperties().UnicastAddresses.Select(u => u.Address)
+            .Where(a => family switch
+            {
+                AddressFamilyPreference.IPv6 => a.AddressFamily == System.Net.Sockets.AddressFamily.InterNetworkV6,
+                _ => a.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork
+            })
+            .FirstOrDefault()
+            ?? throw new CliUsageException($"--interface '{raw}' has no {(family == AddressFamilyPreference.IPv6 ? "IPv6" : "IPv4")} address.");
+        return address.ToString();
     }
 
     /// <summary>user:password out of an http://user:password@host URL, and the URL without them.
@@ -579,6 +654,12 @@ public sealed record TransportOverrides
     public string? Sni { get; init; }
     public bool? Offline { get; init; }
     public AddressFamilyPreference? AddressFamily { get; init; }
+    public IReadOnlyList<ConnectToOverride> ConnectTo { get; init; } = Array.Empty<ConnectToOverride>();
+    public string? LocalAddress { get; init; }
+    public string? UnixSocket { get; init; }
+    public string? NamedPipe { get; init; }
+    public IReadOnlyList<string> PinnedPublicKeys { get; init; } = Array.Empty<string>();
+    public IReadOnlyList<KeyValuePair<string, string>> ProxyHeaders { get; init; } = Array.Empty<KeyValuePair<string, string>>();
 
     public TransportOptions ApplyTo(TransportOptions baseline)
     {
@@ -621,6 +702,12 @@ public sealed record TransportOverrides
         if (ConnectTimeout is { } connect) options = options with { ConnectTimeout = connect };
         if (Sni is not null) options = options with { Sni = Sni };
         if (Offline is { } offline) options = options with { Offline = offline };
+        if (ConnectTo.Count > 0) options = options with { ConnectTo = ConnectTo };
+        if (LocalAddress is not null) options = options with { LocalAddress = LocalAddress };
+        if (UnixSocket is not null) options = options with { UnixSocket = UnixSocket };
+        if (NamedPipe is not null) options = options with { NamedPipe = NamedPipe };
+        if (PinnedPublicKeys.Count > 0) options = options with { PinnedPublicKeys = PinnedPublicKeys };
+        if (ProxyHeaders.Count > 0) options = options with { ProxyHeaders = ProxyHeaders };
         if (AddressFamily is { } family) options = options with { AddressFamily = family };
         return options;
     }

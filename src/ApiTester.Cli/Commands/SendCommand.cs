@@ -17,6 +17,9 @@ public static class SendCommand
           -I, --head              Send HEAD and print the status line and headers
           -H, --header "k: v"     Add a header (repeatable)
           -A, --user-agent <ua>   Set the User-Agent header
+          --origin <origin>       Send Origin: <origin>, as a page on that origin would, and say on
+                                  stderr whether a browser there could read the response (with and
+                                  without credentials). `certapi cors` also checks the preflight
           --query name=value      Add a query parameter to the URL, percent-encoded (repeatable)
           -d, --data <body>       Request body (implies POST unless -X); -d @file reads it from a file, as in curl
                                   ( --data-file <file> reads a file without interpreting @ ).
@@ -27,7 +30,14 @@ public static class SendCommand
                                   implies POST. Mutually exclusive with -d.
           --graphql <query>       Send a GraphQL query (POST, application/json)
           --gql-variables <json>  A JSON object of GraphQL variables
+          --data-urlencode <d>    A form field, percent-encoded for you (curl's forms: content,
+                                  =content, name=content, @file, name@file). Repeatable; joins
+                                  -d with &; implies POST and application/x-www-form-urlencoded
           --content-type <ct>     Body content type (default application/json)
+          -b, --cookie <c>        Send cookies: "name=value; other=value" as written, or a
+                                  Netscape cookie file (curl -c's format, browser exports) whose
+                                  cookies for this URL are sent. Repeatable; --cookie-jar still
+                                  keeps the cookies a server sets
           --bearer <token>        Authorization: Bearer …
           -u, --basic <user:pass> Authorization: Basic …
           --digest                Answer the server's Digest challenge with the --basic user and
@@ -134,6 +144,17 @@ public static class SendCommand
           --json                  Print a JSON result envelope instead of the raw body
           -f, --fail              Exit 1 when the HTTP status is 400 or higher
           -q, -s, --quiet         No metadata line on stderr
+          -w, --write-out <fmt>   Print this after the response, curl's way: %{http_code}
+                                  %{time_total} %{size_download} %{url_effective}
+                                  %{redirect_url} %{num_redirects} %{content_type}
+                                  %{header{Name}} %{json} and more; @file reads the template.
+                                  \n and \t are escapes
+          --max-filesize <size>   Refuse a response body larger than this (500k, 10m): nothing is
+                                  kept, exit 1
+          -r, --range <a-b>       Ask for part of the body (bytes=a-b; 500- from 500 on, -500 the
+                                  last 500)
+          -C, --continue-at <n|-> Resume a download into -o's file from byte n, or - for where the
+                                  file ends. A server that ignores ranges gets the file rewritten
           --timing                Where the time went: DNS, connect, TLS, wait for the server,
                                   first byte, download, total (stderr; in the envelope with --json)
           --har <file>            Capture the request/response (and every redirect hop) as a
@@ -207,7 +228,13 @@ public static class SendCommand
         1 on transport errors, 2/3 on usage/data errors.
         """;
 
-    public static int Run(Args args, TextWriter stdout, TextWriter stderr, Stream bodyOut, CliServices services)
+    public static int Run(Args args, TextWriter stdout, TextWriter stderr, Stream bodyOut, CliServices services) =>
+        Run(args, stdout, stderr, bodyOut, services, responseChecks: null);
+
+    /// <param name="responseChecks">Assertions decided from the response itself — `call` uses this
+    /// to check a body against the schema documented for the status that actually came back.</param>
+    internal static int Run(Args args, TextWriter stdout, TextWriter stderr, Stream bodyOut, CliServices services,
+        Func<ApiResponse, IEnumerable<AssertionRule>>? responseChecks)
     {
         // ---- bind options ----
         string? methodOpt = args.Value("-X", "--method");
@@ -217,16 +244,23 @@ public static class SendCommand
             throw new CliUsageException($"-I/--head sends a HEAD request, so it cannot be combined with -X {methodOpt}.");
         if (head) methodOpt = "HEAD";
         string? userAgent = args.Value("--user-agent");
+        string? corsOrigin = args.Value("--origin");
         var querySpecs = args.Values("--query");
         var headers = args.Values("-H", "--header");
         string? data = args.Value("-d", "--data");
         string? dataFile = args.Value("--data-file");
+        var urlencodeSpecs = args.Values("--data-urlencode");
+        var cookieSpecs = args.Values("--cookie");
+        string? maxFilesizeRaw = args.Value("--max-filesize");
+        string? rangeSpec = args.Value("--range");
+        string? continueAt = args.Value("--continue-at");
+        string? writeOut = args.Value("--write-out");
         var formSpecs = args.Values("-F", "--form");
         string? graphql = args.Value("--graphql");
         string? gqlVars = args.Value("--gql-variables");
         // A body — -d, --data-file, -F, --graphql — implies a POST unless a method is given
         // explicitly (curl's behaviour). A GET with a body is what servers refuse or ignore.
-        string method = methodOpt ?? (data is not null || dataFile is not null || formSpecs.Count > 0 || graphql is not null ? "POST" : "GET");
+        string method = methodOpt ?? (data is not null || dataFile is not null || urlencodeSpecs.Count > 0 || formSpecs.Count > 0 || graphql is not null ? "POST" : "GET");
         string? contentType = args.Value("--content-type");
         string? bearer = args.Value("--bearer");
         string? basic = args.Value("--basic");
@@ -317,6 +351,20 @@ public static class SendCommand
             try { assertRules.Add(AssertionParser.Parse(raw)); }
             catch (FormatException ex) { throw new CliUsageException($"--assert: {ex.Message}"); }
         }
+        if (urlencodeSpecs.Count > 0 && (dataFile is not null || formSpecs.Count > 0 || graphql is not null))
+            throw new CliUsageException("--data-urlencode builds a form body; it cannot be combined with --data-file, -F or --graphql (it can join -d, as in curl).");
+        if (continueAt is not null && (outFile is null || outFile == "-"))
+            throw new CliUsageException("-C/--continue-at resumes a download into a file: give -o <file>.");
+        if (continueAt is not null && rangeSpec is not null)
+            throw new CliUsageException("-C/--continue-at and --range both set the Range header: give one.");
+        long? maxFilesize = null;
+        if (maxFilesizeRaw is not null)
+        {
+            if (ServeCommand.ParseSize(maxFilesizeRaw) is not { } cap || cap <= 0)
+                throw new CliUsageException($"--max-filesize expects a size such as 500k or 10m, got '{maxFilesizeRaw}'.");
+            maxFilesize = cap;
+        }
+        var writeOutTemplate = writeOut is null ? null : WriteOut.Load(writeOut);
         if (data is not null && dataFile is not null)
             throw new CliUsageException("-d/--data and --data-file are mutually exclusive.");
         if (formSpecs.Count > 0 && (data is not null || dataFile is not null))
@@ -398,6 +446,14 @@ public static class SendCommand
         var bodySource = BodyFile.FromDataOption(data) ?? (dataFile is null ? null : BodyFile.Read(dataFile, "--data-file"));
         string? body = bodySource?.Text;
         byte[]? bodyBytes = bodySource?.Bytes;
+        if (urlencodeSpecs.Count > 0)
+        {
+            if (bodyBytes is not null)
+                throw new CliUsageException("--data-urlencode joins a text -d body; this one is binary.");
+            string encoded = string.Join("&", urlencodeSpecs.Select(UrlEncodedPart));
+            body = body is null ? encoded : body + "&" + encoded;
+            contentType ??= "application/x-www-form-urlencoded";
+        }
         if (bodyBytes is not null)
             services.Log.Debug($"body: {bodyBytes.Length} bytes of binary data, sent as they are ({{{{variables}}}} are not resolved in it)");
 
@@ -430,6 +486,12 @@ public static class SendCommand
             contentType = R(typed[(typed.IndexOf(':') + 1)..].Trim());
             headers = headers.Where(h => !h.TrimStart().StartsWith("Content-Type:", StringComparison.OrdinalIgnoreCase)).ToList();
         }
+        if (corsOrigin is not null)
+        {
+            corsOrigin = CorsCommand.NormalizeOrigin(corsOrigin);
+            if (!headers.Any(h => h.TrimStart().StartsWith("Origin:", StringComparison.OrdinalIgnoreCase)))
+                headerPairs.Add(new("Origin", corsOrigin));
+        }
         // As in curl, a User-Agent typed with -H wins over -A.
         if (userAgent is not null && !headers.Any(h => h.TrimStart().StartsWith("User-Agent:", StringComparison.OrdinalIgnoreCase)))
             headerPairs.Add(new("User-Agent", R(userAgent)));
@@ -439,6 +501,23 @@ public static class SendCommand
             if (colon <= 0) throw new CliUsageException($"Header must be \"Name: value\", got '{raw}'.");
             headerPairs.Add(new(R(raw[..colon].Trim()), R(raw[(colon + 1)..].Trim())));
         }
+        // -b/--cookie: "name=value; …" as written, or a Netscape cookie file (curl's and browsers'
+        // export format) whose cookies for this URL are sent.
+        var cookieValues = new List<string>();
+        foreach (var spec in cookieSpecs)
+            cookieValues.Add(spec.Contains('=') ? R(spec) : NetscapeCookies.HeaderFor(spec, R(url)));
+        cookieValues.RemoveAll(string.IsNullOrEmpty);
+        if (cookieValues.Count > 0) headerPairs.Add(new("Cookie", string.Join("; ", cookieValues)));
+        long resumeFrom = 0;
+        if (continueAt is not null)
+        {
+            if (continueAt == "-") resumeFrom = File.Exists(outFile!) ? new FileInfo(outFile!).Length : 0;
+            else if (!long.TryParse(continueAt, out resumeFrom) || resumeFrom < 0)
+                throw new CliUsageException($"-C/--continue-at expects a byte offset or -, got '{continueAt}'.");
+            if (resumeFrom > 0) headerPairs.Add(new("Range", $"bytes={resumeFrom}-"));
+        }
+        if (rangeSpec is not null)
+            headerPairs.Add(new("Range", rangeSpec.StartsWith("bytes=", StringComparison.OrdinalIgnoreCase) ? rangeSpec : "bytes=" + rangeSpec));
         if (bearer is not null) headerPairs.Add(new("Authorization", "Bearer " + R(bearer)));
         WindowsAuthOptions? digestAuth = null;
         AwsSigV4Options? awsAuth = null;
@@ -499,6 +578,8 @@ public static class SendCommand
         // whether *this* URL goes through a proxy. An unusable combination is a usage error here,
         // before any network contact, rather than a setting silently dropped on the floor.
         var transport = transportOverrides.ApplyTo(new TransportOptions { IgnoreServerCertificateErrors = insecure });
+        // One byte past the cap, so a body of exactly the cap is not mistaken for a bigger one.
+        if (maxFilesize is { } fileCap) transport = transport with { MaxResponseBytes = fileCap + 1 };
         if (ApiClient.ValidateTransport(transport, url) is { } transportProblem)
             throw new CliUsageException(transportProblem);
 
@@ -613,7 +694,7 @@ public static class SendCommand
 
         PhaseTimings? phases;
         ApiResponse response;
-        using (var timer = timing ? new PhaseTimer() : null)
+        using (var timer = timing || writeOutTemplate?.NeedsTimes == true ? new PhaseTimer() : null)
         {
             response = services.Client.SendAsync(request, cert,
                 transport: transport,
@@ -622,6 +703,12 @@ public static class SendCommand
             phases = timer?.Result();
         }
 
+        if (maxFilesize is { } limit && response.Error is null && (response.BodyTruncated || response.Body.LongLength > limit))
+            response = response with
+            {
+                Body = Array.Empty<byte>(),
+                Error = new ApiError(ApiErrorKind.Unknown, $"The response is larger than --max-filesize ({OutputText.Size(limit)}); nothing was kept.")
+            };
         if (wireLog is not null) WriteWire(wireLog, wireFile, wireIncludeSecrets, frames, stdout, stderr);
         if (cookieJarPath is not null)
         {
@@ -742,7 +829,9 @@ public static class SendCommand
                 foreach (var h in response.Headers) stdout.WriteLine($"{h.Key}: {h.Value}");
                 stdout.WriteLine();
             }
-            if (bodyFile is not null) File.WriteAllBytes(bodyFile, response.Body);
+            if (bodyFile is not null && continueAt is not null)
+                WriteResumed(bodyFile, resumeFrom, response, quiet, stderr);
+            else if (bodyFile is not null) File.WriteAllBytes(bodyFile, response.Body);
             else if (pretty) WritePretty(response, consoleLimits, stdout, stderr, bodyOut);
             else if (consoleLimits && ConsoleBody.LooksBinary(response.Body, response.ContentType))
                 stderr.WriteLine($"note: the body is binary ({OutputText.Size(response.Body.LongLength)}" +
@@ -768,10 +857,21 @@ public static class SendCommand
             if (!quiet) stderr.WriteLine($"wrote HAR to {harPath} ({harEntries.Count} entr{(harEntries.Count == 1 ? "y" : "ies")})");
         }
 
+        if (writeOutTemplate is not null)
+        {
+            stdout.Write(writeOutTemplate.Render(new WriteOut.Facts(response, request, url, phases, bodyFile,
+                response.Error is null ? ExitCodes.Ok : ExitCodes.Failure)));
+            stdout.Flush();
+        }
+
+        if (corsOrigin is not null && response.Error is null)
+            foreach (var line in CorsLines(corsOrigin, request, response)) stderr.WriteLine(line);
+
         if (response.Error is not null) return ExitCodes.Failure;
 
         // ---- assertions ----
         bool assertionsFailed = false;
+        if (responseChecks is not null) assertRules.AddRange(responseChecks(response));
         if (assertRules.Count > 0)
         {
             var results = AssertionEvaluator.Evaluate(assertRules, response);
@@ -793,8 +893,71 @@ public static class SendCommand
         return ExitCodes.Ok;
     }
 
-    /// <summary>The transport configuration in one --debug line, so a support log says how the
-    /// request was actually routed rather than only where it was pointed.</summary>
+    /// <summary>What `send --origin` reports: whether a page on the origin could read this
+    /// response, without credentials and with them, and whether a preflight would have come first.</summary>
+    internal static IEnumerable<string> CorsLines(string origin, ApiRequest request, ApiResponse response)
+    {
+        var sent = request.Headers.ToList();
+        if (request.ContentType is { } ct) sent.Add(new("Content-Type", ct));
+        var plain = new CorsRequest(origin, request.Method.Method, sent, Credentials: false);
+        var withCredentials = plain with { Credentials = true };
+        var (without, _, _, readable, hidden) = CorsRules.CheckResponse(plain, response.Headers);
+        var (with, _, _, _, _) = CorsRules.CheckResponse(withCredentials, response.Headers);
+        if (without.Count == 0 && with.Count == 0)
+            yield return $"cors: a page on {origin} can read this response, with or without credentials";
+        else if (without.Count == 0)
+            yield return $"cors: a page on {origin} can read this response without credentials, not with them: {with[0]}";
+        else
+            yield return $"cors: a browser on {origin} would block this response: {without[0]}";
+        if (without.Count == 0 && hidden.Count > 0)
+            yield return $"cors: a script can read {(readable.Count == 0 ? "no headers" : string.Join(", ", readable))}; not {string.Join(", ", hidden)}";
+        if (CorsRules.PreflightReason(plain) is { } reason)
+            yield return $"cors: a browser would send a preflight first ({reason}); `certapi cors` checks it";
+    }
+
+    /// <summary>curl's --data-urlencode forms: "content", "=content", "name=content", "@file" and
+    /// "name@file" — the content (or the file's text) percent-encoded, the name as written.</summary>
+    internal static string UrlEncodedPart(string spec)
+    {
+        int eq = spec.IndexOf('=');
+        int at = spec.IndexOf('@');
+        if (at >= 0 && (eq < 0 || at < eq))
+        {
+            string name = spec[..at];
+            string path = spec[(at + 1)..];
+            if (!File.Exists(path)) throw new CliDataException($"--data-urlencode: file not found: {path}");
+            string encodedFile = Uri.EscapeDataString(File.ReadAllText(path));
+            return name.Length == 0 ? encodedFile : name + "=" + encodedFile;
+        }
+        if (eq < 0) return Uri.EscapeDataString(spec);
+        if (eq == 0) return Uri.EscapeDataString(spec[1..]);
+        return spec[..eq] + "=" + Uri.EscapeDataString(spec[(eq + 1)..]);
+    }
+
+    /// <summary>-C: a 206 continues the file from where it stopped; a 200 means the server ignored
+    /// the range and sent everything, so the file is replaced; a 416 for a file that is already
+    /// whole leaves it alone.</summary>
+    private static void WriteResumed(string file, long from, ApiResponse response, bool quiet, TextWriter stderr)
+    {
+        if (response.StatusCode == 206 && from > 0)
+        {
+            using var stream = new FileStream(file, FileMode.OpenOrCreate, FileAccess.Write);
+            stream.SetLength(from);
+            stream.Seek(from, SeekOrigin.Begin);
+            stream.Write(response.Body);
+            if (!quiet) stderr.WriteLine($"resumed {file} at {OutputText.Size(from)}; now {OutputText.Size(stream.Length)}");
+            return;
+        }
+        if (response.StatusCode == 416 && from > 0)
+        {
+            if (!quiet) stderr.WriteLine($"note: {file} is already complete ({OutputText.Size(from)}); nothing was downloaded.");
+            return;
+        }
+        if (from > 0 && response.StatusCode is >= 200 and < 300 && !quiet)
+            stderr.WriteLine("note: the server ignored the range and sent the whole file, so it was written from the start.");
+        File.WriteAllBytes(file, response.Body);
+    }
+
     /// <summary>curl's <c>--aws-sigv4 "aws:amz[:region[:service]]"</c>. Only the AWS provider
     /// pair is accepted: the other providers curl knows sign with their own names and dates.</summary>
     internal static AwsSigV4Options SigV4Options(string spec, string? keyPair, string url, Func<string, string?> environment)
@@ -827,6 +990,8 @@ public static class SendCommand
         return options;
     }
 
+    /// <summary>The transport configuration in one --debug line, so a support log says how the
+    /// request was actually routed rather than only where it was pointed.</summary>
     private static string DescribeTransport(TransportOptions t) =>
         $"proxy {(t.Proxy switch { ProxyMode.None => "off", ProxyMode.Explicit => t.ProxyUrl is null ? "explicit" : MarkdownSecrets.RedactUrl(t.ProxyUrl), _ => "system" })}"
         + $" · redirects {(t.FollowRedirects ? $"follow (max {t.MaxRedirects})" : "off")}"

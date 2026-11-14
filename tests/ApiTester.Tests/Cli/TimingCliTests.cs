@@ -87,11 +87,12 @@ public class TimingCliTests
     }
 
     [Fact]
-    public void Write_out_points_at_timing()
+    public void Write_out_names_its_variables_when_one_is_unknown()
     {
-        var r = Run("send", "http://127.0.0.1:9/", "-w", "%{time_total}");
+        // -w is curl's --write-out now; a variable it does not know lists the ones it does.
+        var r = Run("send", "http://127.0.0.1:9/", "-w", "%{time_totl}");
         Assert.Equal(2, r.Code);
-        Assert.Contains("--timing", r.Err);
+        Assert.Contains("time_total", r.Err);
     }
 
     [Fact]

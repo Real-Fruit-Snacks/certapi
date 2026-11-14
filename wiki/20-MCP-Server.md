@@ -55,6 +55,7 @@ directory. A secret is never written into the file: `--cert-pin` is refused (put
 | `grpc_call` | Invoke a gRPC method — unary, server-streaming, client-streaming, or bidirectional — with the pinned certificate |
 | `ws_exchange` | Open a WebSocket on an allowed host, send text messages, and return what comes back — until a count, a time or a close |
 | `sse_read` | Read a Server-Sent Events stream on an allowed host and return the events that arrive — until a count, a time or the end of the stream |
+| `cors_check` | Would a browser page on an origin be allowed to make this request? Sends the preflight a browser would, then the request with `Origin`, and returns the verdict, each rule that passed or failed, and the headers a script could read |
 | `self_test` | Prove the mTLS path end-to-end |
 
 ### Tool arguments
@@ -69,6 +70,7 @@ directory. A secret is never written into the file: `--cert-pin` is refused (put
 | `grpc_call` | `address` and `method` (`Service/Method`) required; `data` (one message, or an array of messages for a streaming request); `metadata` (an object); `maxMessages` (default 100) |
 | `ws_exchange` | `url` (`ws://` or `wss://`, required); `messages` (text to send, in order); `headers`; `maxMessages` (default 20; 0 sends only); `seconds` (default 10) |
 | `sse_read` | `url` (required); `headers`; `lastEventId` (sent as `Last-Event-ID`, to resume); `maxEvents` (default 20); `seconds` (default 10) |
+| `cors_check` | `url` and `origin` required; `method` (default `GET`); `headers` (what the page's script sets); `body`; `contentType`; `credentials` (default false); `sendActual` (send the request itself for a method other than GET or HEAD; default false, so only the preflight is sent) |
 | `list_saved`, `list_environments`, `self_test` | none |
 
 A stream tool always returns: it listens until its count is reached, its time is up (never longer

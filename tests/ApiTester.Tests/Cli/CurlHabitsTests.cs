@@ -128,8 +128,6 @@ public class CurlHabitsTests
     [Theory]
     [InlineData("-L", "already followed")]
     [InlineData("--compressed", "already decompressed")]
-    [InlineData("-b", "--cookie-jar")]
-    [InlineData("--data-urlencode", "--query")]
     [InlineData("-G", "--query")]
     [InlineData("-v", "--debug")]
     [InlineData("--tlsv1.3", "--tls-min 1.3")]

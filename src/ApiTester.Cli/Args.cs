@@ -68,6 +68,10 @@ public sealed class Args
             ["--timeout"] = ["--max-time"],
             ["--ca-file"] = ["--cacert"],
             ["--key-file"] = ["--key"],
+            ["--cookie"] = ["-b"],
+            ["--write-out"] = ["-w"],
+            ["--continue-at"] = ["-C"],
+            ["--range"] = ["-r"],
         };
 
     /// <summary>Single-letter options are case-sensitive (<c>-H</c> is a header, <c>-h</c> is help;

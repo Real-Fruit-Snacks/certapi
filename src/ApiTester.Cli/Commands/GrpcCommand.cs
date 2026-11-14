@@ -69,6 +69,14 @@ public static class GrpcCommand
                                     needs no address and opens no connection at all; an address
                                     given there is ignored.
 
+        gRPC-Web (for a server or gateway behind a browser-facing proxy — Envoy, grpcwebproxy,
+        ASP.NET Core UseGrpcWeb, or a Connect server, which speaks gRPC-Web too):
+          --grpc-web               Speak gRPC-Web (application/grpc-web) instead of native gRPC. It
+                                    works over HTTP/1.1, so it passes proxies that only carry
+                                    HTTP/1.1. Unary and server-streaming methods only; needs
+                                    --protoset, because reflection is a bidirectional stream.
+          --grpc-web-text          The same, with base64 framing (application/grpc-web-text)
+
         TLS / certificates:
         """ + "\n" + CliCert.HelpLines + "\n" + """
           --insecure               Ignore server certificate errors
@@ -159,10 +167,18 @@ public static class GrpcCommand
         bool json = args.Flag("--json");
         bool quiet = args.Flag("-q", "--quiet");
         string? protoset = args.Value("--protoset");
+        bool grpcWeb = args.Flag("--grpc-web");
+        bool grpcWebText = args.Flag("--grpc-web-text");
         var cert = CliCert.Resolve(args, store, services, stderr);
 
         if (dataValues.Count > 0 && dataFile is not null)
             throw new CliUsageException("-d/--data and --data-file are mutually exclusive.");
+        if (grpcWeb && grpcWebText)
+            throw new CliUsageException("--grpc-web and --grpc-web-text are mutually exclusive (pick the binary or the base64 wire format).");
+        if ((grpcWeb || grpcWebText) && protoset is null)
+            throw new CliUsageException(
+                "gRPC-Web needs --protoset: server reflection is a bidirectional stream, which gRPC-Web cannot carry. " +
+                "Compile the service's .proto files with protoc --descriptor_set_out=<file> --include_imports.");
 
         if (proxyFlag is not null && noProxyFlag)
             throw new CliUsageException("--proxy and --no-proxy are mutually exclusive.");
@@ -297,10 +313,13 @@ public static class GrpcCommand
             // has no saved request to consult, so there is no third source here.
             NoProxy = noProxyFromFlag.Count > 0 ? noProxyFromFlag : noProxyFromEnvironment,
             Revocation = revocation,
-            RevocationStrict = revocationStrict
+            RevocationStrict = revocationStrict,
+            GrpcWire = grpcWebText ? GrpcWire.WebText : grpcWeb ? GrpcWire.Web : GrpcWire.Native
         };
 
         services.Log.Debug($"grpc {sub} {address}");
+        if (transport.GrpcWire != GrpcWire.Native)
+            services.Log.Debug($"wire: gRPC-Web ({(grpcWebText ? "application/grpc-web-text" : "application/grpc-web")}) over HTTP/1.1 or HTTP/2");
         if (protoset is not null) services.Log.Debug($"descriptors: from {protoset} (reflection not consulted)");
         services.Log.Debug(cert is null ? "certificate: none" : $"certificate: {cert.Subject} ({cert.Thumbprint})");
         services.Log.Debug($"timeout: {timeout} s · insecure: {insecure} · store: {store}");

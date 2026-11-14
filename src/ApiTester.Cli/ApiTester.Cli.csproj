@@ -6,6 +6,12 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- certapi browse: renders a page in WebView2 hosted on a plain Win32 window (no WinForms or
+         WPF, so the command line keeps needing only the base .NET runtime). -->
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4078.44" />
+  </ItemGroup>
+
+  <ItemGroup>
     <InternalsVisibleTo Include="ApiTester.Tests" />
   </ItemGroup>
 
@@ -23,7 +29,17 @@
     <Copyright>MIT</Copyright>
     <PublishSingleFile>true</PublishSingleFile>
     <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+    <!-- WebView2Loader.dll travels inside the exe (msquic.dll still goes beside it). -->
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
   </PropertyGroup>
+
+  <!-- The WebView2 package also references its WinForms and WPF controls, which would make the
+       command line depend on the Windows Desktop runtime. Only the core API is used here. -->
+  <Target Name="DropWebView2UiControls" BeforeTargets="ResolveAssemblyReferences">
+    <ItemGroup>
+      <Reference Remove="@(Reference)" Condition="'%(Filename)' == 'Microsoft.Web.WebView2.WinForms' or '%(Filename)' == 'Microsoft.Web.WebView2.Wpf'" />
+    </ItemGroup>
+  </Target>
 
   <Import Project="..\MsQuicBesideExe.targets" />
 

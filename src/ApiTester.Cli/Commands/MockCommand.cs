@@ -41,6 +41,14 @@ public static class MockCommand
                             and path (query included when it disambiguates), in recorded order
           --no-match-status <code>
                             Status for a request that matches nothing in the archive (default 404)
+          --cors [<origins>]
+                            Behave like a server with a CORS policy: answer preflights (204, or
+                            403 for an origin not allowed) and put Access-Control-* headers on
+                            every response to a page, credentials allowed and every header
+                            exposed. With no value any origin is allowed; a comma-separated list
+                            (repeatable) allows only those, and any other origin gets no CORS
+                            headers, which a browser blocks. Without --cors the built-in routes
+                            answer Access-Control-Allow-Origin: * as before
 
         With --tls / --mtls the server certificate (and, for --mtls, a ready-to-use client .pfx) are
         written to the cert dir so you can trust/present them. Runs until Ctrl+C.
@@ -84,6 +92,16 @@ public static class MockCommand
             throw new CliUsageException($"--no-match-status expects an HTTP status 100-599, got '{noMatchRaw}'.");
 
         string? routesFile = args.Value("--routes");
+        bool corsOn = false;
+        var corsOrigins = new List<string>();
+        while (args.OptionalValue(out var oneCors, "--cors"))
+        {
+            corsOn = true;
+            if (oneCors is not null)
+                corsOrigins.AddRange(oneCors.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                    .Select(o => o == "*" ? o : CorsCommand.NormalizeOrigin(o)));
+        }
+        MockCors? cors = corsOn ? new MockCors(corsOrigins.Count == 0 ? null : corsOrigins) : null;
         string? tlsDefectRaw = args.Value("--tls-mode");
         var tlsDefect = tlsDefectRaw?.ToLowerInvariant() switch
         {
@@ -138,7 +156,7 @@ public static class MockCommand
         MockServer server;
         try
         {
-            server = MockServer.Start(port, mode, serverCert, onRequest, replay, scenario);
+            server = MockServer.Start(port, mode, serverCert, onRequest, replay, scenario, cors);
         }
         catch (System.Net.Sockets.SocketException ex)
         {
@@ -148,6 +166,10 @@ public static class MockCommand
         }
 
         stderr.WriteLine($"certapi mock listening on {server.BaseUrl}  ({mode})");
+        if (cors is not null)
+            stderr.WriteLine(cors.Origins is null
+                ? "cors: preflights answered, any origin allowed (with credentials)"
+                : $"cors: preflights answered for {string.Join(", ", cors.Origins)}; any other origin gets no CORS headers");
         if (tlsDefect != MockTlsDefect.None)
             stderr.WriteLine($"serving a deliberately {tlsDefectRaw} certificate — clients are SUPPOSED to refuse this one");
         if (scenario is not null)

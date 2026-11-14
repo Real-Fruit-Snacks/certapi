@@ -153,6 +153,12 @@ public static class ServeCommand
                                   refuses the rest with 403
           --cors-max-age <n>      How long a browser may cache a preflight answer, in seconds
                                   (default 600). Only with --cors
+          --cors-headers <list>   The request headers a preflight is allowed, comma-separated
+                                  (repeatable), instead of echoing whatever it asked for — to
+                                  find out which headers a front end really needs. Only with --cors
+          --cors-expose <list>    The response headers a script may read, comma-separated
+                                  (repeatable), instead of every header the upstream sent. Only
+                                  with --cors
           --rewrite-cookies       Set-Cookie loses Domain= and Secure, and SameSite=None becomes
                                   Lax, so the browser can store the cookie against the gateway
           --rewrite-location      A 3xx Location (or a Refresh header's URL) pointing at the
@@ -383,6 +389,8 @@ public static class ServeCommand
         if (!cookieJar && !cookieJarOff && sp?.CookieJar == true) { cookieJar = true; cookieJarFile = sp.CookieJarFile; }
         bool autoToken = args.Switch("--auto-token", sp?.AutoToken);
         string? corsMaxAgeRaw = args.Value("--cors-max-age");
+        var corsHeaderSpecs = args.Values("--cors-headers");
+        var corsExposeSpecs = args.Values("--cors-expose");
         // Header rules are not a browser concern (they work with or without --browser), but they are
         // read alongside the browser flags here so every repeatable option is consumed before
         // Positionals() runs.
@@ -494,6 +502,16 @@ public static class ServeCommand
         if (allow is { AllowsAnyHost: true } && (windowsAuth || winUser is not null))
             throw new CliUsageException("--windows-auth cannot be combined with --allow *: any host a caller names could ask for your Windows sign-in. List the hosts instead.");
 
+        static IReadOnlyList<string>? HeaderList(IReadOnlyList<string> specs) => specs.Count == 0 ? null :
+            specs.SelectMany(v => v.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+                .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        var corsAllowHeaders = HeaderList(corsHeaderSpecs);
+        var corsExposeHeaders = HeaderList(corsExposeSpecs);
+        if ((corsAllowHeaders is not null || corsExposeHeaders is not null) && !cors)
+            throw new CliUsageException("--cors-headers and --cors-expose shape the CORS answers, so they need --cors (or --browser).");
+        foreach (var name in (corsAllowHeaders ?? Array.Empty<string>()).Concat(corsExposeHeaders ?? Array.Empty<string>()))
+            if (name != "*" && !name.All(c => c > 0x20 && c < 0x7F && !"()<>@,;:\\\"/[]?={}".Contains(c)))
+                throw new CliUsageException($"'{name}' is not a header name.");
         int corsMaxAge = BrowserOptions.DefaultCorsMaxAgeSeconds;
         if (corsMaxAgeRaw is not null)
         {
@@ -572,6 +590,7 @@ public static class ServeCommand
             LocalOrigin: new Uri($"{scheme}://127.0.0.1:{port}"))
         {
             SecureOrigin = tls, CorsMaxAgeSeconds = corsMaxAge, RewriteOrigin = rewriteOrigin, StripCsp = stripCsp,
+            CorsAllowHeaders = corsAllowHeaders, CorsExposeHeaders = corsExposeHeaders,
             RewriteBody = rewriteBody
         };
 

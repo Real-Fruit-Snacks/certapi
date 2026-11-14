@@ -155,6 +155,9 @@ public class DocsTests
         ["ConnectionsCommand.cs"] = "connections", ["TokenCommand.cs"] = "token",
         ["ConfigCommand.cs"] = "config", ["CompletionCommand.cs"] = "completion",
         ["UpdateCommand.cs"] = "update",
+        ["CallCommand.cs"] = "call", ["TlsCommand.cs"] = "tls", ["CrawlCommand.cs"] = "crawl",
+        ["BrowseCommand.cs"] = "browse", ["SignalRCommand.cs"] = "signalr", ["MqttCommand.cs"] = "mqtt",
+        ["CorsCommand.cs"] = "cors",
     };
 
     /// <summary>Every option literal the argument parser is asked for, per file.</summary>

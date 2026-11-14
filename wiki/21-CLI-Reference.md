@@ -27,12 +27,19 @@ other.
 | Command | Purpose |
 |---|---|
 | [`send <url>`](#send) | Send a one-off request |
+| [`call <spec> <operation>`](#call) | Call an OpenAPI operation by its operationId, checked against the spec |
 | [`token`](#token) | Fetch an OAuth 2.0 access token (and optionally save it) |
 | [`run <path>`](#run) | Run saved requests as a pass/fail suite, or a chain |
 | [`fuzz <base-url>`](#fuzz) | Discover endpoints from a wordlist |
 | [`bench <url>`](#bench) | Measure an endpoint's latency under load |
 | [`sse <url>`](#sse) | Stream Server-Sent Events |
 | [`ws <url>`](#ws) | Open a WebSocket, send messages, print what arrives |
+| [`signalr <hub-url>`](#signalr) | Connect to a SignalR hub: invoke methods, print the events it sends |
+| [`mqtt <broker-url>`](#mqtt) | Subscribe and publish over MQTT (`mqtts://`, `wss://`) |
+| [`browse <url>`](#browse) | Render a page in WebView2 with the certificate: screenshot, PDF, DOM |
+| [`crawl <url>`](#crawl) | Crawl a site with the certificate: broken links, or an offline mirror |
+| [`tls <host[:port]>`](#tls) | Inspect any TLS service: chain, protocol, the CAs it asks a certificate from |
+| [`cors <url> --origin <o>`](#cors) | Would a browser on that origin allow this request? Preflight and all |
 | [`certs`](#certs) | List client certificates |
 | [`selftest`](#selftest) | Prove the mutual-TLS path end-to-end against a loopback server |
 | [`mock`](#mock) | Run a local test server to fire requests at |
@@ -118,11 +125,18 @@ curl options with the same meaning are accepted wherever the option they stand f
 | `--cacert` | `--ca-file` |
 | `--key` | `--key-file` |
 | `-d @file` | on `send` and `bench`, reads the body from the file — byte for byte when it is not text (on `grpc`, one JSON message) |
+| `-b` / `--cookie` | `--cookie` on `send`: a `name=value; …` string, or a Netscape cookie file (what `curl -c` writes) |
+| `--data-urlencode` | `--data-urlencode` on `send`, all five of curl's forms |
+| `-w` / `--write-out` | `--write-out` on `send`, with curl's variable names |
+| `-C` / `--continue-at` | `--continue-at` on `send` (with `-o`) |
+| `-r` / `--range` | `--range` on `send` |
+| `--max-filesize` | `--max-filesize` on `send` |
+| `--connect-to`, `--interface`, `--unix-socket`, `--pinnedpubkey`, `--proxy-header`, `--http2-prior-knowledge` | the same, among the [transport options](#transport-options) |
 
 The ones whose meaning differs are refused with what to use instead: `-L` and `--compressed` (both
-already the default), `-b`/`-c`/`--cookie` (`--cookie-jar`), `-G`/`--get`/`--data-urlencode`
+already the default), `-c` (`--cookie-jar`, which both reads and saves), `-G`/`--get`
 (`--query`), `-v`/`--verbose` (`--include`, `--debug`, `--trace`), `-O` (`-o <file>`), `-e`/`--referer`
-(`-H "Referer: …"`), `-w`/`--write-out` (`--timing` or `--json`), `--data-binary` (`-d @file` or `--data-file`, which send a binary file byte for byte), `-E` (`--cert-file`), `--tlsv1.2`/`--tlsv1.3` (`--tls-min`), `-T` (`--data-file`
+(`-H "Referer: …"`), `--data-binary` (`-d @file` or `--data-file`, which send a binary file byte for byte), `-E` (`--cert-file`), `--tlsv1.2`/`--tlsv1.3` (`--tls-min`), `-T` (`--data-file`
 with `-X PUT`) and `--data-raw` (`-d`).
 
 ## Exit codes
@@ -180,9 +194,10 @@ ticket queue, which is the process the notice exists to start.
 
 ### Transport options
 
-How a request reaches the server. Accepted by [`send`](#send), [`run`](#run), [`fuzz`](#fuzz),
-[`bench`](#bench), [`mcp`](#mcp), [`serve`](#serve) and [`connections`](#connections).
-[`sse`](#sse), [`ws`](#ws), [`token`](#token) and [`doctor`](#doctor) take the
+How a request reaches the server. Accepted by [`send`](#send), [`call`](#call), [`run`](#run), [`fuzz`](#fuzz),
+[`bench`](#bench), [`crawl`](#crawl), [`mcp`](#mcp), [`serve`](#serve) and [`connections`](#connections);
+[`tls`](#tls) takes the routing and TLS ones (it never uses a proxy).
+[`sse`](#sse), [`ws`](#ws), [`signalr`](#signalr), [`mqtt`](#mqtt), [`browse`](#browse), [`token`](#token) and [`doctor`](#doctor) take the
 [streaming subset](#transport-options-streaming-subset) instead, and [`grpc`](#grpc) takes only
 `--proxy`, `--no-proxy`, `--proxy-user`, `--noproxy`, `--revocation` and `--revocation-strict`.
 On `serve`, the redirect, decompression, HTTP-version and retry options are accepted but do not
@@ -202,6 +217,19 @@ the negotiated protocol, the cipher, and whether your client certificate was act
 not observable — the report says so rather than guessing. `--no-proxy` brings them back, and the
 same applies to [`--wire`](#send), which needs the direct path.
 
+#### Routing
+
+Where the connection goes, separately from the URL — the URL's host still goes in the `Host`
+header, the TLS server name and the certificate check.
+
+| Option | Default | What it does |
+|---|---|---|
+| `--connect-to <host:port:host2:port2>` | none | Connect to `host2:port2` whenever the URL names `host:port`, as curl does. An empty part matches anything (`::10.0.0.5:` sends every host to 10.0.0.5, keeping the port); an IPv6 address goes in brackets. Repeatable; the first rule that matches wins. Unlike `--resolve` it can change the port and name another host, so it reaches one node behind a load balancer, a staging copy, or a tunnel on a local port. Not with a proxy |
+| `--interface <ip\|adapter>` | the OS's choice | Send from this local address. An adapter's name or description (`Ethernet 2`, `Cisco AnyConnect`) picks its first address of the right family — for the machine with a VPN and a LAN where only one of them is allowed to reach the API. `--local-address` is the same option. Not with a proxy |
+| `--unix-socket <path>` | none | Send the request over this Unix domain socket instead of TCP; the URL still gives the path and the `Host` header. Docker's engine API is the usual one: `certapi send http://localhost/v1.43/containers/json --unix-socket /var/run/docker.sock`. Windows 10 1803 and later have them too |
+| `--named-pipe <name>` | none | Send the request over a Windows named pipe: `docker_engine`, or `\\server\pipe\name` for another machine. Docker Desktop's engine is `--named-pipe docker_engine` with `http://localhost/…`. Not with `--unix-socket`, a proxy, `--connect-to`, `--resolve` or `--interface` |
+| `--proxy-header "k: v"` | none | Send this header to the proxy on the `CONNECT` that opens an `https://` tunnel, and never to the site: the proxy that wants a tenant id, a routing key, or a token in a header of its own. Repeatable. Needs an explicit `http://` `--proxy`; for `http://` URLs, which are not tunnelled, the header goes on the proxied request |
+
 #### Redirects
 
 | Option | Default | What it does |
@@ -216,6 +244,7 @@ same applies to [`--wire`](#send), which needs the direct path.
 |---|---|---|
 | `--http1.1` | negotiated | Pin the request to HTTP/1.1 |
 | `--http2` | negotiated | Pin the request to HTTP/2. Required by [`--frames`](#send) |
+| `--http2-prior-knowledge` | off | Speak HTTP/2 from the first byte, without TLS or an upgrade — `h2c` with prior knowledge, for a plaintext gRPC or HTTP/2 backend. The same pin as `--http2` on an `http://` URL |
 | `--http3` | negotiated | Pin the request to HTTP/3 (QUIC, over UDP). Needs Windows 11 or Server 2022 or later, and `msquic.dll` (part of each release) beside `certapi.exe`; without it the request is refused with a message saying where to put it. **Cannot** be combined with a proxy or `--resolve`, and the command refuses the combination rather than silently ignoring one of them |
 | `--no-decompress` | off | Relay compressed bytes exactly as received instead of decoding `gzip`/`deflate`/`br`. What you want when the *encoding* is the thing under test |
 | `--resolve <host:port:ip>` | none | Pin a hostname to an address — test one node behind a load balancer, or an endpoint whose DNS is not updated yet. Repeatable. Not valid with a proxy, which does its own resolving |
@@ -239,6 +268,7 @@ either way. `--insecure` overrides both, and says so when it does.
 | Option | Default | What it does |
 |---|---|---|
 | `--ca-file <pem>` | none | Trust the root certificate(s) in this file for this run, on top of the Windows store. Repeatable; a PEM bundle with several certificates is fine; DER is accepted. For the network whose TLS-intercepting proxy re-signs every site with a private CA that is handed out as a file: narrower than `--insecure`, which trusts anything. A chain ending in one of these roots is accepted the way a store-trusted chain is; a name mismatch and an expired certificate are still refused, and a revoked one is when `--revocation` is on. Profile key `caFile` (a path or a list, relative to the config file) |
+| `--pinnedpubkey <sha256//base64;…>` | none | Accept the server only if its public key is one of these: the SHA-256 of the certificate's SubjectPublicKeyInfo, base64, in curl's `sha256//…` form, several separated by `;`. The pin is checked **as well as** the ordinary validation, never instead of it (with `--insecure`, the pin is the only check). [`tls`](#tls) prints the value for each certificate in a chain. A pin survives a certificate renewed with the same key, unlike a thumbprint |
 | `--tls-min <1.2\|1.3>` | OS default | Refuse to negotiate below this TLS version. `1.3` proves a server — or a middlebox in front of it — really speaks it. Profile key `tlsMin` |
 | `--connect-timeout <s>` | none (`serve`: 15 s for the name lookup and for each address) | A separate budget for connecting: the TCP connect, a proxy tunnel and the TLS handshake. On a network that blackholes unknown hosts this turns a 100-second hang into "unreachable" in seconds. Profile key `connectTimeout` |
 | `--sni <name>` | the URL's host | Send a different server name in the TLS handshake. Direct connections only — a proxy tunnel's TLS is negotiated by the HTTP stack from the URL, so `--sni` with any proxy that applies (explicit, PAC, system or environment) is refused. The server's certificate is then checked against the name sent, so a certificate that names only the URL's host needs a pin or `--insecure` |
@@ -314,8 +344,11 @@ Accepts the [certificate](#certificate-options), [transport](#transport-options)
 | `-I, --head` | off | Send `HEAD` and print the status line and headers. Not with another `-X` |
 | `-H, --header "k: v"` | none | Add a header. Repeatable |
 | `-A, --user-agent <ua>` | .NET's | Set the `User-Agent` header |
+| `--origin <origin>` | none | Send `Origin: <origin>`, as a page on that origin would (a path typed after it is dropped), and print on stderr whether a browser there could read this response — without credentials and with them — which headers a script could read, and whether a preflight would come first. The exit code is not affected; [`cors`](#cors) checks the preflight too and makes the verdict the exit code |
 | `--query name=value` | none | Add a query parameter to the URL, percent-encoded, after any query the URL already has. Repeatable; `name` alone sends `name=` |
 | `-d, --data <body>` | none | Request body; `-d @file` reads it from a file. Implies POST unless `-X` says otherwise (as in curl) |
+| `--data-urlencode <part>` | none | One form field, percent-encoded for you, as curl does: `content`, `=content` (both just the encoded content), `name=content` (the name as written, the content encoded), `@file` and `name@file` (the file's text, encoded). Repeatable, joined with `&` after any `-d`; implies POST and `application/x-www-form-urlencoded`. With `-X GET` and no body, use `--query` instead |
+| `-b, --cookie <cookies\|file>` | none | Send cookies: a `name=value; name2=value2` string, or the path of a **Netscape cookie file** (what `curl -c`, browser exporters and `yt-dlp` write), from which the cookies for this URL's host, path and scheme that have not expired are sent, `#HttpOnly_` lines included. Read-only: to save what the server sets as well, use `--cookie-jar` |
 | `--data-file <path>` | none | Read the body from a file instead, without interpreting a leading `@` — for a body too large or too awkward to quote on a command line. Implies POST unless `-X` says otherwise |
 | `-F, --form name=value` | none | A `multipart/form-data` field. `name=@path` uploads a file; `name=@path;type=<ct>` sets that part's content type. Repeatable, implies POST, and mutually exclusive with `-d` |
 | `--graphql <query>` | none | Send a GraphQL query as a correctly formed `{query, variables}` POST |
@@ -402,6 +435,10 @@ size and equality only.
 |---|---|---|
 | `-o, --output <file>` | stdout | Write the body to a file. `-o -` writes all of it to stdout, even to a console window |
 | `-i, --include` | off | Print the status line and headers before the body |
+| `-w, --write-out <format>` | none | After the transfer, print `format` to stdout with curl's `%{variables}` filled in: `http_code` (`response_code`), `http_connect`, `method`, `scheme`, `url`, `url_effective`, `redirect_url`, `num_redirects`, `num_retries`, `content_type`, `size_download`, `size_header`, `size_request`, `speed_download`, `time_namelookup`, `time_connect`, `time_appconnect`, `time_pretransfer`, `time_starttransfer`, `time_total` (seconds, six decimals), `ssl_verify_result`, `tls_version`, `filename_effective`, `errormsg`, `exitcode`, `%{header{Name}}` for a response header, and `%{json}` for all of them as one object. `\n`, `\t` and `\r` are escapes; `@file` reads the format from a file. A variable it does not know is a usage error that lists the ones it does. `-w '%{http_code}\n' -o /dev/null`-style status checks work as in curl |
+| `--max-filesize <size>` | none | Refuse a response body larger than this — `500k`, `10m`, `1g` or bytes. Nothing is kept or written; the send fails (exit 1) with a message giving the cap. For the endpoint that sometimes answers with a gigabyte you did not want |
+| `-r, --range <range>` | none | Ask for part of the body: `0-499`, `500-`, `-500` (the last 500 bytes), or several, comma-separated. Sent as `Range: bytes=…`; the server answers 206 with the part, or 200 with all of it if it ignores ranges |
+| `-C, --continue-at <offset\|->` | none | Resume a download into the `-o` file: `-` continues from the file's current size, a number from that byte. A 206 appends the rest; a 200 (the server ignored the range) rewrites the file from the start, saying so; a 416 for a file that is already whole leaves it alone. Needs `-o <file>` |
 | `--pretty` | off | Pretty-print the body: JSON and XML reformatted, binary as hex |
 | `--json` | off | Print a JSON result envelope — status, headers, timing, body — instead of the raw body |
 | `-f, --fail` | off | Exit 1 when the HTTP status is 400 or higher |
@@ -490,6 +527,7 @@ the command fails and names where the redirect pointed.
 | `--grant password` | | Resource-owner password, with `--username` and `--password` |
 | `--grant refresh` | | Exchange a `--refresh-token` for a fresh access token |
 | `--grant device` | | Device-code flow (RFC 8628): prints a verification URL and code, then polls until you approve it in a browser **anywhere** — the answer when the machine running this has no browser, or when sign-in needs a phone. Needs `--device-url` and `--client-id`; Ctrl+C abandons the wait |
+| `--grant code` | | Browser sign-in: the authorization-code grant with PKCE (S256) and a state check. Opens your browser at `--authorize-url`, catches the redirect on `http://127.0.0.1:<port>/` (register that redirect URI with the identity provider; most accept any loopback port for a public client), and exchanges the code. Aliases `authorization_code`, `pkce`. Needs `--authorize-url` and `--client-id` |
 
 ### Endpoint and client
 
@@ -499,7 +537,11 @@ the command fails and names where the redirect pointed.
 | `--device-url <url>` | none | The device-authorization endpoint. Device grant only |
 | `--client-id <id>` | none | The client identifier |
 | `--client-secret <secret>` | none | The client secret |
-| `--client-auth <body\|basic>` | `body` | Where the client credentials go: form-encoded in the body, or an HTTP Basic header. Servers differ, and some accept only one |
+| `--client-auth <how>` | `body` | How the client proves who it is. `body` — `client_id` and `client_secret` form-encoded in the body; `basic` — an HTTP Basic header (servers differ, and some accept only one). **With the certificate instead of a secret:** `private_key_jwt` (alias `jwt`) — an RFC 7523 client assertion, a short-lived JWT signed by `--cert`'s private key (RS256 for RSA, ES256/384/512 for EC) whose header names the certificate by `x5t` and `x5t#S256`: Microsoft Entra ID's "certificate credentials", and the same at Okta, Ping and Keycloak; `tls_client_auth` (aliases `self_signed_tls_client_auth`, `mtls`) — RFC 8705: the mutual-TLS handshake itself authenticates the client and only `client_id` is sent. Both need a certificate and `--client-id`, and refuse `--client-secret` |
+| `--assertion-aud <aud>` | the token URL | The `aud` claim of a `private_key_jwt` assertion, for the server that wants its issuer URL rather than its token endpoint |
+| `--authorize-url <url>` | none | The authorization endpoint. Code grant only |
+| `--redirect-port <n>` | any free port | The loopback port the code grant listens on, for a provider that needs the exact redirect URI registered |
+| `--no-browser` | off | Print the sign-in URL instead of opening the browser (for a remote session: open it on the machine you are at, which must reach the loopback redirect) |
 | `--scope "<a b c>"` | none | Space-separated scopes |
 | `--username <u>` | none | For the password grant |
 | `--password <p>` | none | For the password grant |
@@ -520,6 +562,11 @@ the command fails and names where the redirect pointed.
 |---|---|---|
 | `--json` | off | Print the full result: access token, refresh token, expiry, granted scope |
 | `-q, --quiet` | off | No notes on stderr |
+
+With `tls_client_auth` the server may issue a **certificate-bound token** (RFC 8705): one that is
+only accepted over a connection presenting the same certificate. When the access token is a JWT
+with a `cnf.x5t#S256` claim, `token` says whether it is bound to the certificate you used, so a
+"401 with a valid token" from the API is explained before you go looking.
 
 Saved tokens are encrypted at rest for your Windows user — see
 [Authentication](08-Authentication.md).
@@ -815,6 +862,7 @@ A local test server to fire requests at. Runs until Ctrl+C. See [Mock Server](18
 | `--mtls` | off | HTTPS that **also requires** a client certificate. Any certificate is accepted; the point is to exercise the presenting side |
 | `--cert-dir <dir>` | `./certapi-mock-certs` | Where generated certificates are written |
 | `-q, --quiet` | off | Do not log each request |
+| `--cors [<origins>]` | off | Behave like a server with a CORS policy: answer preflights itself (204, or 403 for an origin it does not allow) and put `Access-Control-*` headers on every response to a page — the exact origin, credentials allowed, every header exposed, `Vary: Origin`. With no value any origin is allowed; a comma-separated list (repeatable) allows only those, and any other origin gets **no** CORS headers, so a browser blocks it — a front end can be tested against both answers. Applies to declared routes and replays too. Without `--cors` the built-in routes answer `Access-Control-Allow-Origin: *`, as before |
 
 With `--tls` or `--mtls`, the server certificate — and for `--mtls` a ready-to-use client `.pfx` —
 are written to the certificate directory, so you can trust one and present the other.
@@ -1066,6 +1114,8 @@ So a page on another origin can call the upstream through the gateway.
 | `--browser` | off | The bundle: `--cors`, `--rewrite-cookies`, `--rewrite-location`, `--allow-upgrade`, `--rewrite-origin`, `--strip-csp` and `--referer-fallback` at once. `--cookie-jar` and `--auto-token` stay opt-in |
 | `--cors [<origins>]` | off | Answer CORS preflights at the gateway and add the response headers a browser needs. With no value, any origin |
 | `--cors-max-age <n>` | `600` | How long a browser may cache a preflight answer, in seconds. Only with `--cors` (or `--browser`) |
+| `--cors-headers <list>` | echo | The request headers every preflight is told it may send, comma-separated (repeatable), instead of echoing whatever it asked for. A header outside the list is then refused by the browser, which is how you find out which ones a front end really needs. Only with `--cors` |
+| `--cors-expose <list>` | every upstream header | The response headers a script may read (`Access-Control-Expose-Headers`), comma-separated (repeatable), instead of all of them. Only with `--cors` |
 | `--rewrite-cookies` | off | `Set-Cookie` loses `Domain=` and `Secure`, and `SameSite=None` becomes `Lax` — so a cookie issued for the real origin is actually kept by a browser talking to loopback |
 | `--rewrite-location` | off | A 3xx `Location` (and a `Refresh` header's URL) pointing at the upstream comes back pointing at the gateway, so a redirect does not walk the browser out of the tunnel |
 | `--rewrite-origin` | off | `Origin` and `Referer` on a forwarded request point at the upstream instead of at the gateway, so a login form's CSRF check sees the host it expects. In the `--browser` bundle |
@@ -1125,6 +1175,8 @@ Accepts the [certificate](#certificate-options) block and the gRPC transport sub
 | `--max-messages <n>` | unlimited | Stop a server-streaming or bidirectional call after *n* messages |
 | `--timeout <seconds>` | `100` | Call timeout |
 | `--protoset <file>` | reflection | Read service definitions from a **compiled descriptor set** instead of asking the server. This is how you call a service with reflection disabled — which is most production services. Build one with `protoc --descriptor_set_out` |
+| `--grpc-web` | off | Speak **gRPC-Web** (`application/grpc-web`) instead of native gRPC, for a service behind a browser-facing gateway — Envoy's grpc_web filter, grpcwebproxy, ASP.NET Core's `UseGrpcWeb`, or a Connect server (which speaks gRPC-Web too). It runs over HTTP/1.1, so it also passes proxies and load balancers that only carry HTTP/1.1. Unary and server-streaming methods only (gRPC-Web cannot stream requests, and a client-streaming or bidirectional call is refused before anything is sent), and it needs `--protoset`, because server reflection is itself a bidirectional stream |
+| `--grpc-web-text` | off | The same with base64 framing (`application/grpc-web-text`), for a gateway that only accepts the text form |
 | `--workspace <file>` | live state | Load pins and tokens from a workspace file |
 | `--no-auto-token` | off | Do not attach a captured bearer token for this call |
 | `--json` | off | A JSON envelope instead of the plain rendering |
@@ -1140,6 +1192,268 @@ error.
 `list` with no service name lists the services; with one, it lists that service's methods and their
 message shapes. Well-known Protobuf types are rendered and accepted in their canonical JSON forms,
 so a `Timestamp` reads as an ISO date rather than as seconds and nanos.
+
+---
+
+## call
+
+```
+certapi call <openapi.json> <operationId | "METHOD /path"> [--param name=value …] [send options]
+certapi call <openapi.json> --list
+```
+
+Call one operation from an OpenAPI 3 or Swagger 2 document (JSON) by its `operationId`, without
+assembling the URL by hand, and check the response against what the document promises.
+
+Each `--param name=value` goes where the document puts that parameter — substituted into the path,
+added to the query, sent as a header or a cookie — and a **required** parameter that is missing
+stops the call (exit 2) before anything is sent. The base URL is the document's first `servers`
+entry (or Swagger 2's `schemes`/`host`/`basePath`); `--server` replaces it. A `{{variable}}` in
+the base URL resolves like any other.
+
+After the call, unless `--no-validate`: the status must be one the operation lists (an exact code,
+a range such as `4XX`, or `default`), and the body must match the JSON Schema documented for that
+status — the same checks as [`--assert-schema`](#testing), with `$ref`s resolved within the
+document. A mismatch is exit 1 and names the failing rule.
+
+| Option | Default | What it does |
+|---|---|---|
+| `--param <name=value>` | none | A parameter, by its name in the document. Repeatable |
+| `--server <url>` | the document's | The base URL to call instead of the document's first server |
+| `--no-validate` | off | Send only; do not check the status and body against the document |
+| `--list` | off | List the document's operations (`operationId  METHOD /path`) and exit |
+
+Everything [`send`](#send) takes works here too and means the same — `-d`/`--data-file` for the
+body, the [certificate](#certificate-options), [transport](#transport-options) and
+[variable](#variable-options) blocks, authentication, `-H`, `-o`, `--json`, `-w`, `--assert`,
+`--har`. `"GET /pets/{petId}"` names an operation that has no `operationId`.
+
+---
+
+## tls
+
+```
+certapi tls <host[:port] | url> [options]
+```
+
+Handshake with **any** TLS service — HTTPS, LDAPS, SMTPS/IMAPS, a database, a message broker — and
+report what it showed: the protocol and cipher agreed, ALPN, the server's chain (subject, issuer,
+validity, key, subject alternative names, thumbprint, and the SPKI SHA-256 that
+[`--pinnedpubkey`](#trust-and-tls) takes), whether the chain is trusted here and why not, and
+**whether the server asked for a client certificate — with the list of issuing CAs it will
+accept**. That list is the answer to "which of my certificates will this server take?": pick one
+issued by a CA it names. With `--cert`, the report says whether yours was sent. Nothing is sent
+after the handshake. The port defaults to 443 (or the STARTTLS protocol's plain port).
+
+| Option | Default | What it does |
+|---|---|---|
+| `--starttls <proto>` | none | Speak the protocol's plain-text opening and upgrade to TLS: `smtp` (25), `imap` (143), `pop3` (110), `ftp` (21), `ldap` (389, the StartTLS extended operation) or `postgres` (5432, the SSLRequest) |
+| `--alpn <a,b>` | none | Offer these application protocols (`h2,http/1.1`, `mqtt`, `x-amzn-mqtt-ca`) and report the one chosen |
+| `--sni <name>` | the host | Send this server name instead |
+| `--timeout <seconds>` | `15` | Give up after this long |
+| `--json` | off | The report as JSON |
+
+Accepts the [certificate](#certificate-options) block and the routing and TLS
+[transport options](#transport-options) (`--connect-to`, `--interface`, `--resolve`, `-4`/`-6`,
+`--tls-min`, `--ca-file`). A proxy is never used: this is not HTTP. Exit 0 when the handshake
+completes, 1 when it fails — the report still says how far it got. An untrusted chain is reported,
+not fatal: this command is for looking at it.
+
+---
+
+## crawl
+
+```
+certapi crawl <url> [options]
+```
+
+Walk a site from `<url>` by its links, with your client certificate, and report every page and
+resource reached: status, time, size, and which page linked to it. Broken links — 4xx, 5xx, no
+answer — are listed at the end and make the exit code 1, so a crawl is a site check for CI. Links
+are read from HTML (`href`, `src`, `srcset`, `action`, `poster`, `data-src`, a `<base>`) and from
+stylesheets (`url(…)`); redirects are reported and their target is followed like a link. Each URL
+is fetched once.
+
+| Option | Default | What it does |
+|---|---|---|
+| `--depth <n>` | `3` | How many links away from `<url>` to go |
+| `--max-pages <n>` | `500` | Stop after this many URLs |
+| `--scope <s>` | `path` | What may be fetched: `path` — under `<url>`'s folder; `origin` — the same scheme, host and port; `host` — the host on any port or scheme. A link outside the scope is not followed, so the client certificate never goes anywhere the scope does not name, and links to other sites are not checked |
+| `--include <regex>` | none | Only fetch URLs matching this. Repeatable |
+| `--exclude <regex>` | none | Never fetch URLs matching this — `logout` first of all. Repeatable |
+| `--parallel <n>` | `4` | Requests at once, at most 32 |
+| `--delay <ms>` | `0` | Wait this long between requests on each worker, to go easy on a fragile server |
+| `--no-robots` | off | Ignore `robots.txt`, which is otherwise read and obeyed (the `*` group, longest match wins) |
+| `--mirror <dir>` | none | Save every body under `<dir>/<host>/<path>` — a folder's page as `index.html`, a non-default port as `host_port` — for an offline copy of an internal site. Links are left as written. Names are cleaned so nothing can be written outside `<dir>` |
+| `--json` | off | One JSON object per URL (JSON Lines) instead of the table |
+| `-H, --header "k: v"` | none | Send this header with every request. Repeatable |
+| `--bearer <token>`, `-u, --basic <user:password>`, `-b, --cookie <cookies>` | none | Authentication, as on [`send`](#send) |
+
+Accepts the [certificate](#certificate-options) and [transport](#transport-options) blocks.
+
+---
+
+## browse
+
+```
+certapi browse <url> [options]
+```
+
+Load a page in a real browser engine — Microsoft Edge WebView2, which Windows 10 and 11 include —
+with **every request the page makes** (the document, scripts, stylesheets, images, `fetch` and XHR)
+sent by certapi with your client certificate, and save what it rendered. For the portal or
+single-page app that only works with a certificate, where [`send`](#send) shows the HTML shell and
+nothing else. With no output option, a summary of the load (status, final URL, title, request
+count, time) is printed.
+
+| Option | Default | What it does |
+|---|---|---|
+| `--screenshot <file>` | none | Save a PNG (or `.jpg`) of the viewport |
+| `--full-page` | off | With `--screenshot`, capture the whole page, not just the viewport |
+| `--pdf <file>` | none | Print the page to PDF, backgrounds included |
+| `--landscape` | off | With `--pdf`, landscape pages |
+| `--html <file\|->` | none | Save the rendered DOM — after scripts ran — or `-` for stdout |
+| `--script <js>` | none | Run JavaScript after the page settles and print its result as JSON (`@file` reads it from a file): `--script "document.title"`, `--script "[...document.querySelectorAll('a')].map(a => a.href)"` |
+| `--wait <ms>` | `500` | Extra time after the page loads, for scripts that render late |
+| `--wait-for <selector>` | none | Wait until this CSS selector matches an element — the robust way to wait for a single-page app |
+| `--timeout <seconds>` | `30` | Give up after this long |
+| `--width <px>` / `--height <px>` | `1280` / `800` | The viewport |
+| `--user-agent <ua>` | WebView2's | Replace the browser's user agent |
+| `-H, --header "k: v"` | none | Add a header to requests **to the page's own origin** — never to third-party origins the page loads from. Repeatable |
+| `--bearer <token>` | none | `Authorization: Bearer <token>`, own origin only |
+| `--show` | off | Show the browser window instead of rendering off-screen |
+| `--profile <dir>` | a fresh temporary profile | Keep cookies and storage in this folder between runs, so a login carries over |
+| `-v, --requests` | off | List each request the page made, with its status, on stderr |
+| `-q, --quiet` | off | No progress notices |
+
+Accepts the [certificate](#certificate-options) and
+[streaming transport](#transport-options-streaming-subset) blocks, and `--insecure`. Windows only.
+Exit 0 when the page loaded with a status below 400, 1 otherwise.
+
+---
+
+## signalr
+
+```
+certapi signalr <hub-url> [options]
+```
+
+Connect to an ASP.NET Core **SignalR** hub, or Azure SignalR Service, over WebSockets with your
+client certificate: negotiate, complete the JSON hub-protocol handshake, call hub methods, and
+print the events the hub sends. An Azure SignalR redirect (negotiate answering with a `url` and an
+`accessToken`) is followed automatically, and the connection is kept alive with pings.
+
+| Option | Default | What it does |
+|---|---|---|
+| `--invoke "Method [args]"` | none | Call a hub method and wait for its result, printed as JSON. The arguments are a JSON array, or one JSON value for a single argument: `--invoke 'SendMessage ["ann", "hello"]'`, `--invoke 'Join "room-1"'`. Repeatable; run in order. A `HubException` is printed and makes the exit code 1 |
+| `--send "Method [args]"` | none | Call a hub method without waiting for a result. Repeatable |
+| `--stream "Method [args]"` | none | Call a streaming hub method (`IAsyncEnumerable<T>` or a channel); each item is printed as it arrives |
+| `--on <event>` | all | Print only these client events. Repeatable |
+| `--count <n>` | none | Stop after *n* events |
+| `--seconds <n>` | none | Stop after *n* seconds |
+| `--access-token <token>` | captured, if any | Bearer token for negotiate and the WebSocket — what a JavaScript client's `accessTokenFactory` returns |
+| `-H, --header "k: v"` | none | Extra header on negotiate and the handshake. Repeatable |
+| `--skip-negotiation` | off | Open the WebSocket straight away, for a hub configured with `SkipNegotiation` (implied by a `ws://`/`wss://` URL) |
+| `--json` | off | Print every hub record as raw JSON |
+| `-q, --quiet` | off | No connect and close notices |
+| `--workspace <file>` | live state | Read trust pins and captured tokens from a workspace file |
+| `--no-auto-token` | off | Do not use a captured bearer token |
+
+With `--on`, `--count` or `--seconds`, or with no calls at all, the command keeps listening until
+the limit, the hub closes, or Ctrl+C; otherwise it exits once every call has finished. Events print
+as `Event arg1 arg2`, each argument as JSON. A hub method that asks this client for a result is
+answered with an error rather than left waiting. Accepts the [certificate](#certificate-options)
+and [streaming transport](#transport-options-streaming-subset) blocks, and `--insecure`. WebSockets
+only: a hub that offers only long polling or Server-Sent Events is reported as such.
+
+---
+
+## mqtt
+
+```
+certapi mqtt <broker-url> [options]
+```
+
+A small MQTT 3.1.1 / 5.0 client that presents your client certificate — the usual way IoT brokers
+authenticate a device (AWS IoT Core, Azure IoT Hub and Event Grid, HiveMQ, EMQX, Mosquitto with
+`require_certificate`). Subscribe and print messages, publish, or both.
+
+The URL chooses the wire: `mqtts://host[:8883]` is MQTT over TLS; `wss://host[:443]/path` is MQTT
+over a secure WebSocket (subprotocol `mqtt`, path `/mqtt` when none is given); `mqtt://` (1883) and
+`ws://` are the plain forms, for a test broker.
+
+| Option | Default | What it does |
+|---|---|---|
+| `-t, --topic <filter>` | none | Subscribe to a topic filter; `+` and `#` wildcards. Repeatable |
+| `--publish <topic>` | none | Publish to this topic: each `-m`, or each line piped on stdin |
+| `-m, --message <text>` | none | A message to publish; `@file` reads a file byte for byte. Repeatable |
+| `--retain` | off | Ask the broker to retain the published messages |
+| `--qos <0\|1>` | `0` | Quality of service for publishing and subscribing. QoS 1 waits for the broker's acknowledgement of each publish, so a refusal is seen (exit 1) |
+| `--count <n>` | none | Stop after *n* messages |
+| `--seconds <n>` | none | Stop after *n* seconds |
+| `--client-id <id>` | `certapi-` + random | The client identifier. AWS IoT policies often allow only the thing's name |
+| `--username <name>` / `--password <secret>` | none | MQTT credentials; the password can come from `CERTAPI_MQTT_PASSWORD` instead. Azure IoT Hub with a certificate wants `--username {hub}.azure-devices.net/{device}/?api-version=2021-04-12` and no password |
+| `--mqtt-version <v>` | `3.1.1` | `3.1.1` or `5` |
+| `--keepalive <seconds>` | `60` | Pings are sent at three quarters of it |
+| `--alpn <protocol>` | none | TLS ALPN on `mqtts://` — AWS IoT on port 443 needs `x-amzn-mqtt-ca` |
+| `--json` | off | Each message as `{"topic","payload","qos","retain"}` (`payloadBase64` when the payload is not UTF-8) |
+| `-q, --quiet` | off | No connect and subscribe notices |
+| `--workspace <file>` | live state | Read trust pins from a workspace file |
+
+Messages print as `topic payload`. A broker that refuses the connection says why (bad user name or
+password, not authorized, client identifier rejected…), as does a refused subscription. Subscribing
+keeps listening until `--count`, `--seconds`, the broker disconnecting, or Ctrl+C; publishing only
+exits once the messages are sent (and, at QoS 1, acknowledged). Accepts the
+[certificate](#certificate-options) and [streaming transport](#transport-options-streaming-subset)
+blocks, and `--insecure`. QoS 2 is not supported.
+
+---
+
+## cors
+
+```
+certapi cors <url> --origin <origin> [options]
+```
+
+Would a browser on `<origin>` be allowed to make this request and read the answer? `cors` checks a
+URL the way a browser checks a cross-origin request, with your client certificate:
+
+1. It works out whether the request needs a **preflight** — a method other than GET, HEAD or POST, a
+   header a page cannot send without asking (anything but the safelisted `Accept`,
+   `Accept-Language`, `Content-Language`, a simple `Range`, and a `Content-Type` of form,
+   multipart or text), or a JSON body — and says why.
+2. It sends that preflight as a browser does: `OPTIONS` with `Origin`, `Access-Control-Request-Method`
+   and `Access-Control-Request-Headers`, and **no cookies or `Authorization`** — the most common
+   reason a preflight fails is a server that wants authentication on `OPTIONS`.
+3. It sends the request itself with the `Origin` header (only for GET and HEAD unless `--actual`,
+   so the check changes nothing on the server).
+4. It judges both against the Fetch standard's rules — `Access-Control-Allow-Origin` (exactly one
+   value, the exact origin or `*`), `-Allow-Credentials`, `-Allow-Methods`, `-Allow-Headers` (and
+   that `*` does not count with credentials and never covers `Authorization`), a 2xx preflight that
+   is not a redirect — and lists each rule that passed or failed in words, with notes on
+   `Access-Control-Max-Age`, a missing `Vary: Origin`, and a cookie that would be ignored.
+5. It says which response headers a script could read (`response.headers.get`): the safelisted ones
+   plus `Access-Control-Expose-Headers`.
+
+| Option | Default | What it does |
+|---|---|---|
+| `--origin <origin>` | **required** | The page's origin: `https://app.example.com`, `http://localhost:3000`, or `null`. A path typed after it is dropped |
+| `-X, --method <m>` | `GET` | The method the page's script uses |
+| `-H, --header "k: v"` | none | A header the script sets. Repeatable. Headers a page cannot set (`Cookie`, `Host`, `Origin`, `Sec-*`, …) are left out, as a browser would |
+| `-d, --data <body>` | none | A body; `@file` reads one. Its content type is `application/json` unless said otherwise |
+| `--content-type <ct>` | see `-d` | The body's content type — `text/plain` and the form types need no preflight |
+| `--credentials` | off | The page sends credentials (cookies, `fetch(…, {credentials: "include"})`), which tightens every rule |
+| `--actual` | off | Also send the request itself for a method other than GET or HEAD |
+| `--preflight-only` | off | Never send the request itself |
+| `--json` | off | The result as JSON: the verdict, both exchanges' CORS headers, each rule, the readable headers |
+| `-q, --quiet` | off | Only the verdict line |
+
+Accepts the [certificate](#certificate-options) and [transport](#transport-options) blocks.
+Redirects are not followed: a redirected preflight is itself a failure, and a redirected request is
+reported with a note that the browser checks CORS again at the new address. Exit 0 when a browser
+would allow it, 1 when it would block it — so it works as a CI check on an API's CORS policy.
+[`send --origin`](#request) gives the response half in passing, and [`mock --cors`](#mock) is a
+server to try a front end against.
 
 ---
 

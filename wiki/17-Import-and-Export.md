@@ -33,6 +33,19 @@ first 2xx response and, when that response has a JSON schema, a **schema asserti
 `definitions`) it reaches. A `certapi run` of the imported collection is a contract test from the
 first run; edit or delete either assertion like any other.
 
+**Calling an operation without importing anything.** `certapi call` reads the document directly and
+calls one operation by its `operationId`, with each `--param` placed where the document says —
+path, query, header or cookie — then checks the response's status and body against it:
+
+```powershell
+certapi call .\petstore.json getPetById --param petId=7 --cert "CN=svc"
+certapi call .\petstore.json addPet -d '@pet.json' --server https://staging.example.com/v1
+certapi call .\petstore.json --list
+```
+
+A required parameter that is missing stops the call before anything is sent. Every `send` option
+works too. See the [CLI Reference](21-CLI-Reference.md#call).
+
 ## Import a HAR file
 
 Turn a captured session — a browser's DevTools export, or a `--har` capture from `certapi` — into
