@@ -14,6 +14,9 @@ public static class WsCommand
         Options:
           -m, --message <text>    Send this text after connecting (repeatable)
           -H, --header "k: v"     Add a handshake request header (repeatable)
+          --origin <origin>       Send Origin: <origin> on the handshake, as a page there would. A
+                                  server that checks it refuses a handshake from an origin it does
+                                  not trust (`certapi cors <ws-url> --audit` tries the risky ones)
           --expect <n>            Stop after receiving n messages (good for scripts and pipes)
           -q, --quiet             Don't print the connect/send/close notices on stderr
 
@@ -51,6 +54,7 @@ public static class WsCommand
     {
         var messages = args.Values("-m", "--message");
         var headers = args.Values("-H", "--header");
+        string? origin = args.Value("--origin");
         string store = args.Value("--store") ?? services.Profile?.Store ?? "CurrentUser";
         bool insecure = args.Switch("--insecure", services.Profile?.Insecure);
         bool quiet = args.Flag("-q", "--quiet");
@@ -78,6 +82,8 @@ public static class WsCommand
             if (colon <= 0) throw new CliUsageException($"Header must be \"Name: value\", got '{raw}'.");
             headerPairs.Add(new(raw[..colon].Trim(), raw[(colon + 1)..].Trim()));
         }
+        if (origin is not null && !headerPairs.Any(h => h.Key.Equals("Origin", StringComparison.OrdinalIgnoreCase)))
+            headerPairs.Add(new("Origin", CorsCommand.NormalizeOrigin(origin)));
 
         // Pins and captured tokens come from the same state file every other command reads.
         var state = CliWorkspace.Load(workspace, services.LiveStatePath, stderr);
@@ -113,6 +119,8 @@ public static class WsCommand
                                           or UriFormatException or InvalidOperationException)
             {
                 stderr.WriteLine("error: " + ex.Message);
+                if (origin is not null && session.HandshakeStatus is 403)
+                    stderr.WriteLine("note: the server refused the handshake (403); it may not accept the Origin sent");
                 return ExitCodes.Failure;
             }
 

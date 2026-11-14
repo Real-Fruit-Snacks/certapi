@@ -45,6 +45,12 @@ public static class RunCommand
           --har-include-secrets   Keep credential header values in the captured HAR (Authorization,
                                   Cookie, Set-Cookie, token, secret and API-key headers;
                                   redacted by default)
+          --origin <origin>       Check every request the way a browser on this origin would:
+                                  each is sent with Origin: <origin> and gets a CORS check
+                                  (allowed) alongside its own assertions, so a suite, its JUnit
+                                  report and its markdown note cover the API's CORS policy too
+          --cors-credentials      With --origin, require that the page could read each answer
+                                  with credentials too (cookies, the client certificate)
           --junit <file>          Also write the results as JUnit XML, which CI systems (Azure
                                   DevOps, GitLab, Jenkins, GitHub test reporters) show as a test
                                   report: one case per request, failed assertions as failures,
@@ -164,6 +170,10 @@ public static class RunCommand
         string? mdFile = args.Value("--md");
         string? mdVault = args.Value("--md-vault");
         string? junitFile = args.Value("--junit");
+        string? corsOriginRaw = args.Value("--origin");
+        bool corsCredentials = args.Flag("--cors-credentials");
+        if (corsCredentials && corsOriginRaw is null) throw new CliUsageException("--cors-credentials needs --origin <origin>.");
+        string? corsOrigin = corsOriginRaw is null ? null : CorsCommand.NormalizeOrigin(corsOriginRaw);
         bool mdIncludeSecrets = args.Flag("--md-include-secrets");
         if (mdFile is not null && mdVault is not null)
             throw new CliUsageException("--md and --md-vault both name where the report goes; pick one.");
@@ -222,6 +232,7 @@ public static class RunCommand
             if (mdFile is not null) unused.Add("--md");
             if (mdVault is not null) unused.Add("--md-vault");
             if (junitFile is not null) unused.Add("--junit");
+            if (corsOrigin is not null) unused.Add("--origin");
             if (useCookies) unused.Add(cookieJarPath is not null ? "--cookie-jar" : "--cookies");
             if (dataFile is not null) unused.Add("--data");
             if (envName is not null) unused.Add("--env");
@@ -337,6 +348,21 @@ public static class RunCommand
         var results = new List<(string Path, RequestModel Model, string Url, ApiResponse Response)>();
         // Kept alongside the tuples above so the markdown report can name what each step
         // captured; the tuple shape is load-bearing for the existing text and JSON output.
+        // --origin: one CORS check per request, added for the run and taken out again before
+        // anything is saved, so the collection on disk is unchanged.
+        var corsRules = new List<(RequestModel Model, AssertionRule Rule)>();
+        if (corsOrigin is not null)
+            foreach (var model in targets.Select(t => t.Node.Request).Concat(chainSteps.Select(st => st.Node.Request)).OfType<RequestModel>().Distinct())
+            {
+                var rule = new AssertionRule
+                {
+                    Enabled = true, Target = AssertTarget.Cors, Path = corsOrigin, Op = AssertOp.Equals,
+                    Value = corsCredentials ? "credentials" : "allowed"
+                };
+                model.Assertions.Add(rule);
+                corsRules.Add((model, rule));
+            }
+
         var outcomes = new List<RequestOutcome>();
         // Chain steps that never ran because an earlier one failed. Reported rather than dropped: an
         // output that just stops leaves the reader guessing whether the rest passed.
@@ -400,8 +426,10 @@ public static class RunCommand
         if ((record || capturedAny || tokensCaptured) && !guiBlocksLiveWrite)
         {
             string path = workspace ?? services.LiveStatePath;
+            foreach (var (model, rule) in corsRules) model.Assertions.Remove(rule);
             try { CliWorkspace.ReportSaveResult(state.SaveTo(path), path, stderr); }
             catch (Exception ex) { stderr.WriteLine($"warning: could not save results: {ex.Message}"); }
+            finally { foreach (var (model, rule) in corsRules) model.Assertions.Add(rule); }
         }
         else if ((capturedAny || tokensCaptured) && guiBlocksLiveWrite)
         {

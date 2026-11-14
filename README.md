@@ -60,7 +60,7 @@ Two front ends over one engine (`ApiTester.Core`). The desktop app covers everyt
 | `certapi call <spec> <operationId>` | Calls an OpenAPI operation by name and checks the answer against the spec |
 | `certapi run <name\|path\|.har>` | Runs saved requests, a collection, a chain or a HAR as a pass/fail suite with exit codes |
 | `certapi doctor <url>` | Connects stage by stage and names the stage that broke, with the CAs the server accepts |
-| `certapi cors <url> --origin <o>` | Would a browser on that origin allow this request? Preflight, redirects, rules and verdict; `--audit` grades a loose policy |
+| `certapi cors <url> --origin <o>` | Would a browser on that origin allow this request? Preflight, redirects, rules and verdict; `--audit` grades a loose policy (WebSockets too), `--from-har` checks a whole page, `--suggest` prints the server fix |
 | `certapi tls <host[:port]>` | Handshakes with any TLS service (STARTTLS too) and shows the chain and which CAs it asks a client certificate from |
 | `certapi serve` | Local mTLS gateway for apps that can't do client certificates, in front of one site or many: named sites, a certificate and settings per site, one origin each with `--vhost`, `--browser` for SSO flows, a whole gateway in a profile |
 | `certapi mock` | Standing test server over HTTP, HTTPS or mTLS, or a replay of a captured HAR |

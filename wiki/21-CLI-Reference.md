@@ -611,7 +611,7 @@ only to a `<file.har>` or `--diff-har` replay: a saved request presents its own 
 
 A replay (a `<file.har>` positional or `--diff-har`) sends the archive's own requests as recorded,
 so it refuses `--har`, `--junit`, `--md`, `--md-vault`, `--cookies`, `--cookie-jar`, `--data`, `--env`,
-`--var`, `--strict-vars`, `--no-auto-token`, `--record` and `--no-record` (exit 2).
+`--var`, `--strict-vars`, `--no-auto-token`, `--record`, `--no-record` and `--origin` (exit 2).
 
 ### Behaviour
 
@@ -621,6 +621,8 @@ so it refuses `--har`, `--junit`, `--md`, `--md-vault`, `--cookies`, `--cookie-j
 | `--cookies` | off | Keep one cookie jar for the whole run, so a login's `Set-Cookie` carries to later requests |
 | `--cookie-jar <file>` | none | Like `--cookies`, with the jar loaded from and saved to this file, so a run's login carries to the next run or to `certapi send --cookie-jar` |
 | `--no-auto-token` | off | Do not attach captured session tokens **or** captured session cookies |
+| `--origin <origin>` | none | Check the suite's CORS too: every request is sent with `Origin: <origin>` and gets a `cors <origin> allowed` check alongside its own assertions, so the table, `--junit` and `--md` say which endpoints a page on that origin could read. The checks exist for the run only; nothing is written to the collection |
+| `--cors-credentials` | off | With `--origin`, require that the page could read each answer **with credentials** — what a mutual-TLS API needs, since a browser presents the client certificate only on a credentialed request |
 | `--diff-ignore <path>` | none | A JSON path to ignore when diffing. Repeatable |
 | `--diff-ignore-header <name>` | none | One more header to ignore when diffing. Repeatable |
 
@@ -800,6 +802,7 @@ present a client certificate like any other TLS connection.
 | Option | Default | What it does |
 |---|---|---|
 | `-H, --header "k: v"` | none | Add a header to the handshake. Repeatable — this is where a subprotocol or an auth header goes |
+| `--origin <origin>` | none | Send `Origin: <origin>` on the handshake, as a page there would. CORS does not apply to WebSockets, so this is how a server that checks the origin itself is tested; a refusal (403) says so. [`cors <ws-url> --audit`](#cors) tries the risky origins |
 | `-m, --message <text>` | none | Send this text after connecting. Repeatable, in order |
 | `--expect <n>` | unlimited | Stop after receiving *n* messages. Makes a request/response exchange scriptable. `--expect 0` means send only: nothing is waited for |
 | `-q, --quiet` | off | No connect/send/close notices on stderr |
@@ -1453,6 +1456,10 @@ URL the way a browser checks a cross-origin request, with your client certificat
 | `--credentials` | off | The page sends credentials (cookies, `fetch(…, {credentials: "include"})`), which tightens every rule |
 | `--actual` | off | Also send the request itself for a method other than GET or HEAD |
 | `--preflight-only` | off | Never send the request itself |
+| `--preflight-without-cert` | off | Send the preflight **without the client certificate**, as the Fetch standard sends it. A server that demands a certificate during the TLS handshake (nginx `ssl_verify_client on`, IIS *Require*) then refuses the preflight before its CORS policy runs — browsers differ on whether they present one for a preflight, so this is the case to make work |
+| `--suggest [<framework>]` | off | After the check, print the **server configuration** that grants exactly what was checked — the origins, the methods and headers that needed a preflight, the response headers a script could not see, credentials, Private Network Access — as an allow-list for `aspnet` (ASP.NET Core), `nginx`, `express`, `spring`, `iis` (IIS CORS Module) or `apigateway` (AWS HTTP API), or all of them when none is named. Works with `--audit` (an allow-list of the trusted origin) and `--from-har` too |
+| `--from-har <file>` | none | Check **every cross-origin request in a browser capture** instead of one URL — see below |
+| `--live` | off | With `--from-har`, also re-check each distinct request against the server now, as `cors` checks one: GET and HEAD in full, other methods by their preflight |
 | `--private-network` | off | Check **Private Network Access** too: the preflight carries `Access-Control-Request-Private-Network: true`, and the answer must say `Access-Control-Allow-Private-Network: true` — for a page on the internet calling an API on a private or loopback address. Without it, that case is pointed out in a note (current Chrome asks the user for permission to reach the local network instead of sending this preflight) |
 | `--audit` | off | **Probe for misconfigurations** instead of checking one request — see below |
 | `--json` | off | The result as JSON: the verdict, both exchanges' CORS headers, each rule, the readable headers |
@@ -1475,6 +1482,33 @@ That last rule is the one that surprises people: an API that redirects to a sign
 breaks CORS even when both allow the page's origin. A redirected preflight is a failure, as in a
 browser. `--max-redirs <n>` and `--no-redirect` from the [transport options](#transport-options)
 apply; the hops are in the output and in `--json` (`hops`).
+
+**`--from-har`** takes a capture saved from the browser's developer tools (*Save all as HAR*) and
+judges each request that carried an `Origin` different from its own origin — the cross-origin
+ones — from what the browser recorded: the preflight when the capture holds it (the browser's
+*OPTIONS* entry for the same URL), then the response's CORS headers. A request is taken as
+credentialed when it carried cookies (or with `--credentials`), and one the browser recorded no
+response for is reported as blocked. `--origin` judges every request as if it came from that page —
+how to check a site before moving it to a new origin. One line per request, the reasons under
+the blocked ones, and a count; exit 1 if any is blocked. `--live` adds a re-check of each against
+the server as it is now, and `--suggest` the configuration that would let them all through.
+
+```powershell
+certapi cors --from-har portal.har
+certapi cors --from-har portal.har --origin https://new-portal.corp --live --cert "CN=me" --suggest nginx
+```
+
+**WebSockets.** A `ws://` or `wss://` URL is checked differently, because CORS does not apply to a
+WebSocket: a browser opens one from any page and sends its cookies and client certificate on the
+handshake, so the server's own check of the `Origin` header is the only protection. `--origin`
+tries a handshake from each origin and says which were accepted (101) and which refused; `--audit`
+tries the audit's origins below and grades **cross-site WebSocket hijacking** — any origin, `null`,
+a look-alike or plain http accepted. Exit 1 when a handshake is refused (or, for `--audit`, on a
+high or medium finding).
+
+```powershell
+certapi cors wss://api.corp/hub --audit --origin https://app.corp --cert "CN=svc"
+```
 
 **`--audit`** looks for the mistakes that let another site read the API's answers. It sends a GET
 with each of these origins, and a preflight from a stranger asking for an invented method and

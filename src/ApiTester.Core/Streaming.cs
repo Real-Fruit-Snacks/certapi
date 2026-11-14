@@ -145,6 +145,8 @@ public sealed class WebSocketSession : IAsyncDisposable
             foreach (var h in headers) _ws.Options.SetRequestHeader(h.Key, h.Value);
         if (subProtocols is not null)
             foreach (var p in subProtocols) _ws.Options.AddSubProtocol(p);
+        // So a refused handshake can say what the server answered instead of 101.
+        _ws.Options.CollectHttpResponseDetails = true;
 
         // The handshake goes through an invoker built on the shared stream-transport handler
         // rather than ClientWebSocketOptions' own certificate/validation knobs: the invoker owns
@@ -175,6 +177,9 @@ public sealed class WebSocketSession : IAsyncDisposable
 
     public Task SendBinaryAsync(ReadOnlyMemory<byte> bytes, CancellationToken ct = default) =>
         _ws.SendAsync(bytes, WebSocketMessageType.Binary, endOfMessage: true, ct).AsTask();
+
+    /// <summary>The status the server answered the handshake with (101 when accepted), when known.</summary>
+    public int? HandshakeStatus => _ws.HttpStatusCode == 0 ? null : (int)_ws.HttpStatusCode;
 
     /// <summary>The subprotocol the server accepted in the handshake, or null.</summary>
     public string? SubProtocol => _ws.SubProtocol;

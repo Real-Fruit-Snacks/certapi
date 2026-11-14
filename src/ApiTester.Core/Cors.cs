@@ -709,3 +709,293 @@ public static class CorsReport
         return sb.ToString();
     }
 }
+
+/// <summary>One cross-origin request from a capture, and what a browser made of it.</summary>
+public sealed record CorsHarRow(string Method, string Url, string Origin, bool Credentials, int Status,
+    string? PreflightReason, bool PreflightRecorded, bool Allowed, IReadOnlyList<string> Problems, IReadOnlyList<string> Notes);
+
+/// <summary>`cors --from-har`: every cross-origin request in a browser capture, judged from the
+/// headers the capture recorded — the preflight when the capture has it, and the response.</summary>
+public static class CorsHar
+{
+    private static IReadOnlyList<KeyValuePair<string, string>> Pairs(IEnumerable<HarNameValue> headers) =>
+        headers.Where(h => !h.Name.StartsWith(':')).Select(h => new KeyValuePair<string, string>(h.Name, h.Value)).ToList();
+
+    private static string? Header(IEnumerable<HarNameValue> headers, string name) =>
+        headers.LastOrDefault(h => h.Name.Equals(name, StringComparison.OrdinalIgnoreCase))?.Value;
+
+    public static IReadOnlyList<CorsHarRow> Check(Har har, string? originOverride, bool credentials)
+    {
+        var entries = har.Log.Entries;
+        bool IsPreflight(HarEntry e) => e.Request.Method.Equals("OPTIONS", StringComparison.OrdinalIgnoreCase) &&
+                                        Header(e.Request.Headers, "Access-Control-Request-Method") is not null;
+        var rows = new List<CorsHarRow>();
+        foreach (var entry in entries)
+        {
+            if (IsPreflight(entry)) continue;
+            if (!Uri.TryCreate(entry.Request.Url, UriKind.Absolute, out var url) || url.Scheme is not ("http" or "https")) continue;
+            string? origin = originOverride ?? Header(entry.Request.Headers, "Origin");
+            if (origin is null) continue;
+            if (Uri.TryCreate(origin, UriKind.Absolute, out var originUri) && CorsProbe.SameOrigin(originUri, url)) continue;
+
+            var requestHeaders = Pairs(entry.Request.Headers)
+                .Where(h => !h.Key.Equals("Origin", StringComparison.OrdinalIgnoreCase)).ToList();
+            bool sentCredentials = credentials || Header(entry.Request.Headers, "Cookie") is not null;
+            var request = new CorsRequest(origin, entry.Request.Method.ToUpperInvariant(), requestHeaders, sentCredentials);
+            var problems = new List<string>();
+            var notes = new List<string>();
+            string? reason = CorsRules.PreflightReason(request);
+            bool preflightRecorded = false;
+            if (reason is not null)
+            {
+                var preflight = entries.LastOrDefault(e => IsPreflight(e) && e.Request.Url == entry.Request.Url &&
+                                                          e.StartedDateTime <= entry.StartedDateTime) ??
+                                entries.FirstOrDefault(e => IsPreflight(e) && e.Request.Url == entry.Request.Url);
+                if (preflight is not null && preflight.Response.Status != 0)
+                {
+                    preflightRecorded = true;
+                    problems.AddRange(CorsRules.CheckPreflight(request, preflight.Response.Status, Pairs(preflight.Response.Headers)).Problems);
+                }
+                else notes.Add("needs a preflight, which the capture does not hold (export it with the preflight requests shown, or use --live)");
+            }
+            if (problems.Count == 0)
+            {
+                if (entry.Response.Status == 0)
+                    problems.Add("the browser recorded no response: it blocked or failed the request (look for the CORS error in the console)");
+                else
+                    problems.AddRange(CorsRules.CheckResponse(request, Pairs(entry.Response.Headers)).Problems);
+            }
+            rows.Add(new CorsHarRow(entry.Request.Method.ToUpperInvariant(), entry.Request.Url, origin, sentCredentials,
+                entry.Response.Status, reason, preflightRecorded, problems.Count == 0, problems, notes));
+        }
+        return rows;
+    }
+}
+
+/// <summary>What a server's CORS policy has to grant for the requests checked.</summary>
+public sealed record CorsNeeds(
+    IReadOnlyList<string> Origins,
+    IReadOnlyList<string> Methods,
+    IReadOnlyList<string> Headers,
+    IReadOnlyList<string> Expose,
+    bool Credentials,
+    bool PrivateNetwork)
+{
+    /// <summary>The needs of a set of checked requests: their origins, the methods and headers
+    /// that made a preflight necessary, the response headers a script could not see.</summary>
+    public static CorsNeeds From(IEnumerable<(CorsRequest Request, CorsProbeResult? Result)> checks)
+    {
+        var list = checks.ToList();
+        return new CorsNeeds(
+            list.Select(c => c.Request.Origin).Where(o => o != "null").Distinct(StringComparer.Ordinal).ToList(),
+            list.Select(c => c.Request.Method.ToUpperInvariant()).Distinct(StringComparer.Ordinal).OrderBy(m => m, StringComparer.Ordinal).ToList(),
+            list.SelectMany(c => CorsRules.UnsafeHeaderNames(c.Request)).Distinct(StringComparer.Ordinal).OrderBy(h => h, StringComparer.Ordinal).ToList(),
+            list.SelectMany(c => c.Result?.Verdict.Hidden ?? Array.Empty<string>())
+                .Where(h => !h.Equals("Set-Cookie", StringComparison.OrdinalIgnoreCase) && !h.Equals("Date", StringComparison.OrdinalIgnoreCase))
+                .Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
+            list.Any(c => c.Request.Credentials),
+            list.Any(c => c.Request.PrivateNetwork));
+    }
+}
+
+/// <summary>`cors --suggest`: the server configuration that grants exactly what was checked, for
+/// the frameworks people actually run — an allow-list, never a reflected origin.</summary>
+public static class CorsSuggest
+{
+    public static readonly IReadOnlyList<string> Frameworks = new[] { "aspnet", "nginx", "express", "spring", "iis", "apigateway" };
+
+    public static string For(CorsNeeds n, string? framework = null, int maxAge = 600)
+    {
+        var sb = new StringBuilder();
+        var origins = n.Origins.Count > 0 ? n.Origins : new[] { "https://app.example.com" };
+        var methods = n.Methods.Where(m => m is not ("GET" or "HEAD" or "POST")).ToList();
+        var allMethods = n.Methods.Count > 0 ? n.Methods : new[] { "GET" };
+        string Q(IEnumerable<string> xs) => string.Join(", ", xs.Select(x => $"\"{x}\""));
+        bool Want(string f) => framework is null || framework.Equals(f, StringComparison.OrdinalIgnoreCase);
+
+        sb.AppendLine($"needs      origin{(origins.Count > 1 ? "s" : "")} {string.Join(", ", origins)}" +
+                      $"{(methods.Count > 0 ? $"; methods {string.Join(", ", methods)}" : "")}" +
+                      $"{(n.Headers.Count > 0 ? $"; headers {string.Join(", ", n.Headers)}" : "")}" +
+                      $"{(n.Expose.Count > 0 ? $"; expose {string.Join(", ", n.Expose)}" : "")}" +
+                      $"{(n.Credentials ? "; credentials" : "")}{(n.PrivateNetwork ? "; private network" : "")}");
+
+        if (Want("aspnet"))
+        {
+            sb.AppendLine().AppendLine("ASP.NET Core (Program.cs):");
+            sb.AppendLine("  builder.Services.AddCors(o => o.AddPolicy(\"app\", p => p");
+            sb.AppendLine($"      .WithOrigins({Q(origins)})");
+            sb.AppendLine($"      .WithMethods({Q(allMethods)})");
+            if (n.Headers.Count > 0) sb.AppendLine($"      .WithHeaders({Q(n.Headers)})");
+            if (n.Expose.Count > 0) sb.AppendLine($"      .WithExposedHeaders({Q(n.Expose)})");
+            if (n.Credentials) sb.AppendLine("      .AllowCredentials()");
+            sb.AppendLine($"      .SetPreflightMaxAge(TimeSpan.FromSeconds({maxAge}))));");
+            sb.AppendLine("  // after UseRouting, before UseAuthentication and UseAuthorization:");
+            sb.AppendLine("  app.UseCors(\"app\");");
+            if (n.PrivateNetwork) sb.AppendLine("  // Private Network Access has no built-in option: add Access-Control-Allow-Private-Network: true to OPTIONS answers in a small middleware.");
+        }
+        if (Want("nginx"))
+        {
+            sb.AppendLine().AppendLine("nginx (in the location; with several origins, map $http_origin to an allowed value first):");
+            string origin = origins.Count == 1 ? $"\"{origins[0]}\"" : "$cors_origin";
+            if (origins.Count > 1)
+            {
+                sb.AppendLine("  # in http {}:  map $http_origin $cors_origin { default \"\";");
+                foreach (var o in origins) sb.AppendLine($"  #   \"{o}\" $http_origin;");
+                sb.AppendLine("  # }");
+            }
+            sb.AppendLine("  if ($request_method = OPTIONS) {");
+            sb.AppendLine($"      add_header Access-Control-Allow-Origin {origin} always;");
+            if (n.Credentials) sb.AppendLine("      add_header Access-Control-Allow-Credentials \"true\" always;");
+            sb.AppendLine($"      add_header Access-Control-Allow-Methods \"{string.Join(", ", allMethods)}\" always;");
+            if (n.Headers.Count > 0) sb.AppendLine($"      add_header Access-Control-Allow-Headers \"{string.Join(", ", n.Headers)}\" always;");
+            if (n.PrivateNetwork) sb.AppendLine("      add_header Access-Control-Allow-Private-Network \"true\" always;");
+            sb.AppendLine($"      add_header Access-Control-Max-Age {maxAge} always;");
+            sb.AppendLine("      add_header Vary Origin always;");
+            sb.AppendLine("      return 204;");
+            sb.AppendLine("  }");
+            sb.AppendLine($"  add_header Access-Control-Allow-Origin {origin} always;");
+            if (n.Credentials) sb.AppendLine("  add_header Access-Control-Allow-Credentials \"true\" always;");
+            if (n.Expose.Count > 0) sb.AppendLine($"  add_header Access-Control-Expose-Headers \"{string.Join(", ", n.Expose)}\" always;");
+            sb.AppendLine("  add_header Vary Origin always;");
+        }
+        if (Want("express"))
+        {
+            sb.AppendLine().AppendLine("Express (npm install cors):");
+            sb.AppendLine("  app.use(require('cors')({");
+            sb.AppendLine($"    origin: [{string.Join(", ", origins.Select(o => $"'{o}'"))}],");
+            sb.AppendLine($"    methods: [{string.Join(", ", allMethods.Select(m => $"'{m}'"))}],");
+            if (n.Headers.Count > 0) sb.AppendLine($"    allowedHeaders: [{string.Join(", ", n.Headers.Select(h => $"'{h}'"))}],");
+            if (n.Expose.Count > 0) sb.AppendLine($"    exposedHeaders: [{string.Join(", ", n.Expose.Select(h => $"'{h}'"))}],");
+            if (n.Credentials) sb.AppendLine("    credentials: true,");
+            if (n.PrivateNetwork) sb.AppendLine("    // Private Network Access: answer OPTIONS with Access-Control-Allow-Private-Network: true yourself");
+            sb.AppendLine($"    maxAge: {maxAge}");
+            sb.AppendLine("  }));");
+        }
+        if (Want("spring"))
+        {
+            sb.AppendLine().AppendLine("Spring (a WebMvcConfigurer):");
+            sb.AppendLine("  @Override public void addCorsMappings(CorsRegistry registry) {");
+            sb.AppendLine("      registry.addMapping(\"/**\")");
+            sb.AppendLine($"          .allowedOrigins({Q(origins)})");
+            sb.AppendLine($"          .allowedMethods({Q(allMethods)})");
+            if (n.Headers.Count > 0) sb.AppendLine($"          .allowedHeaders({Q(n.Headers)})");
+            if (n.Expose.Count > 0) sb.AppendLine($"          .exposedHeaders({Q(n.Expose)})");
+            if (n.Credentials) sb.AppendLine("          .allowCredentials(true)");
+            if (n.PrivateNetwork) sb.AppendLine("          .allowPrivateNetwork(true)");
+            sb.AppendLine($"          .maxAge({maxAge});");
+            sb.AppendLine("  }");
+            sb.AppendLine("  // with Spring Security, also http.cors(Customizer.withDefaults()) so preflights skip authentication");
+        }
+        if (Want("iis"))
+        {
+            sb.AppendLine().AppendLine("IIS (web.config, with the IIS CORS Module installed):");
+            sb.AppendLine("  <system.webServer>");
+            sb.AppendLine("    <cors enabled=\"true\" failUnlistedOrigins=\"true\">");
+            foreach (var o in origins)
+            {
+                sb.AppendLine($"      <add origin=\"{o}\"{(n.Credentials ? " allowCredentials=\"true\"" : "")} maxAge=\"{maxAge}\">");
+                if (n.Headers.Count > 0)
+                {
+                    sb.AppendLine("        <allowHeaders allowAllRequestedHeaders=\"false\">");
+                    foreach (var h in n.Headers) sb.AppendLine($"          <add header=\"{h}\" />");
+                    sb.AppendLine("        </allowHeaders>");
+                }
+                sb.AppendLine("        <allowMethods>");
+                foreach (var m in allMethods) sb.AppendLine($"          <add method=\"{m}\" />");
+                sb.AppendLine("        </allowMethods>");
+                if (n.Expose.Count > 0)
+                {
+                    sb.AppendLine("        <exposeHeaders>");
+                    foreach (var h in n.Expose) sb.AppendLine($"          <add header=\"{h}\" />");
+                    sb.AppendLine("        </exposeHeaders>");
+                }
+                sb.AppendLine("      </add>");
+            }
+            sb.AppendLine("    </cors>");
+            sb.AppendLine("  </system.webServer>");
+        }
+        if (Want("apigateway"))
+        {
+            sb.AppendLine().AppendLine("AWS API Gateway (HTTP API: aws apigatewayv2 update-api --api-id <id> --cors-configuration file://cors.json):");
+            sb.AppendLine("  {");
+            sb.AppendLine($"    \"AllowOrigins\": [{Q(origins)}],");
+            sb.AppendLine($"    \"AllowMethods\": [{Q(allMethods)}],");
+            if (n.Headers.Count > 0) sb.AppendLine($"    \"AllowHeaders\": [{Q(n.Headers)}],");
+            if (n.Expose.Count > 0) sb.AppendLine($"    \"ExposeHeaders\": [{Q(n.Expose)}],");
+            sb.AppendLine($"    \"AllowCredentials\": {(n.Credentials ? "true" : "false")},");
+            sb.AppendLine($"    \"MaxAge\": {maxAge}");
+            sb.AppendLine("  }");
+        }
+        sb.AppendLine();
+        sb.Append("note       A server that demands the client certificate during the TLS handshake can refuse the preflight before " +
+                  "its CORS policy runs: the Fetch standard sends a preflight without credentials, and browsers differ on whether " +
+                  "they present a certificate for it. Ask for the certificate as optional at the TLS layer (nginx ssl_verify_client " +
+                  "optional, IIS Accept) and require it for everything but OPTIONS; `certapi cors --preflight-without-cert` tests that.");
+        return sb.ToString();
+    }
+}
+
+/// <summary>A WebSocket handshake tried with one Origin: accepted (101) or not.</summary>
+public sealed record WebSocketOriginProbe(string Kind, string Origin, bool Accepted, int? Status, string? Error);
+
+/// <summary>WebSockets and Origin: CORS does not apply to a WebSocket, and a browser sends the
+/// page's cookies and client certificate on the handshake whatever the page — so the server's own
+/// Origin check is the only thing standing between another site and an authenticated socket
+/// (cross-site WebSocket hijacking). These try handshakes from chosen origins.</summary>
+public static class WebSocketOrigins
+{
+    /// <summary><paramref name="connect"/> opens a handshake with the given Origin and returns
+    /// whether it was accepted, the status, and the error when it was not.</summary>
+    public static async Task<IReadOnlyList<WebSocketOriginProbe>> ProbeAsync(
+        IEnumerable<(string Kind, string Origin)> origins, Func<string, Task<(bool Accepted, int? Status, string? Error)>> connect)
+    {
+        var probes = new List<WebSocketOriginProbe>();
+        foreach (var (kind, origin) in origins)
+        {
+            var (accepted, status, error) = await connect(origin);
+            probes.Add(new WebSocketOriginProbe(kind, origin, accepted, status, error));
+        }
+        return probes;
+    }
+
+    public static IReadOnlyList<CorsFinding> Grade(IReadOnlyList<WebSocketOriginProbe> probes)
+    {
+        var findings = new List<CorsFinding>();
+        bool Accepted(string kind) => probes.Any(p => p.Kind == kind && p.Accepted);
+        const string Why = "A browser sends the user's cookies and client certificate on a WebSocket handshake from any page, and CORS does not apply, so ";
+        if (Accepted("arbitrary origin"))
+            findings.Add(new CorsFinding(CorsSeverity.High, "Any origin may open the socket",
+                Why + "a handshake from any site is accepted: any page the user visits can open an authenticated socket (cross-site WebSocket hijacking)."));
+        if (Accepted("null origin"))
+            findings.Add(new CorsFinding(CorsSeverity.High, "The null origin may open the socket", Why + "a sandboxed iframe on any site can open an authenticated socket."));
+        foreach (var (kind, title) in new[] { ("prefix look-alike", "the end of the name"), ("suffix look-alike", "the start of the name"), ("unescaped dot", "a regular expression with an unescaped dot") })
+            if (Accepted(kind) && !Accepted("arbitrary origin"))
+                findings.Add(new CorsFinding(CorsSeverity.High, $"The Origin check matches {title}",
+                    $"{Why}a look-alike domain anyone can register ({probes.First(p => p.Kind == kind).Origin}) is accepted."));
+        if (Accepted("plain http") && !Accepted("arbitrary origin"))
+            findings.Add(new CorsFinding(CorsSeverity.Medium, "Plain http may open the socket", "Anyone on the network path can inject a page into an http:// origin."));
+        if (Accepted("subdomain") && !Accepted("arbitrary origin"))
+            findings.Add(new CorsFinding(CorsSeverity.Low, "Every subdomain may open the socket", "One forgotten or taken-over subdomain, or one XSS on any of them, is enough."));
+        return findings.OrderByDescending(f => f.Severity).ToList();
+    }
+
+    public static string Describe(IReadOnlyList<WebSocketOriginProbe> probes, IReadOnlyList<CorsFinding>? findings, string url)
+    {
+        var sb = new StringBuilder();
+        sb.Append("websocket  ").AppendLine(url);
+        int width = probes.Count == 0 ? 0 : probes.Max(p => p.Origin.Length) + 1;
+        foreach (var p in probes)
+            sb.Append("  ").Append(p.Accepted ? "accepted " : "refused  ").Append(p.Kind.PadRight(18)).Append(p.Origin.PadRight(width)).Append(' ')
+              .AppendLine(p.Accepted ? "101" : p.Status is { } s ? $"{s}" : p.Error ?? "no answer");
+        if (findings is not null)
+        {
+            if (findings.Count == 0) sb.AppendLine("findings   none: only the origins it should accept were accepted");
+            foreach (var f in findings)
+                sb.Append(f.Severity.ToString().ToUpperInvariant().PadRight(7)).Append("    ").Append(f.Title).Append(". ").AppendLine(f.Detail);
+            if (probes.All(p => p.Accepted))
+                sb.AppendLine("note       every origin was accepted; that is only harmless when the socket needs no cookie, token or certificate");
+        }
+        sb.Append("note       WebSockets ignore CORS: a browser opens the socket from any page and sends its cookies and client certificate; only the server's Origin check decides");
+        return sb.ToString();
+    }
+}

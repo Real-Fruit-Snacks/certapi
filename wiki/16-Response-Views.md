@@ -9,7 +9,7 @@ Every way the app shows you a response, plus copying, saving, and themes.
 | **Pretty** | JSON (JavaScript Object Notation) and XML (Extensible Markup Language) formatted with syntax highlighting; HTML (Hypertext Markup Language)/text shown as-is; binary hex-dumped. The body type is sniffed even when the `Content-Type` is missing or lying. |
 | **Raw** | The exact response bytes decoded as text, with a **find** box (Enter for next match, wraps around). |
 | **Headers** | Every response header. |
-| **Diagnostics** | Connection details — TLS (Transport Layer Security) version and cipher, whether your client certificate was presented, and the server's certificate and chain. See [Certificates & mTLS](06-Certificates-and-mTLS.md). |
+| **Diagnostics** | Connection details — TLS (Transport Layer Security) version and cipher, whether your client certificate was presented, and the server's certificate and chain. See [Certificates & mTLS](06-Certificates-and-mTLS.md). For a request sent with an `Origin` header, a **CORS** section says whether a page on that origin could read the response, with and without credentials, and which headers it could see. |
 | **Diff** | What changed since the last known-good response — or since a recorded session (below). |
 | **Rendered** | The request's URL (Uniform Resource Locator) opened as a **web page** (below). |
 | **Network** | A browser-style trace of every HTTP (Hypertext Transfer Protocol) call (below). |
@@ -20,6 +20,29 @@ formatting, and a binary body's hex dump covers its first 64 KB. JSON and XML ar
 64,000 characters and shown in one colour beyond that. **Copy body** and **Save…** always take the
 whole body. The app lays out every character it shows on the window's own thread, so showing all
 of a large body left the window not responding until it finished.
+
+## Checking CORS
+
+**CORS…**, beside **Discover…** above the request, checks the current request the way a browser on
+another origin would, with the request's own method, headers, body and certificate:
+
+- **Page origin** — where the page making the call lives (`https://app.example.com`). Several,
+  comma-separated, are checked one after another.
+- **Check** sends the preflight a browser would send (when one is needed), then the request with the
+  `Origin` header, follows each redirect as a browser does, and lists every rule that passed or
+  failed, the verdict, and the headers a script could read. Methods other than GET and HEAD are only
+  preflighted unless **Send unsafe methods** is ticked.
+- **Audit** tries the origins attackers use — any origin, `null`, look-alike domains, plain http —
+  and grades each one the server lets in.
+- **With credentials**, **Private network** and **Preflight without the certificate** mean what
+  `--credentials`, `--private-network` and `--preflight-without-cert` mean on
+  [`certapi cors`](21-CLI-Reference.md#cors). The first is ticked to begin with, because a browser
+  presents a client certificate only on a credentialed request.
+- **Fix for** adds the server configuration that grants what was checked, for ASP.NET Core, nginx,
+  Express, Spring, IIS or AWS API Gateway.
+
+A `ws://` or `wss://` URL is checked as a WebSocket: which origins the server accepts a handshake
+from, and with **Audit**, whether any site could open the socket.
 
 ## Find in a response
 

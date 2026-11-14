@@ -243,6 +243,9 @@
                         </ContextMenu>
                     </Button.ContextMenu>
                 </Button>
+                <Button x:Name="CorsButton" DockPanel.Dock="Right" Content="CORS…" Width="72"
+                        VerticalAlignment="Bottom" Margin="4,0,0,0" Click="CorsButton_Click"
+                        ToolTip="Check this request the way a browser on another origin would: the preflight, redirects, an audit of risky origins, and the server configuration that fixes it"/>
                 <Button x:Name="DiscoverButton" DockPanel.Dock="Right" Content="Discover…" Width="92"
                         VerticalAlignment="Bottom" Margin="4,0,0,0" Click="DiscoverButton_Click"
                         ToolTip="Probe a wordlist of endpoints against this website to see which ones exist"/>

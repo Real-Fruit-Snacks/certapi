@@ -25,6 +25,20 @@ All notable changes to this project are documented here. The format follows
 - The app's Diagnostics view shows the CORS verdict for a request sent with an `Origin` header.
 - `mcp` `cors_check`: `audit` and `privateNetwork` arguments; redirects are followed with every
   hop checked against the allowlist.
+- `cors --from-har <file>`: every cross-origin request in a browser capture, judged from the
+  recorded preflight and response; `--origin` judges them as if from another page, `--live`
+  re-checks each against the server now.
+- `run --origin <o>` (and `--cors-credentials`): a CORS check on every request of a suite, in its
+  table, JUnit and markdown reports. Nothing is written to the collection.
+- `cors --suggest [<framework>]`: the server configuration that grants what was checked, as an
+  allow-list, for ASP.NET Core, nginx, Express, Spring, IIS and AWS API Gateway.
+- `cors --preflight-without-cert`: sends the preflight without the client certificate, as the Fetch
+  standard does, to catch a server that demands the certificate in the TLS handshake.
+- WebSockets: `cors ws(s)://… --origin` tries a handshake from each origin; `--audit` grades
+  cross-site WebSocket hijacking (any origin, null, look-alikes, plain http accepted). `ws --origin`
+  sends an `Origin` header.
+- The app: a **CORS…** button opens a full check of the current request — preflight, redirects,
+  audit, WebSocket origins, and the fix for a chosen server.
 
 ## [1.98.0] - 2026-11-13
 

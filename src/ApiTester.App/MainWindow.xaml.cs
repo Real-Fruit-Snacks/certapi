@@ -1260,6 +1260,22 @@ public partial class MainWindow : Window
         RefreshEnvCombo();
     }
 
+    // ---------- CORS ----------
+
+    private string? _lastCorsOrigin;
+
+    private void CorsButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (ActiveRequest is not { } model) return;
+        CaptureControlsInto(model);
+        if (string.IsNullOrWhiteSpace(model.EffectiveUrl())) { StatusText.Text = "Enter a URL."; return; }
+        var request = BuildRequest();
+        var win = new CorsWindow(_apiClient, request, SelectedCert(), model.Transport.ToOptions(model.IgnoreServerCert),
+            _trustPredicates.For(TokenService.HostOf(request.Url)), _lastCorsOrigin) { Owner = this };
+        win.ShowDialog();
+        _lastCorsOrigin = win.Origin.Length > 0 ? win.Origin : _lastCorsOrigin;
+    }
+
     // ---------- endpoint discovery ----------
 
     private void DiscoverButton_Click(object sender, RoutedEventArgs e)

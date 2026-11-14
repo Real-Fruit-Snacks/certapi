@@ -84,6 +84,21 @@ To check that the policy is not too *loose*, `certapi cors <url> --audit --origi
 the origins attackers use — any origin, `null`, look-alike domains, plain http — and grades each one
 it lets in.
 
+Three more that save time:
+
+- **The whole page at once.** Save the page's traffic from the browser's developer tools as a HAR
+  and run `certapi cors --from-har page.har`: every cross-origin request, with the reason for each
+  one that failed.
+- **The fix.** Add `--suggest` (or `--suggest nginx`, `aspnet`, `express`, `spring`, `iis`,
+  `apigateway`) for the server configuration that grants exactly what the page needs.
+- **A mutual-TLS API whose preflight never arrives.** If the server demands the client certificate
+  during the TLS handshake, a browser's preflight — which carries no credentials — can be refused
+  before CORS is reached. `certapi cors … --preflight-without-cert` shows it; the cure is optional
+  certificate verification at the TLS layer and requiring it for everything but `OPTIONS`.
+
+WebSockets are a different case: CORS does not apply, so `certapi cors wss://… --audit` checks
+whether the server accepts a handshake from any origin (cross-site WebSocket hijacking).
+
 ## "It's slow" — reading the timings
 
 Three different measurements answer three different questions, and mixing them up wastes an

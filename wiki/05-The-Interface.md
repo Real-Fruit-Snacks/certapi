@@ -65,7 +65,8 @@ PowerShell / Python / C# snippet), plus **Save…**. Use the **pop-out** button 
 ## Tabs and the sidebar
 
 - **Request tabs** across the top let you keep several requests open at once (`Ctrl+T` new,
-  `Ctrl+W` close). At the right of the tab strip sit **Discover…** ([endpoint
+  `Ctrl+W` close). At the right of the tab strip sit **CORS…** ([checking
+  CORS](16-Response-Views.md#checking-cors)), **Discover…** ([endpoint
   discovery](14-Endpoint-Discovery.md)) and **Import ▾** (cURL, OpenAPI, HAR and workspace import and
   export, and **Trusted certificates…**).
 - The **sidebar** (`Ctrl+H`) holds **Collections** (your saved library), **History** (recent

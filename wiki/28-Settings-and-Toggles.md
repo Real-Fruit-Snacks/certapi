@@ -216,6 +216,19 @@ it inherits, so an endpoint is immediately sendable. The nearest ancestor with a
 
 Results open as tabs or save as a collection.
 
+### Check CORS
+
+| Control | Default | What it does |
+|---|---|---|
+| **Page origin** | the last one used, else `http://localhost:3000` | The origin of the page making the call; comma-separated for several |
+| **With credentials** | on | The page sends cookies / `credentials: "include"` — the only way a browser presents a client certificate — so every rule is the strict one |
+| **Private network** | off | Check Private Network Access as well |
+| **Send unsafe methods** | off | Send the request itself for a method other than GET or HEAD; otherwise it is only preflighted |
+| **Preflight without the certificate** | off | Send the preflight without the client certificate, as the Fetch standard does |
+| **Fix for** | (none) | Add the server configuration that grants what was checked: all, ASP.NET Core, nginx, Express, Spring, IIS, AWS API Gateway |
+
+Nothing here is saved with the request. See [Checking CORS](16-Response-Views.md#checking-cors).
+
 ### Environments window
 
 | Control | Default | What it does |
@@ -287,6 +300,7 @@ Almost everything here has a flag. The mapping is deliberately one-to-one:
 | Trusted certificates | [`trust`](21-CLI-Reference.md#trust) |
 | Mock server | [`mock`](21-CLI-Reference.md#mock) |
 | Discover | [`fuzz`](21-CLI-Reference.md#fuzz) |
+| CORS… | [`cors`](21-CLI-Reference.md#cors) |
 | Copy as ▾ | [`--json`](21-CLI-Reference.md#send) and the export commands |
 
 A [configuration profile](27-Configuration.md) can supply defaults for the command-line side, so a

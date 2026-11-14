@@ -1,0 +1,88 @@
+<Window x:Class="ApiTester.App.CorsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Check CORS" Width="940" Height="660" MinWidth="720" MinHeight="460"
+        WindowStyle="None" ResizeMode="CanResizeWithGrip" WindowStartupLocation="CenterOwner"
+        Background="{DynamicResource Bg.Window}" Foreground="{DynamicResource Text.Soft}"
+        FontFamily="{StaticResource Mono}" FontSize="12.5"
+        TextOptions.TextFormattingMode="Ideal" UseLayoutRounding="True">
+    <WindowChrome.WindowChrome>
+        <WindowChrome CaptionHeight="0" ResizeBorderThickness="6" CornerRadius="0"
+                      GlassFrameThickness="0" UseAeroCaptionButtons="False"/>
+    </WindowChrome.WindowChrome>
+    <Border BorderBrush="{DynamicResource Border.Strong}" BorderThickness="1">
+        <DockPanel>
+            <Border DockPanel.Dock="Top" Height="40" Background="{DynamicResource Bg.Panel}"
+                    BorderBrush="{DynamicResource Border}" BorderThickness="0,0,0,1" MouseLeftButtonDown="Header_Drag">
+                <Grid>
+                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="14,0,0,0">
+                        <TextBlock Text="&#x276F;" FontWeight="Bold" FontSize="13" Foreground="{DynamicResource Accent}" VerticalAlignment="Center"/>
+                        <TextBlock Text="CHECK CORS" FontWeight="Bold" FontSize="12" Margin="9,0,0,0"
+                                   Foreground="{DynamicResource Text.Normal}" VerticalAlignment="Center"/>
+                    </StackPanel>
+                    <Button Content="&#xE8BB;" HorizontalAlignment="Right" Style="{StaticResource CaptionClose}" Height="40" Click="Close_Click"/>
+                </Grid>
+            </Border>
+
+            <Grid Margin="16">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*"/>
+                </Grid.RowDefinitions>
+
+                <StackPanel Grid.Row="0">
+                    <DockPanel Margin="0,0,0,6">
+                        <TextBlock Text="URL" Width="90" Foreground="{DynamicResource Text.Muted}" VerticalAlignment="Center"/>
+                        <TextBox x:Name="MethodBox" Width="80" DockPanel.Dock="Left" Margin="0,0,6,0" VerticalContentAlignment="Center"
+                                 ToolTip="The method the page's script uses"/>
+                        <TextBox x:Name="UrlBox" VerticalContentAlignment="Center"
+                                 ToolTip="The API the page calls: http(s)://, or ws(s):// for a WebSocket"/>
+                    </DockPanel>
+                    <DockPanel Margin="0,0,0,6">
+                        <TextBlock Text="PAGE ORIGIN" Width="90" Foreground="{DynamicResource Text.Muted}" VerticalAlignment="Center"/>
+                        <TextBox x:Name="OriginBox" VerticalContentAlignment="Center"
+                                 ToolTip="The origin of the page making the request, e.g. https://app.example.com. Several, comma-separated, make a table"/>
+                    </DockPanel>
+                    <TextBlock x:Name="HeadersNote" Margin="90,0,0,6" Foreground="{DynamicResource Text.Muted}" TextWrapping="Wrap"/>
+                </StackPanel>
+
+                <WrapPanel Grid.Row="1" Margin="90,0,0,8">
+                    <CheckBox x:Name="CredentialsCheck" Content="With credentials" Margin="0,0,14,0" IsChecked="True"
+                              ToolTip="The page sends cookies / credentials: 'include'. A browser presents a client certificate only on such a request"/>
+                    <CheckBox x:Name="PrivateNetworkCheck" Content="Private network" Margin="0,0,14,0"
+                              ToolTip="Check Private Network Access: a public page calling a private or loopback address"/>
+                    <CheckBox x:Name="ActualCheck" Content="Send unsafe methods" Margin="0,0,14,0"
+                              ToolTip="Also send the request itself when the method is not GET or HEAD (by default it is only preflighted)"/>
+                    <CheckBox x:Name="NoCertPreflightCheck" Content="Preflight without the certificate"
+                              ToolTip="Send the preflight without the client certificate, as the Fetch standard does"/>
+                </WrapPanel>
+
+                <DockPanel Grid.Row="2" Margin="90,0,0,10" LastChildFill="False">
+                    <Button x:Name="CheckButton" Content="Check" Width="90" Click="Check_Click" IsDefault="True"
+                            ToolTip="The preflight and the request a browser on the page origin would make, every redirect followed"/>
+                    <Button x:Name="AuditButton" Content="Audit" Width="90" Margin="6,0,0,0" Click="Audit_Click"
+                            ToolTip="Try the origins attackers use (any origin, null, look-alikes, plain http) and grade what gets in"/>
+                    <TextBlock Text="Fix for" Foreground="{DynamicResource Text.Muted}" VerticalAlignment="Center" Margin="18,0,6,0"/>
+                    <ComboBox x:Name="FrameworkCombo" Width="130" SelectedIndex="0"
+                              ToolTip="Server configuration that grants what was checked">
+                        <ComboBoxItem Content="(none)"/>
+                        <ComboBoxItem Content="all"/>
+                        <ComboBoxItem Content="aspnet"/>
+                        <ComboBoxItem Content="nginx"/>
+                        <ComboBoxItem Content="express"/>
+                        <ComboBoxItem Content="spring"/>
+                        <ComboBoxItem Content="iis"/>
+                        <ComboBoxItem Content="apigateway"/>
+                    </ComboBox>
+                    <TextBlock x:Name="BusyText" Foreground="{DynamicResource Text.Muted}" VerticalAlignment="Center" Margin="14,0,0,0"/>
+                </DockPanel>
+
+                <TextBox Grid.Row="3" x:Name="ResultBox" IsReadOnly="True" AcceptsReturn="True" TextWrapping="NoWrap"
+                         VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto" FontFamily="Consolas"
+                         Background="{DynamicResource Bg.Panel}" BorderThickness="1" Padding="8"/>
+            </Grid>
+        </DockPanel>
+    </Border>
+</Window>
