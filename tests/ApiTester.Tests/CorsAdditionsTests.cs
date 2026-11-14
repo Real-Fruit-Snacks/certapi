@@ -281,6 +281,19 @@ public class CorsAdditionsTests
         Assert.Contains(hop.GetProperty("problems").EnumerateArray(), p => p.GetString()!.Contains("elsewhere.invalid"));
     }
 
+    [Fact]
+    public void The_diagnostics_cors_lines_appear_only_for_a_request_with_an_Origin()
+    {
+        var response = new ApiResponse { StatusCode = 200, Headers = H("Access-Control-Allow-Origin: *", "X-Total: 1") };
+        Assert.Null(CorsReport.For(H("Accept: */*"), response));
+        string report = CorsReport.For(H("Origin: https://app.example"), response)!;
+        Assert.Contains("CORS  (Origin: https://app.example)", report);
+        Assert.Contains("✓ a page there can read this response", report);
+        Assert.Contains("✗ not with credentials", report);
+        Assert.Contains("hidden:   X-Total", report);
+        Assert.Contains("✗ a page there cannot read it", CorsReport.For(H("Origin: https://app.example"), new ApiResponse { StatusCode = 200, Headers = H() })!);
+    }
+
     // ---- doctor --origin ----
 
     [Fact]

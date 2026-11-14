@@ -635,13 +635,14 @@ public static class CorsAudit
     {
         var sb = new StringBuilder();
         sb.Append("audit      ").Append(url).Append("  (trusted origin ").Append(result.BaseOrigin).AppendLine(")");
+        int width = result.Probes.Count == 0 ? 0 : result.Probes.Max(x => x.Origin.Length) + 1;
         foreach (var p in result.Probes)
         {
             string answer = p.Error is not null ? "no answer: " + p.Error
                 : p.AllowOrigin is null ? "no Access-Control-Allow-Origin"
                 : $"Access-Control-Allow-Origin: {p.AllowOrigin}{(p.AllowCredentials ? " + credentials" : "")}";
             sb.Append("  ").Append(p.Reflected ? "allowed  " : p.AllowOrigin == "*" ? "any (*)  " : "refused  ")
-              .Append(p.Kind.PadRight(18)).Append(p.Origin.PadRight(46)).Append(' ').AppendLine(answer);
+              .Append(p.Kind.PadRight(18)).Append(p.Origin.PadRight(width)).Append(' ').AppendLine(answer);
         }
         if (result.Findings.Count == 0) sb.AppendLine("findings   none: only the origins it should allow were allowed");
         else
