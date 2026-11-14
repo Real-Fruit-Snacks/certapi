@@ -202,6 +202,7 @@ public sealed class ApiClient : IDisposable
         // ServerCertificateUntrustedException for how that path reports the identical fact instead.
         // Always false when this send turns out to be direct.
         bool serverUntrusted = false;
+        bool pinRefused = false;
 
         // Also set only by the proxied path's own Validate callback: non-null exactly when
         // revocation itself is what refused the connection (a genuine revocation, or a strict-mode
@@ -320,6 +321,7 @@ public sealed class ApiClient : IDisposable
                     }));
                 revocationStatus = decision.Status;
                 if (decision.Accepted && PinAllows(transport, cert)) return true;
+                pinRefused = decision.Accepted;
                 proxiedRefusal = decision.Accepted ? null : decision.RefusedByRevocation;
                 serverUntrusted = true;
                 return false;
@@ -664,6 +666,7 @@ public sealed class ApiClient : IDisposable
                 kind == ApiErrorKind.ServerCertificateRevoked ? RevocationCheck.RevokedMessage
                 : kind == ApiErrorKind.ServerCertificateUntrusted && refusedByRevocation == RevocationStatus.Unknown
                     ? RevocationCheck.StrictUnknownMessage
+                : kind == ApiErrorKind.ServerCertificateUntrusted && pinRefused ? PinRefusedMessage
                 : ex.Message;
             return new ApiResponse
             {
@@ -819,6 +822,7 @@ public sealed class ApiClient : IDisposable
             DateTime? srvNotAfter = null;
             IReadOnlyList<string> chain = Array.Empty<string>();
             bool untrusted = false;
+            bool pinMismatch = false;
             // What the revocation check reported on this one connection, recorded on every
             // validation (clean or not, ruling 6) so a successful handshake's HandshakeInfo is
             // truthful; and, separately, whether revocation itself is what refused it (non-null for
@@ -863,6 +867,7 @@ public sealed class ApiClient : IDisposable
                     }));
                 revocationStatus = decision.Status;
                 if (decision.Accepted && PinAllows(transport, cert)) return true;
+                pinMismatch = decision.Accepted;
                 revocationRefusal = decision.Accepted ? null : decision.RefusedByRevocation;
                 untrusted = true;
                 return false;
@@ -907,7 +912,7 @@ public sealed class ApiClient : IDisposable
                 // (protocol mismatch, no certificate presented, and so on) keeps its own
                 // classification. The observed status travels with it either way, so a plain trust
                 // failure under e.g. --revocation online still reports what revocation found.
-                if (untrusted) throw new ServerCertificateUntrustedException(revocationStatus, ex.Message, ex);
+                if (untrusted) throw new ServerCertificateUntrustedException(revocationStatus, pinMismatch ? PinRefusedMessage : ex.Message, ex);
                 throw;
             }
 
@@ -960,6 +965,9 @@ public sealed class ApiClient : IDisposable
         try { return Convert.FromBase64String(value).Length == 32; }
         catch (FormatException) { return false; }
     }
+
+    internal const string PinRefusedMessage =
+        "The server's public key is not one of the --pinnedpubkey pins (its chain was otherwise accepted). `certapi tls <host>` prints the key's pin.";
 
     /// <summary><c>--pinnedpubkey</c>: the server's key must be one of the pins, whatever else
     /// accepted it — a pin narrows trust, it never widens it.</summary>

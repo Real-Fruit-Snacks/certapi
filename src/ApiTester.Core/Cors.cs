@@ -175,7 +175,7 @@ public static class CorsRules
         if (status is < 200 or > 299)
         {
             problems.Add($"the preflight was answered {status}; a browser needs a 2xx" +
-                         (status is 401 or 403 ? ". A preflight carries no cookies and no Authorization header, so OPTIONS must be answered without them" :
+                         (status is 401 or 403 ? " (a preflight carries no cookies or Authorization header, so a server that wants either for OPTIONS refuses every preflight)" :
                           status == 405 ? ". The server does not answer OPTIONS for this path at all" : ""));
         }
         CheckOrigin(r, headers, "the preflight", problems, passed, notes);
@@ -209,7 +209,7 @@ public static class CorsRules
         notes.Add(maxAge.Count == 0
             ? "no Access-Control-Max-Age: a browser caches this preflight for 5 seconds"
             : int.TryParse(maxAge[0], out var seconds)
-                ? $"a browser caches this preflight for {Math.Min(seconds, 7200)} s (Access-Control-Max-Age: {seconds}; Chromium caps it at 2 hours, Firefox at 24)"
+                ? $"a browser caches this preflight for {Math.Min(seconds, 7200)} s (Access-Control-Max-Age: {seconds}; Chromium caps it at 2 hours, Firefox at 24 hours)"
                 : $"Access-Control-Max-Age '{maxAge[0]}' is not a number, so it is ignored");
         return (problems, passed, notes);
     }
@@ -383,9 +383,11 @@ public static class CorsProbe
             sb.Append("readable   ").AppendLine(v.Readable.Count == 0 ? "(none)" : string.Join(", ", v.Readable));
             if (v.Hidden.Count > 0) sb.Append("hidden     ").Append(string.Join(", ", v.Hidden)).AppendLine("  (not in Access-Control-Expose-Headers)");
         }
-        sb.Append("verdict    ").Append(v.Allowed
-            ? $"allowed: a page on {request.Origin} can make this request{(request.Credentials ? " with credentials" : "")} and read the response"
-            : $"blocked: a browser on {request.Origin} would refuse this{(request.Credentials ? " (with credentials)" : "")}");
+        sb.Append("verdict    ").Append(!v.Allowed
+            ? $"blocked: a browser on {request.Origin} would refuse this{(request.Credentials ? " (with credentials)" : "")}"
+            : result.Response is null
+                ? $"the preflight allows it: a page on {request.Origin} may send this request{(request.Credentials ? " with credentials" : "")}; whether it may read the answer depends on the response, which --actual checks"
+                : $"allowed: a page on {request.Origin} can make this request{(request.Credentials ? " with credentials" : "")} and read the response");
         return sb.ToString();
     }
 }

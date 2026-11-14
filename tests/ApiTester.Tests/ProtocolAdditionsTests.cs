@@ -224,6 +224,24 @@ public class ProtocolAdditionsTests
         Assert.False(ApiClient.PinAllows(new TransportOptions { PinnedPublicKeys = new[] { otherPin } }, cert));
     }
 
+    [Fact]
+    public async Task A_wrong_public_key_pin_refuses_the_server_and_says_why()
+    {
+        using var ca = SelfSignedCertificateFactory.CreateCertificateAuthority("Pin CA");
+        using var serverCert = SelfSignedCertificateFactory.CreateSignedCertificate("localhost", ca, true, false, new[] { "localhost" });
+        using var clientCert = SelfSignedCertificateFactory.CreateSignedCertificate("Pin Client", ca, false, true);
+        await using var server = await LoopbackMtlsServer.StartAsync(serverCert, clientCert.Thumbprint);
+        string right = TrustService.SpkiSha256(serverCert);
+        using var client = new ApiClient();
+        var wrong = await client.SendAsync(new ApiRequest { Method = HttpMethod.Get, Url = server.BaseUrl }, clientCert,
+            new TransportOptions { Proxy = ProxyMode.None, IgnoreServerCertificateErrors = true, PinnedPublicKeys = new[] { Convert.ToBase64String(new byte[32]) } });
+        Assert.Equal(ApiErrorKind.ServerCertificateUntrusted, wrong.Error?.Kind);
+        Assert.Contains("--pinnedpubkey", wrong.Error!.Message);
+        var ok = await client.SendAsync(new ApiRequest { Method = HttpMethod.Get, Url = server.BaseUrl }, clientCert,
+            new TransportOptions { Proxy = ProxyMode.None, IgnoreServerCertificateErrors = true, PinnedPublicKeys = new[] { right } });
+        Assert.Null(ok.Error);
+    }
+
     // ---- crawler parsers ----
 
     [Fact]

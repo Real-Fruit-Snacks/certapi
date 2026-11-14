@@ -158,6 +158,10 @@ public class CorsTests
         Assert.True(r.Code == 0, r.Out + r.Err);
         Assert.Contains("needed because the method is PUT", r.Out);
         Assert.Contains("verdict    allowed", r.Out);
+
+        var preflightOnly = Cli("cors", mock.BaseUrl + "orders", "--origin", "https://app.example", "-X", "PUT");
+        Assert.Equal(0, preflightOnly.Code);
+        Assert.Contains("verdict    the preflight allows it", preflightOnly.Out);
     }
 
     [Fact]
