@@ -6,6 +6,26 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- `cors --audit`: probes for the CORS mistakes that let another site read an API's answers — any
+  origin reflected, `null` trusted, look-alike domains that pass a substring or regular-expression
+  check, plain http trusted, every subdomain trusted, preflights that grant anything — graded high
+  to info, high when credentials are allowed too. Only GET and OPTIONS are sent; exit 1 on a high
+  or medium finding.
+- `cors --private-network`: checks Private Network Access (`Access-Control-Request-Private-Network`
+  on the preflight, `Access-Control-Allow-Private-Network` in the answer). A public page calling a
+  private or loopback address is pointed out either way. `mock --cors` grants it.
+- `cors` follows redirects as a browser does: each hop CORS-checked, a new preflight where needed,
+  POST to GET on 301/302/303, `Authorization` dropped across origins, and `Origin: null` after a
+  cross-origin redirect. `--max-redirs` and `--no-redirect` apply; the hops are reported.
+- `cors` takes several `--origin` and `-X` values (repeated or comma-separated) and prints a table.
+- A `cors <origin> allowed|credentials|blocked` assertion for `send --assert`, saved requests and
+  `run`, and a **CORS** target on the app's Tests tab. The request is sent with that `Origin`.
+- `doctor --origin <o>`: a final cors stage.
+- The app's Diagnostics view shows the CORS verdict for a request sent with an `Origin` header.
+- `mcp` `cors_check`: `audit` and `privateNetwork` arguments; redirects are followed with every
+  hop checked against the allowlist.
+
 ## [1.98.0] - 2026-11-13
 
 More ways to reach a service with a client certificate: seven new commands (`call`, `tls`,

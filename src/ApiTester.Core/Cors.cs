@@ -9,7 +9,12 @@ public sealed record CorsRequest(
     string Origin,
     string Method,
     IReadOnlyList<KeyValuePair<string, string>> Headers,
-    bool Credentials);
+    bool Credentials)
+{
+    /// <summary>Check Private Network Access too: a public page reaching a private or loopback
+    /// address sends <c>Access-Control-Request-Private-Network: true</c> on its preflight.</summary>
+    public bool PrivateNetwork { get; init; }
+}
 
 /// <summary>A browser's verdict on a cross-origin request, with the reasons in words.</summary>
 public sealed record CorsVerdict
@@ -95,6 +100,7 @@ public static class CorsRules
                 ? $"Content-Type is {header.Value.Split(';')[0].Trim()} (only form, multipart and text/plain go without one)"
                 : $"the request sets {header.Key}");
         }
+        if (r.PrivateNetwork) reasons.Add("the page is public and the target is on a private network (Private Network Access)");
         return reasons.Count == 0 ? null : string.Join("; ", reasons);
     }
 
@@ -109,6 +115,7 @@ public static class CorsRules
         };
         var names = UnsafeHeaderNames(r);
         if (names.Count > 0) headers.Add(new("Access-Control-Request-Headers", string.Join(",", names)));
+        if (r.PrivateNetwork) headers.Add(new("Access-Control-Request-Private-Network", "true"));
         return headers;
     }
 
@@ -205,6 +212,13 @@ public static class CorsRules
                              (allowedHeaders.Contains("*") && r.Credentials && name != "authorization" ? "; * does not count for a request with credentials" : ""));
         }
 
+        if (r.PrivateNetwork)
+        {
+            var pna = Values(headers, "Access-Control-Allow-Private-Network");
+            if (pna.Count == 1 && pna[0] == "true") passed.Add("the preflight allows Private Network Access (Access-Control-Allow-Private-Network: true)");
+            else problems.Add("the preflight lacks Access-Control-Allow-Private-Network: true, which a Private Network Access preflight needs");
+        }
+
         var maxAge = Values(headers, "Access-Control-Max-Age");
         notes.Add(maxAge.Count == 0
             ? "no Access-Control-Max-Age: a browser caches this preflight for 5 seconds"
@@ -247,111 +261,202 @@ public static class CorsRules
     }
 }
 
+/// <summary>One request on the way: the preflight it needed, what it got, and where it led.</summary>
+public sealed record CorsHop(string Url, string Origin, string Method, ApiResponse? Preflight, ApiResponse? Response, string? RedirectTo);
+
 /// <summary>The outcome of checking a URL the way a browser would: the preflight (when one is
-/// needed), the request, and the verdict.</summary>
+/// needed), the request, every redirect it followed, and the verdict.</summary>
 public sealed record CorsProbeResult
 {
     public required CorsVerdict Verdict { get; init; }
+    /// <summary>The first preflight, when one was sent.</summary>
     public ApiResponse? Preflight { get; init; }
+    /// <summary>The last response.</summary>
     public ApiResponse? Response { get; init; }
     /// <summary>Why the request itself was not sent (an unsafe method without --actual, or a failed preflight).</summary>
     public string? NotSent { get; init; }
+    public IReadOnlyList<CorsHop> Hops { get; init; } = Array.Empty<CorsHop>();
 }
 
-/// <summary>Runs the exchange: a preflight like a browser's, then — when the preflight passes and
-/// the method is safe, or the caller asked — the request itself with the Origin header.</summary>
+/// <summary>Runs the exchange as a browser does: a preflight when one is needed, the request with
+/// the Origin header, and each redirect in turn — every hop CORS-checked, a new preflight where the
+/// new address needs one, and the Origin turned to <c>null</c> once a redirect crosses origins.</summary>
 public static class CorsProbe
 {
     private static readonly HashSet<string> Safe = new(StringComparer.Ordinal) { "GET", "HEAD", "OPTIONS" };
 
     public static async Task<CorsProbeResult> RunAsync(
         string url, CorsRequest request, string? body, string? contentType, bool? sendActual,
-        Func<ApiRequest, Task<ApiResponse>> send, TimeSpan timeout)
+        Func<ApiRequest, Task<ApiResponse>> send, TimeSpan timeout, int maxRedirects = 20)
     {
         var problems = new List<string>();
         var passed = new List<string>();
         var notes = new List<string>();
+        var hops = new List<CorsHop>();
         foreach (var h in request.Headers.Where(h => CorsRules.Forbidden(h.Key)))
             notes.Add(h.Key.Equals("Cookie", StringComparison.OrdinalIgnoreCase)
                 ? "a page cannot set Cookie; the browser sends its own cookies when the request has credentials (--credentials)"
                 : $"a page cannot set {h.Key}; the browser sets it, so it is left out of the check");
 
-        string? reason = CorsRules.PreflightReason(request);
-        ApiResponse? preflight = null;
-        if (reason is not null)
-        {
-            preflight = await send(new ApiRequest
+        if (Uri.TryCreate(request.Origin, UriKind.Absolute, out var pageOrigin) && SameOrigin(pageOrigin, new Uri(url)))
+            return new CorsProbeResult
             {
-                Method = HttpMethod.Options,
-                Url = url,
-                Headers = CorsRules.PreflightHeaders(request).ToList(),
-                Timeout = timeout
-            });
-            if (preflight.Error is { } error)
-                problems.Add("the preflight got no answer: " + error.Message);
-            else if (preflight.StatusCode is >= 300 and < 400)
-                problems.Add($"the preflight was answered with a redirect ({preflight.StatusCode}); a browser never follows a redirect on a preflight");
-            else
-            {
-                var (p, ok, n) = CorsRules.CheckPreflight(request, preflight.StatusCode ?? 0, preflight.Headers);
-                problems.AddRange(p);
-                passed.AddRange(ok);
-                notes.AddRange(n);
-            }
-        }
+                Verdict = new CorsVerdict
+                {
+                    Allowed = true,
+                    Notes = new[] { $"the page and {new Uri(url).GetLeftPart(UriPartial.Authority)} share an origin, so a browser applies no CORS rules to this request (nothing was sent)" }
+                }
+            };
 
-        string method = request.Method.ToUpperInvariant();
-        string? notSent = null;
-        if (problems.Count > 0) notSent = "a browser stops at the failed preflight";
-        else if (sendActual == false) notSent = "not asked for";
-        else if (sendActual != true && !Safe.Contains(method)) notSent = $"{method} may change something on the server; --actual sends it";
-
-        ApiResponse? response = null;
+        string? firstReason = CorsRules.PreflightReason(request);
+        ApiResponse? firstPreflight = null, response = null;
         var readable = new List<string>();
         var hidden = new List<string>();
-        if (notSent is null)
+        string? notSent = null;
+        var current = new Uri(url);
+        var hopRequest = request;
+        string? hopBody = body;
+        bool tainted = false;
+
+        for (int hop = 0; ; hop++)
         {
-            var headers = request.Headers.Where(h => !CorsRules.Forbidden(h.Key) || h.Key.Equals("Cookie", StringComparison.OrdinalIgnoreCase) && request.Credentials)
+            string prefix = hop == 0 ? "" : $"after redirect {hop}, ";
+            ApiResponse? preflight = null;
+            if (CorsRules.PreflightReason(hopRequest) is not null)
+            {
+                preflight = await send(new ApiRequest
+                {
+                    Method = HttpMethod.Options,
+                    Url = current.ToString(),
+                    Headers = CorsRules.PreflightHeaders(hopRequest).ToList(),
+                    Timeout = timeout
+                });
+                firstPreflight ??= preflight;
+                if (preflight.Error is { } error)
+                    problems.Add(prefix + "the preflight got no answer: " + error.Message);
+                else if (preflight.StatusCode is >= 300 and < 400)
+                    problems.Add(prefix + $"the preflight was answered with a redirect ({preflight.StatusCode}); a browser never follows a redirect on a preflight");
+                else
+                {
+                    var (p, ok, n) = CorsRules.CheckPreflight(hopRequest, preflight.StatusCode ?? 0, preflight.Headers);
+                    problems.AddRange(p.Select(x => prefix + x));
+                    passed.AddRange(ok.Select(x => prefix + x));
+                    if (hop == 0) notes.AddRange(n);
+                }
+            }
+
+            string method = hopRequest.Method.ToUpperInvariant();
+            if (problems.Count > 0) notSent = "a browser stops at the failed preflight";
+            else if (hop == 0 && sendActual == false) notSent = "not asked for";
+            else if (hop == 0 && sendActual != true && !Safe.Contains(method)) notSent = $"{method} may change something on the server; --actual sends it";
+            if (notSent is not null)
+            {
+                hops.Add(new CorsHop(current.ToString(), hopRequest.Origin, method, preflight, null, null));
+                break;
+            }
+
+            var headers = hopRequest.Headers
+                .Where(h => !CorsRules.Forbidden(h.Key) || h.Key.Equals("Cookie", StringComparison.OrdinalIgnoreCase) && hopRequest.Credentials)
                 .Where(h => !h.Key.Equals("Content-Type", StringComparison.OrdinalIgnoreCase))
                 .ToList();
-            headers.Add(new("Origin", request.Origin));
-            string? type = contentType ?? request.Headers.LastOrDefault(h => h.Key.Equals("Content-Type", StringComparison.OrdinalIgnoreCase)).Value;
+            headers.Add(new("Origin", hopRequest.Origin));
+            string? type = contentType ?? hopRequest.Headers.LastOrDefault(h => h.Key.Equals("Content-Type", StringComparison.OrdinalIgnoreCase)).Value;
             response = await send(new ApiRequest
             {
                 Method = new HttpMethod(method),
-                Url = url,
+                Url = current.ToString(),
                 Headers = headers,
-                Body = body,
-                ContentType = body is null ? null : type ?? "application/json",
+                Body = hopBody,
+                ContentType = hopBody is null ? null : type ?? "application/json",
                 Timeout = timeout
             });
-            if (response.Error is { } error)
-                problems.Add("the request got no answer: " + error.Message);
-            else
+            if (response.Error is { } sendError)
             {
-                var (p, ok, n, r, h) = CorsRules.CheckResponse(request, response.Headers);
-                problems.AddRange(p);
-                passed.AddRange(ok);
-                notes.AddRange(n);
-                if (response.StatusCode is >= 300 and < 400 &&
-                    response.Headers.FirstOrDefault(x => x.Key.Equals("Location", StringComparison.OrdinalIgnoreCase)).Value is { } location)
-                    notes.Add($"the response redirects to {location}; a browser follows it and checks CORS again there (and its Origin becomes 'null' if the redirect crosses to another origin)");
-                readable = r;
-                hidden = h;
+                problems.Add(prefix + "the request got no answer: " + sendError.Message);
+                hops.Add(new CorsHop(current.ToString(), hopRequest.Origin, method, preflight, response, null));
+                break;
             }
+
+            // A redirect is CORS-checked like any response: a browser refuses to follow one that
+            // does not allow the origin.
+            var (rp, rok, rn, r, hdn) = CorsRules.CheckResponse(hopRequest, response.Headers);
+            problems.AddRange(rp.Select(x => prefix + x));
+            passed.AddRange(rok.Select(x => prefix + x));
+            notes.AddRange(rn.Select(x => prefix + x));
+            readable = r;
+            hidden = hdn;
+
+            string? location = response.StatusCode is 301 or 302 or 303 or 307 or 308
+                ? response.Headers.FirstOrDefault(x => x.Key.Equals("Location", StringComparison.OrdinalIgnoreCase)).Value
+                : null;
+            if (location is null || problems.Count > 0)
+            {
+                hops.Add(new CorsHop(current.ToString(), hopRequest.Origin, method, preflight, response, null));
+                break;
+            }
+            if (!Uri.TryCreate(current, location, out var next) || next.Scheme is not ("http" or "https"))
+            {
+                problems.Add(prefix + $"the response redirects to '{location}', which a browser cannot follow");
+                hops.Add(new CorsHop(current.ToString(), hopRequest.Origin, method, preflight, response, location));
+                break;
+            }
+            hops.Add(new CorsHop(current.ToString(), hopRequest.Origin, method, preflight, response, next.ToString()));
+            if (maxRedirects == 0)
+            {
+                notes.Add($"the response redirects to {next}, which was not followed (--no-redirect); a browser would follow it and check CORS there");
+                break;
+            }
+            if (hop + 1 > maxRedirects)
+            {
+                problems.Add($"more than {maxRedirects} redirects; a browser gives up");
+                break;
+            }
+            if (next.UserInfo.Length > 0)
+            {
+                problems.Add(prefix + "the redirect's URL carries a user name or password, which a browser refuses on a cross-origin request");
+                break;
+            }
+            // The Fetch standard's tainted origin: once a cross-origin request is redirected to
+            // another origin, the Origin it carries from then on is "null".
+            if (!tainted && !SameOrigin(current, next))
+            {
+                tainted = true;
+                notes.Add($"the redirect to {next.GetLeftPart(UriPartial.Authority)} crosses origins, so from there on the request carries Origin: null, and that server must allow null (or *)");
+            }
+            bool crossOrigin = !SameOrigin(current, next);
+            string nextMethod = method;
+            if ((response.StatusCode is 301 or 302 && method == "POST") || (response.StatusCode == 303 && method != "HEAD"))
+            {
+                nextMethod = "GET";
+                hopBody = null;
+            }
+            hopRequest = hopRequest with
+            {
+                Origin = tainted ? "null" : hopRequest.Origin,
+                Method = nextMethod,
+                // A browser drops a body's headers when the method becomes GET, and the
+                // Authorization header when the redirect leaves the origin.
+                Headers = hopRequest.Headers
+                    .Where(x => nextMethod == method || !x.Key.StartsWith("Content-", StringComparison.OrdinalIgnoreCase))
+                    .Where(x => !crossOrigin || !x.Key.Equals("Authorization", StringComparison.OrdinalIgnoreCase))
+                    .ToList()
+            };
+            current = next;
         }
-        else if (problems.Count == 0)
+
+        if (notSent is not null && problems.Count == 0)
             notes.Add($"the request itself was not sent ({notSent}), so its response's CORS headers were not checked");
 
         return new CorsProbeResult
         {
-            Preflight = preflight,
+            Preflight = firstPreflight,
             Response = response,
             NotSent = notSent,
+            Hops = hops,
             Verdict = new CorsVerdict
             {
                 Allowed = problems.Count == 0,
-                PreflightReason = reason,
+                PreflightReason = firstReason,
                 Problems = problems,
                 Passed = passed,
                 Notes = notes,
@@ -361,11 +466,16 @@ public static class CorsProbe
         };
     }
 
+    internal static bool SameOrigin(Uri a, Uri b) =>
+        a.Scheme.Equals(b.Scheme, StringComparison.OrdinalIgnoreCase) &&
+        a.Host.Equals(b.Host, StringComparison.OrdinalIgnoreCase) && a.Port == b.Port;
+
     /// <summary>The verdict as lines for a terminal.</summary>
     public static string Describe(CorsProbeResult result, CorsRequest request, string url)
     {
         var sb = new StringBuilder();
         var v = result.Verdict;
+        var first = result.Hops.FirstOrDefault();
         if (v.PreflightNeeded)
         {
             sb.Append("preflight  OPTIONS ").Append(url);
@@ -373,8 +483,18 @@ public static class CorsProbe
             sb.Append("           needed because ").AppendLine(v.PreflightReason);
         }
         else sb.AppendLine("preflight  none needed (a simple request)");
-        sb.Append("request    ").Append(request.Method.ToUpperInvariant()).Append(' ').Append(url);
-        sb.AppendLine(result.Response is { Error: null } r ? $" → {r.StatusCode}" : result.NotSent is { } why ? $" (not sent: {why})" : " → no answer");
+        if (result.Hops.Count == 0 || first?.Response is null)
+        {
+            sb.Append("request    ").Append(request.Method.ToUpperInvariant()).Append(' ').Append(url);
+            sb.AppendLine(result.NotSent is { } why ? $" (not sent: {why})" : " → no answer");
+        }
+        else
+            foreach (var hop in result.Hops)
+            {
+                sb.Append(hop == first ? "request    " : "redirect   ").Append(hop.Method).Append(' ').Append(hop.Url);
+                if (hop.Origin != request.Origin) sb.Append("  (Origin: ").Append(hop.Origin).Append(')');
+                sb.AppendLine(hop.Response is { Error: null } r ? $" → {r.StatusCode}" : " → no answer");
+            }
         foreach (var ok in v.Passed) sb.Append("  ok       ").AppendLine(ok);
         foreach (var problem in v.Problems) sb.Append("  BLOCKED  ").AppendLine(problem);
         foreach (var note in v.Notes) sb.Append("  note     ").AppendLine(note);
@@ -383,11 +503,208 @@ public static class CorsProbe
             sb.Append("readable   ").AppendLine(v.Readable.Count == 0 ? "(none)" : string.Join(", ", v.Readable));
             if (v.Hidden.Count > 0) sb.Append("hidden     ").Append(string.Join(", ", v.Hidden)).AppendLine("  (not in Access-Control-Expose-Headers)");
         }
-        sb.Append("verdict    ").Append(!v.Allowed
+        sb.Append("verdict    ").Append(Verdict(result, request));
+        return sb.ToString();
+    }
+
+    public static string Verdict(CorsProbeResult result, CorsRequest request) =>
+        !result.Verdict.Allowed
             ? $"blocked: a browser on {request.Origin} would refuse this{(request.Credentials ? " (with credentials)" : "")}"
             : result.Response is null
                 ? $"the preflight allows it: a page on {request.Origin} may send this request{(request.Credentials ? " with credentials" : "")}; whether it may read the answer depends on the response, which --actual checks"
-                : $"allowed: a page on {request.Origin} can make this request{(request.Credentials ? " with credentials" : "")} and read the response");
+                : $"allowed: a page on {request.Origin} can make this request{(request.Credentials ? " with credentials" : "")} and read the response";
+}
+
+/// <summary>How bad a CORS finding is: High lets any site read credentialed responses.</summary>
+public enum CorsSeverity { Info, Low, Medium, High }
+
+public sealed record CorsFinding(CorsSeverity Severity, string Title, string Detail);
+
+/// <summary>One crafted origin tried by the audit, and what the server answered.</summary>
+public sealed record CorsAuditProbe(string Kind, string Origin, int? Status, string? AllowOrigin, bool AllowCredentials, bool Reflected, string? Error);
+
+public sealed record CorsAuditResult(IReadOnlyList<CorsAuditProbe> Probes, IReadOnlyList<CorsFinding> Findings, string BaseOrigin)
+{
+    public CorsSeverity? Worst => Findings.Count == 0 ? null : Findings.Max(f => f.Severity);
+}
+
+/// <summary>`cors --audit`: sends the origins that catch the common CORS mistakes — any origin
+/// reflected, <c>null</c> trusted, an origin check that is a substring or an unescaped regular
+/// expression, every subdomain trusted, plain http trusted — and grades what comes back. Only GET
+/// and OPTIONS are sent.</summary>
+public static class CorsAudit
+{
+    public const string Marker = "certapi-cors-audit";
+
+    /// <summary>The probes for a trusted origin (scheme://host[:port]).</summary>
+    public static IReadOnlyList<(string Kind, string Origin)> ProbesFor(Uri trusted)
+    {
+        string scheme = trusted.Scheme;
+        string host = trusted.Host;
+        string port = trusted.IsDefaultPort ? "" : ":" + trusted.Port;
+        var list = new List<(string, string)>
+        {
+            ("arbitrary origin", $"https://{Marker}.example"),
+            ("null origin", "null"),
+            ("prefix look-alike", $"{scheme}://{Marker}{host}{port}"),
+            ("suffix look-alike", $"{scheme}://{host}.{Marker}.example{port}"),
+            ("subdomain", $"{scheme}://{Marker}.{host}{port}")
+        };
+        int dot = host.IndexOf('.');
+        if (dot > 0 && !System.Net.IPAddress.TryParse(host, out _))
+            list.Add(("unescaped dot", $"{scheme}://{host[..dot]}x{host[(dot + 1)..]}{port}"));
+        if (scheme == "https") list.Add(("plain http", $"http://{host}{port}"));
+        list.Add(("trusted origin", $"{scheme}://{host}{port}"));
+        return list;
+    }
+
+    public static async Task<CorsAuditResult> RunAsync(string url, Uri trusted, IReadOnlyList<KeyValuePair<string, string>> headers,
+        Func<ApiRequest, Task<ApiResponse>> send, TimeSpan timeout)
+    {
+        var probes = new List<CorsAuditProbe>();
+        foreach (var (kind, origin) in ProbesFor(trusted))
+        {
+            var request = new ApiRequest
+            {
+                Method = HttpMethod.Get,
+                Url = url,
+                Headers = headers.Where(h => !h.Key.Equals("Origin", StringComparison.OrdinalIgnoreCase)).Append(new("Origin", origin)).ToList(),
+                Timeout = timeout
+            };
+            var response = await send(request);
+            if (response.Error is { } error)
+            {
+                probes.Add(new CorsAuditProbe(kind, origin, null, null, false, false, error.Message));
+                continue;
+            }
+            string? allow = response.Headers.FirstOrDefault(h => h.Key.Equals("Access-Control-Allow-Origin", StringComparison.OrdinalIgnoreCase)).Value?.Trim();
+            bool credentials = response.Headers.Any(h => h.Key.Equals("Access-Control-Allow-Credentials", StringComparison.OrdinalIgnoreCase) && h.Value.Trim() == "true");
+            probes.Add(new CorsAuditProbe(kind, origin, response.StatusCode, allow, credentials, allow == origin, null));
+        }
+
+        // A preflight from a stranger, asking for a method and a header nobody would list: a server
+        // that grants both echoes whatever it is asked.
+        var preflight = await send(new ApiRequest
+        {
+            Method = HttpMethod.Options,
+            Url = url,
+            Headers = new List<KeyValuePair<string, string>>
+            {
+                new("Origin", $"https://{Marker}.example"),
+                new("Access-Control-Request-Method", "PATCH"),
+                new("Access-Control-Request-Headers", "x-" + Marker)
+            },
+            Timeout = timeout
+        });
+
+        var findings = new List<CorsFinding>();
+        CorsAuditProbe? Find(string kind) => probes.FirstOrDefault(p => p.Kind == kind);
+        void Grade(string kind, string title, string why, CorsSeverity withCredentials, CorsSeverity without)
+        {
+            if (Find(kind) is not { Reflected: true } p) return;
+            findings.Add(p.AllowCredentials
+                ? new CorsFinding(withCredentials, title + ", with credentials", $"{why} The origin {p.Origin} was allowed with Access-Control-Allow-Credentials: true, so a page there can read responses sent with the user's cookies or client certificate.")
+                : new CorsFinding(without, title, $"{why} The origin {p.Origin} was allowed, without credentials."));
+        }
+        Grade("arbitrary origin", "Any origin is reflected", "The server echoes whatever Origin it is sent.", CorsSeverity.High, CorsSeverity.Medium);
+        Grade("null origin", "The null origin is trusted", "Sandboxed iframes, data: URLs and some redirects send Origin: null, and any site can produce one.", CorsSeverity.High, CorsSeverity.Medium);
+        Grade("prefix look-alike", "The origin check matches the end of the name", "A domain anyone can register that ends with the trusted name passes.", CorsSeverity.High, CorsSeverity.Medium);
+        Grade("suffix look-alike", "The origin check matches the start of the name", "A domain anyone can register that starts with the trusted name passes.", CorsSeverity.High, CorsSeverity.Medium);
+        Grade("unescaped dot", "The origin check is a regular expression with an unescaped dot", "A name with any character in place of a dot passes.", CorsSeverity.High, CorsSeverity.Medium);
+        Grade("plain http", "Plain http is trusted", "Anyone on the network path can inject a page into an http:// origin.", CorsSeverity.Medium, CorsSeverity.Low);
+        Grade("subdomain", "Every subdomain is trusted", "One forgotten or taken-over subdomain, or one XSS on any of them, is enough.", CorsSeverity.Low, CorsSeverity.Info);
+
+        if (probes.Any(p => p.AllowOrigin == "*"))
+            findings.Add(probes.Any(p => p.AllowOrigin == "*" && p.AllowCredentials)
+                ? new CorsFinding(CorsSeverity.Low, "Access-Control-Allow-Origin: * with credentials", "Browsers refuse this combination, so credentialed requests fail; for public data, * alone is enough.")
+                : new CorsFinding(CorsSeverity.Info, "Any origin may read responses without credentials (*)", "Fine for public data; nothing sent with cookies or a client certificate is readable this way."));
+        if (preflight.Error is null && preflight.StatusCode is >= 200 and < 300)
+        {
+            bool method = preflight.Headers.Any(h => h.Key.Equals("Access-Control-Allow-Methods", StringComparison.OrdinalIgnoreCase) && h.Value.Contains("PATCH", StringComparison.OrdinalIgnoreCase));
+            bool header = preflight.Headers.Any(h => h.Key.Equals("Access-Control-Allow-Headers", StringComparison.OrdinalIgnoreCase) && h.Value.Contains("x-" + Marker, StringComparison.OrdinalIgnoreCase));
+            bool origin = preflight.Headers.Any(h => h.Key.Equals("Access-Control-Allow-Origin", StringComparison.OrdinalIgnoreCase) && h.Value.Trim() == $"https://{Marker}.example");
+            if (origin && method && header)
+                findings.Add(new CorsFinding(CorsSeverity.Info, "Preflights grant whatever they ask for",
+                    "A preflight from an unknown origin asking for PATCH and an invented header got both; the preflight is not limiting anything."));
+        }
+
+        return new CorsAuditResult(probes, findings.OrderByDescending(f => f.Severity).ToList(), $"{trusted.Scheme}://{trusted.Authority}");
+    }
+
+    public static string Describe(CorsAuditResult result, string url)
+    {
+        var sb = new StringBuilder();
+        sb.Append("audit      ").Append(url).Append("  (trusted origin ").Append(result.BaseOrigin).AppendLine(")");
+        foreach (var p in result.Probes)
+        {
+            string answer = p.Error is not null ? "no answer: " + p.Error
+                : p.AllowOrigin is null ? "no Access-Control-Allow-Origin"
+                : $"Access-Control-Allow-Origin: {p.AllowOrigin}{(p.AllowCredentials ? " + credentials" : "")}";
+            sb.Append("  ").Append(p.Reflected ? "allowed  " : p.AllowOrigin == "*" ? "any (*)  " : "refused  ")
+              .Append(p.Kind.PadRight(18)).Append(p.Origin.PadRight(46)).Append(' ').AppendLine(answer);
+        }
+        if (result.Findings.Count == 0) sb.AppendLine("findings   none: only the origins it should allow were allowed");
+        else
+            foreach (var f in result.Findings)
+                sb.Append(f.Severity.ToString().ToUpperInvariant().PadRight(7)).Append("    ").Append(f.Title).Append(". ").AppendLine(f.Detail);
+        if (result.Probes.FirstOrDefault(p => p.Kind == "trusted origin") is { Reflected: false, AllowOrigin: not "*" })
+            sb.AppendLine("note       the trusted origin itself was not allowed; give the origin the API is meant to serve with --origin");
+        return sb.ToString().TrimEnd();
+    }
+}
+
+/// <summary>Private Network Access's address spaces: whether an address or an origin's host is
+/// loopback or private rather than public.</summary>
+public static class AddressSpace
+{
+    public static bool IsPrivate(System.Net.IPAddress address)
+    {
+        if (address.IsIPv4MappedToIPv6) address = address.MapToIPv4();
+        if (System.Net.IPAddress.IsLoopback(address)) return true;
+        var b = address.GetAddressBytes();
+        if (address.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork)
+            return b[0] == 10 || (b[0] == 172 && b[1] is >= 16 and <= 31) || (b[0] == 192 && b[1] == 168) ||
+                   (b[0] == 169 && b[1] == 254) || (b[0] == 100 && b[1] is >= 64 and <= 127) || b[0] == 0;
+        return (b[0] & 0xFE) == 0xFC || (b[0] == 0xFE && (b[1] & 0xC0) == 0x80) || address.Equals(System.Net.IPAddress.IPv6None);
+    }
+
+    /// <summary>A page's origin is local when its host is loopback, a private address literal, or
+    /// a name that only resolves inside a network (localhost, *.localhost, *.local, *.internal).</summary>
+    public static bool IsLocalOrigin(string origin)
+    {
+        if (!Uri.TryCreate(origin, UriKind.Absolute, out var u)) return false;
+        string host = u.Host.Trim('[', ']');
+        if (System.Net.IPAddress.TryParse(host, out var ip)) return IsPrivate(ip);
+        return host.Equals("localhost", StringComparison.OrdinalIgnoreCase) ||
+               host.EndsWith(".localhost", StringComparison.OrdinalIgnoreCase) ||
+               host.EndsWith(".local", StringComparison.OrdinalIgnoreCase) ||
+               host.EndsWith(".internal", StringComparison.OrdinalIgnoreCase);
+    }
+}
+
+/// <summary>The CORS lines of the Diagnostics view: for a request that carried an Origin header,
+/// whether a page there could read the answer, without credentials and with them.</summary>
+public static class CorsReport
+{
+    public static string? For(IEnumerable<KeyValuePair<string, string>> requestHeaders, ApiResponse response)
+    {
+        string? origin = requestHeaders.LastOrDefault(h => h.Key.Equals("Origin", StringComparison.OrdinalIgnoreCase)).Value?.Trim();
+        if (string.IsNullOrEmpty(origin) || response.Error is not null) return null;
+        var plain = new CorsRequest(origin, "GET", Array.Empty<KeyValuePair<string, string>>(), Credentials: false);
+        var (without, _, notes, readable, hidden) = CorsRules.CheckResponse(plain, response.Headers);
+        var (with, _, _, _, _) = CorsRules.CheckResponse(plain with { Credentials = true }, response.Headers);
+        var sb = new StringBuilder();
+        sb.AppendLine($"CORS  (Origin: {origin})");
+        sb.AppendLine(without.Count == 0 ? "  ✓ a page there can read this response" : $"  ✗ a page there cannot read it: {without[0]}");
+        if (without.Count == 0)
+            sb.AppendLine(with.Count == 0 ? "  ✓ also with credentials (cookies, the client certificate)" : $"  ✗ not with credentials: {with[0]}");
+        if (without.Count == 0)
+        {
+            sb.AppendLine($"  readable: {(readable.Count == 0 ? "(none)" : string.Join(", ", readable))}");
+            if (hidden.Count > 0) sb.AppendLine($"  hidden:   {string.Join(", ", hidden)}");
+        }
+        foreach (var n in notes) sb.AppendLine("  note: " + n);
+        sb.Append("  (the response only; `certapi cors` also checks the preflight)");
         return sb.ToString();
     }
 }

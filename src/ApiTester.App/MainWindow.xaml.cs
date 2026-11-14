@@ -2433,6 +2433,10 @@ public partial class MainWindow : Window
         // A problem (AWS with no region it can read) is sent as configured and fails at the server,
         // where the response says why; the editor shows the fields that need filling.
         var (savedWindows, savedAws, savedHmac) = SavedAuth.For(m, R, url, out _);
+        // A CORS check on the Tests tab asks how a page on its origin would see the answer, so
+        // the request comes from that origin unless the headers already name one.
+        if (AssertionEvaluator.CorsOrigin(m.Assertions, headers) is { } corsOrigin)
+            headers.Add(new KeyValuePair<string, string>("Origin", corsOrigin));
         return new ApiRequest
         {
             Method = new HttpMethod(m.Method),
@@ -2573,6 +2577,7 @@ public partial class MainWindow : Window
                 transport: transport,
                 trustServerCertificate: trust,
                 cookies: _cookieJar, cancellationToken: token));
+            if (CorsReport.For(request.Headers, response) is { } corsLines) _corsReports.AddOrUpdate(response, corsLines);
             bool stillShown = sendingTab is not null && ReferenceEquals(ActiveTab, sendingTab);
             if (stillShown)
             {
@@ -2691,11 +2696,19 @@ public partial class MainWindow : Window
 
     // ---------- response rendering ----------
 
+    /// <summary>The CORS lines worked out when a response arrived, kept with it so a tab switch or
+    /// a history entry shows them again.</summary>
+    private readonly System.Runtime.CompilerServices.ConditionalWeakTable<ApiResponse, string> _corsReports = new();
+
+    private string DiagnosticsFor(ApiResponse response) =>
+        TransportDiagnostics.Format(response) +
+        (_corsReports.TryGetValue(response, out var cors) ? "\n\n" + cors : "");
+
     private void RenderResponse(ApiResponse response)
     {
         _lastResponse = response;
         RefreshDiffIfVisible();
-        DiagnosticsBox.Text = TransportDiagnostics.Format(response);
+        DiagnosticsBox.Text = DiagnosticsFor(response);
 
         if (response.Error is not null)
         {
@@ -2892,7 +2905,7 @@ public partial class MainWindow : Window
             Body = truncated ? Array.Empty<byte>() : body,
             BodyTruncated = truncated,
             Headers = r.Headers.Select(h => new HeaderRow { Name = h.Key, Value = h.Value }).ToList(),
-            Diagnostics = TransportDiagnostics.Format(r),
+            Diagnostics = DiagnosticsFor(r),
             ErrorKind = r.Error?.Kind.ToString(),
             ErrorMessage = r.Error?.Message
         };

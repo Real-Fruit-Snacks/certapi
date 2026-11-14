@@ -24,7 +24,8 @@ public sealed record MockCors(IReadOnlyList<string>? Origins)
         Origins is null || Origins.Any(o => o == "*" || o.Equals(origin, StringComparison.OrdinalIgnoreCase));
 
     /// <summary>The answer to a preflight: 204 with the grants, or 403 for an origin not allowed.</summary>
-    public (int Status, IReadOnlyList<KeyValuePair<string, string>> Headers) Preflight(string origin, string method, string? requestHeaders)
+    public (int Status, IReadOnlyList<KeyValuePair<string, string>> Headers) Preflight(string origin, string method, string? requestHeaders,
+        bool privateNetwork = false)
     {
         if (!Allows(origin)) return (403, new[] { new KeyValuePair<string, string>("Vary", "Origin") });
         var headers = new List<KeyValuePair<string, string>>
@@ -36,6 +37,7 @@ public sealed record MockCors(IReadOnlyList<string>? Origins)
             new("Vary", "Origin")
         };
         if (!string.IsNullOrWhiteSpace(requestHeaders)) headers.Add(new("Access-Control-Allow-Headers", requestHeaders));
+        if (privateNetwork) headers.Add(new("Access-Control-Allow-Private-Network", "true"));
         return (204, headers);
     }
 
@@ -320,7 +322,8 @@ public sealed class MockServer : IAsyncDisposable
                 if (method == "OPTIONS" && headers.TryGetValue("Access-Control-Request-Method", out var wanted))
                 {
                     var (preflightStatus, preflightHeaders) = _cors.Preflight(corsOrigin, wanted,
-                        headers.TryGetValue("Access-Control-Request-Headers", out var asked) ? asked : null);
+                        headers.TryGetValue("Access-Control-Request-Headers", out var asked) ? asked : null,
+                        headers.TryGetValue("Access-Control-Request-Private-Network", out var pna) && pna.Trim() == "true");
                     var head = new StringBuilder();
                     head.Append("HTTP/1.1 ").Append(preflightStatus).Append(' ').Append(ReasonPhrase(preflightStatus)).Append("\r\n");
                     foreach (var h in preflightHeaders) head.Append(h.Key).Append(": ").Append(h.Value).Append("\r\n");

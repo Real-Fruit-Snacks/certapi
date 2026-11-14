@@ -34,6 +34,10 @@ public static class DoctorCommand
                                   which keeps it out of the shell history. Windows (CNG) only
           --insecure              Ignore server certificate errors while probing
           --json                  Print the whole report as JSON instead of text
+          --origin <origin>       Add a cors stage: once the request gets through, check it the
+                                  way a browser on this origin would (preflight-free GET, with
+                                  credentials when a certificate is given: a browser presents a
+                                  client certificate only on a credentialed request)
           -q, --quiet             Only print stages that failed or carry advice
           --md <file>             Also write the diagnosis as a markdown note — the stage table,
                                   every detail line, the advice, and (the part worth keeping) the
@@ -71,6 +75,8 @@ public static class DoctorCommand
         string? mdVault = args.Value("--md-vault");
         bool mdOpen = args.Flag("--md-open");
         bool includeSecrets = args.Flag("--include-secrets");
+        string? corsOrigin = args.Value("--origin");
+        if (corsOrigin is not null) corsOrigin = CorsCommand.NormalizeOrigin(corsOrigin);
         if (mdFile is not null && mdVault is not null)
             throw new CliUsageException("--md and --md-vault both name where the note goes; pick one.");
         if ((mdOpen || includeSecrets) && mdFile is null && mdVault is null)
@@ -96,6 +102,8 @@ public static class DoctorCommand
         var report = ConnectionDoctor
             .RunAsync(url, cert, storeCerts, transport, probe: null, services.Cancel)
             .GetAwaiter().GetResult();
+        if (corsOrigin is not null && report.Ok)
+            report = report with { Stages = report.Stages.Append(CorsStage(url, corsOrigin, cert, transport, services)).ToList() };
 
         if (json) stdout.WriteLine(ToJson(report));
         else Render(report, stdout, quiet);
@@ -104,6 +112,30 @@ public static class DoctorCommand
             WriteNote(report, mdFile, mdVault, mdOpen, includeSecrets, stderr, services);
 
         return report.Ok ? ExitCodes.Ok : ExitCodes.Failure;
+    }
+
+    /// <summary>The cors stage: the request a page on <paramref name="origin"/> would make, judged
+    /// as a browser would judge it.</summary>
+    private static DoctorStage CorsStage(string url, string origin, System.Security.Cryptography.X509Certificates.X509Certificate2? cert,
+        TransportOptions transport, CliServices services)
+    {
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        var request = new CorsRequest(origin, "GET", Array.Empty<KeyValuePair<string, string>>(), Credentials: cert is not null);
+        var state = CliWorkspace.Load(null, services.LiveStatePath, TextWriter.Null);
+        var predicates = new TrustPredicates(state);
+        var noRedirects = transport with { FollowRedirects = false };
+        var result = CorsProbe.RunAsync(url, request, null, null, sendActual: true,
+            r => services.Client.SendAsync(r, cert, noRedirects, predicates.For(new Uri(r.Url).Host), cancellationToken: services.Cancel),
+            TimeSpan.FromSeconds(30)).GetAwaiter().GetResult();
+        var v = result.Verdict;
+        var detail = v.Passed.Concat(v.Problems.Select(p => "BLOCKED " + p)).Concat(v.Notes.Select(n => "note: " + n)).ToList();
+        if (result.Response is { Error: null })
+            detail.Add("readable by a script: " + (v.Readable.Count == 0 ? "(none)" : string.Join(", ", v.Readable)));
+        string mode = request.Credentials ? "with credentials" : "without credentials";
+        return v.Allowed
+            ? DoctorStage.Pass("cors", $"a page on {origin} can read this ({mode})", clock.Elapsed, detail)
+            : DoctorStage.Fail("cors", $"a browser on {origin} would block this ({mode}): {v.Problems[0]}", clock.Elapsed, detail,
+                $"certapi cors {url} --origin {origin}{(request.Credentials ? " --credentials" : "")} checks the preflight too, rule by rule");
     }
 
     private static void Render(DoctorReport report, TextWriter stdout, bool quiet)

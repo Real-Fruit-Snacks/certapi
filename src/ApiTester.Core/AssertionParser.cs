@@ -4,7 +4,8 @@ namespace ApiTester.Core;
 /// for <c>certapi send --assert</c>. Grammar:
 /// <code>&lt;target&gt; [path] &lt;op&gt; [value]</code>
 /// <list type="bullet">
-///   <item>targets: <c>status</c>, <c>time</c>, <c>header &lt;name&gt;</c>, <c>body &lt;jsonpath&gt;</c>, <c>body-text</c></item>
+///   <item>targets: <c>status</c>, <c>time</c>, <c>header &lt;name&gt;</c>, <c>body &lt;jsonpath&gt;</c>, <c>body-text</c>,
+///     and <c>cors &lt;origin&gt; allowed|credentials|blocked</c> (no operator; <c>!=</c> may precede the outcome)</item>
 ///   <item>ops: <c>==</c> <c>!=</c> <c>contains</c> <c>matches</c> <c>exists</c> <c>!exists</c> <c>&lt;</c> <c>&gt;</c>
 ///     <c>schema</c> (the value is a JSON Schema, or <c>@file.json</c>; <c>body $ schema …</c> checks the whole body)
 ///     (aliases: <c>equals</c>, <c>notequals</c>, <c>lt</c>, <c>gt</c>, <c>missing</c>)</item>
@@ -20,6 +21,7 @@ public static class AssertionParser
             throw new FormatException("empty assertion");
 
         var parts = expr.Trim().Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+        if (parts[0].Equals("cors", StringComparison.OrdinalIgnoreCase)) return ParseCors(expr, parts);
         var target = ParseTarget(parts[0], out bool needsPath);
 
         int i = 1;
@@ -60,6 +62,27 @@ public static class AssertionParser
         return new AssertionRule { Enabled = true, Target = target, Path = path, Op = op, Value = value };
     }
 
+    private static AssertionRule ParseCors(string expr, string[] parts)
+    {
+        // cors <origin> [==|!=] allowed|credentials|blocked
+        if (parts.Length < 3)
+            throw new FormatException($"'{expr}': write cors <origin> allowed, cors <origin> credentials or cors <origin> blocked");
+        string origin = parts[1];
+        if (origin != "null" && (!Uri.TryCreate(origin, UriKind.Absolute, out var u) || u.Scheme is not ("http" or "https")))
+            throw new FormatException($"'{expr}': '{origin}' is not an origin (scheme://host[:port], or null)");
+        if (origin != "null") origin = new Uri(origin).GetLeftPart(UriPartial.Authority);
+        int i = 2;
+        var op = AssertOp.Equals;
+        if (parts[i] is "==" or "=" or "is") i++;
+        else if (parts[i] is "!=" or "not") { op = AssertOp.NotEquals; i++; }
+        if (i >= parts.Length || parts.Length > i + 1)
+            throw new FormatException($"'{expr}': the outcome is allowed, credentials or blocked");
+        string outcome = parts[i].ToLowerInvariant();
+        if (outcome is not ("allowed" or "credentials" or "blocked"))
+            throw new FormatException($"'{expr}': '{parts[i]}' is not an outcome; use allowed, credentials or blocked");
+        return new AssertionRule { Enabled = true, Target = AssertTarget.Cors, Path = origin, Op = op, Value = outcome };
+    }
+
     private static AssertTarget ParseTarget(string t, out bool needsPath)
     {
         needsPath = false;
@@ -71,7 +94,7 @@ public static class AssertionParser
             case "body": needsPath = true; return AssertTarget.Body;
             case "body-text": case "bodytext": case "text": return AssertTarget.BodyText;
             default:
-                throw new FormatException($"unknown assertion target '{t}' (expected status, time, header, body, or body-text)");
+                throw new FormatException($"unknown assertion target '{t}' (expected status, time, header, body, body-text or cors)");
         }
     }
 

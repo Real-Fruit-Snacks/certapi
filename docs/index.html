@@ -160,8 +160,9 @@ certapi tls ldap.corp:636
 certapi call orders.json getOrder --param id=42
 <span class="c"># a page that only renders with the certificate</span>
 certapi browse https://portal.corp/ --screenshot portal.png
-<span class="c"># would a page on this origin be allowed to call it?</span>
+<span class="c"># would a page on this origin be allowed to call it? could any other?</span>
 certapi cors https://api.corp/orders --origin https://app.corp -X PUT --credentials
+certapi cors https://api.corp/me --audit --origin https://app.corp
 <span class="c"># OAuth with the certificate as the client credential</span>
 certapi token --token-url https://idp.corp/token --client-id svc --client-auth private_key_jwt
 <span class="c"># stream, IoT, bench, mock, MCP</span>

@@ -208,6 +208,11 @@ public static class RequestRunner
         if (ApiClient.ValidateTransport(transport, url) is { } transportProblem)
             return (new ApiResponse { Error = new ApiError(ApiErrorKind.Unknown, transportProblem) }, url);
 
+        // A CORS assertion asks how a page on its origin would see the answer, which needs the
+        // request to come from that origin.
+        if (AssertionEvaluator.CorsOrigin(m.Assertions, headers) is { } corsOrigin)
+            headers.Add(new("Origin", corsOrigin));
+
         if (ctx.StandingHeaders.Count > 0)
         {
             var named = new HashSet<string>(headers.Select(h => h.Key), StringComparer.OrdinalIgnoreCase);

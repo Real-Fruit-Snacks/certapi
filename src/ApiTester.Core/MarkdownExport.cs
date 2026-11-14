@@ -347,6 +347,7 @@ public static class MarkdownExport
             AssertTarget.Header => $"header {rule.Path}",
             AssertTarget.Body => $"body.{rule.Path}",
             AssertTarget.BodyText => "body text",
+            AssertTarget.Cors => $"CORS for {rule.Path}",
             _ => rule.Target.ToString().ToLowerInvariant()
         };
         string op = rule.Op switch

@@ -70,7 +70,7 @@ directory. A secret is never written into the file: `--cert-pin` is refused (put
 | `grpc_call` | `address` and `method` (`Service/Method`) required; `data` (one message, or an array of messages for a streaming request); `metadata` (an object); `maxMessages` (default 100) |
 | `ws_exchange` | `url` (`ws://` or `wss://`, required); `messages` (text to send, in order); `headers`; `maxMessages` (default 20; 0 sends only); `seconds` (default 10) |
 | `sse_read` | `url` (required); `headers`; `lastEventId` (sent as `Last-Event-ID`, to resume); `maxEvents` (default 20); `seconds` (default 10) |
-| `cors_check` | `url` and `origin` required; `method` (default `GET`); `headers` (what the page's script sets); `body`; `contentType`; `credentials` (default false); `sendActual` (send the request itself for a method other than GET or HEAD; default false, so only the preflight is sent) |
+| `cors_check` | `url` and `origin` required; `method` (default `GET`); `headers` (what the page's script sets); `body`; `contentType`; `credentials` (default false); `sendActual` (send the request itself for a method other than GET or HEAD; default false, so only the preflight is sent); `privateNetwork` (check Private Network Access too); `audit` (probe for misconfigurations instead, graded high to info, with `origin` as the trusted origin). Redirects are followed as a browser follows them, and each hop's host must be on the allowlist |
 | `list_saved`, `list_environments`, `self_test` | none |
 
 A stream tool always returns: it listens until its count is reached, its time is up (never longer

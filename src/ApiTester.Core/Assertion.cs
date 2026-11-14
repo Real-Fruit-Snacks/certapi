@@ -5,8 +5,11 @@ using System.Text.RegularExpressions;
 
 namespace ApiTester.Core;
 
-/// <summary>What part of the response an assertion checks.</summary>
-public enum AssertTarget { Status, Time, Header, Body, BodyText }
+/// <summary>What part of the response an assertion checks.
+/// <c>Cors</c> judges the response as a browser on the origin in <see cref="AssertionRule.Path"/>
+/// would: <c>allowed</c>, <c>credentials</c> (allowed with credentials) or <c>blocked</c>. New
+/// members go at the end: workspaces store the number.</summary>
+public enum AssertTarget { Status, Time, Header, Body, BodyText, Cors }
 
 /// <summary>How an assertion compares the actual value against its expected value.
 /// <c>MatchesSchema</c> validates the JSON at a body path (<c>$</c> for the whole body) against the
@@ -69,6 +72,7 @@ public static class AssertionEvaluator
     private static AssertionResult EvaluateOne(AssertionRule rule, ApiResponse response)
     {
         if (rule.Op == AssertOp.MatchesSchema) return EvaluateSchema(rule, response);
+        if (rule.Target == AssertTarget.Cors) return EvaluateCors(rule, response);
         string? actual = ActualValue(rule, response);
         bool passed = Apply(rule.Op, actual, rule.Value.Trim());
         return new AssertionResult(passed, Describe(rule), actual);
@@ -122,6 +126,43 @@ public static class AssertionEvaluator
     /// <summary>The JSON at the rule's path (<c>$</c>, <c>.</c> or empty: the whole body, for any
     /// target) checked against the schema in its value. The actual value reported is the first
     /// mismatch, or "matches".</summary>
+    /// <summary>The origin a request should send so its CORS assertions mean something: the first
+    /// enabled CORS rule's, when the request does not already carry an Origin header.</summary>
+    public static string? CorsOrigin(IEnumerable<AssertionRule> rules, IEnumerable<KeyValuePair<string, string>> headers) =>
+        headers.Any(h => h.Key.Equals("Origin", StringComparison.OrdinalIgnoreCase)) ? null
+            : rules.FirstOrDefault(r => r.Enabled && r.Target == AssertTarget.Cors && r.Path.Trim().Length > 0)?.Path.Trim();
+
+    /// <summary>How a browser on <paramref name="origin"/> would take this response.</summary>
+    public static string CorsOutcome(string origin, ApiResponse response)
+    {
+        if (response.Error is not null) return "no response";
+        var plain = new CorsRequest(origin, "GET", Array.Empty<KeyValuePair<string, string>>(), Credentials: false);
+        if (CorsRules.CheckResponse(plain, response.Headers).Problems.Count > 0) return "blocked";
+        return CorsRules.CheckResponse(plain with { Credentials = true }, response.Headers).Problems.Count == 0 ? "credentials" : "allowed";
+    }
+
+    private static AssertionResult EvaluateCors(AssertionRule rule, ApiResponse response)
+    {
+        string origin = rule.Path.Trim();
+        string expected = rule.Value.Trim().ToLowerInvariant();
+        string actual = CorsOutcome(origin, response);
+        // "allowed" is met by a response that also allows credentials; the other two are exact.
+        bool met = expected switch
+        {
+            "allowed" => actual is "allowed" or "credentials",
+            "credentials" => actual == "credentials",
+            "blocked" => actual == "blocked",
+            _ => false
+        };
+        bool passed = rule.Op == AssertOp.NotEquals ? !met : met;
+        string why = actual == "blocked" && response.Error is null
+            ? CorsRules.CheckResponse(new CorsRequest(origin, "GET", Array.Empty<KeyValuePair<string, string>>(), false), response.Headers).Problems[0]
+            : actual == "allowed" && expected == "credentials"
+                ? CorsRules.CheckResponse(new CorsRequest(origin, "GET", Array.Empty<KeyValuePair<string, string>>(), true), response.Headers).Problems[0]
+                : actual;
+        return new AssertionResult(passed, Describe(rule), passed ? actual : why);
+    }
+
     private static AssertionResult EvaluateSchema(AssertionRule rule, ApiResponse response)
     {
         string describe = Describe(rule);
@@ -177,6 +218,7 @@ public static class AssertionEvaluator
             AssertTarget.Header => $"Header {rule.Path.Trim()}",
             AssertTarget.Body => $"Body {rule.Path.Trim()}",
             AssertTarget.BodyText => "Body text",
+            AssertTarget.Cors => $"CORS for {rule.Path.Trim()}",
             _ => rule.Target.ToString()
         };
         string op = rule.Op switch

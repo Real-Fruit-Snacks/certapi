@@ -125,6 +125,7 @@ public static class SendCommand
                                     status == 200 | status < 300 | time < 500
                                     header <name> contains <v> | body <jsonpath> exists
                                     body-text matches <regex>
+                                    cors <origin> allowed|credentials|blocked (sent with that Origin)
                                   ops: == != contains matches exists !exists < >
 
         Diff:
@@ -492,6 +493,11 @@ public static class SendCommand
             if (!headers.Any(h => h.TrimStart().StartsWith("Origin:", StringComparison.OrdinalIgnoreCase)))
                 headerPairs.Add(new("Origin", corsOrigin));
         }
+        // `--assert "cors <origin> …"` judges the answer for a page on that origin, so the request
+        // comes from it.
+        if (corsOrigin is null && !headers.Any(h => h.TrimStart().StartsWith("Origin:", StringComparison.OrdinalIgnoreCase)) &&
+            AssertionEvaluator.CorsOrigin(assertRules, headerPairs) is { } assertedOrigin)
+            headerPairs.Add(new("Origin", assertedOrigin));
         // As in curl, a User-Agent typed with -H wins over -A.
         if (userAgent is not null && !headers.Any(h => h.TrimStart().StartsWith("User-Agent:", StringComparison.OrdinalIgnoreCase)))
             headerPairs.Add(new("User-Agent", R(userAgent)));

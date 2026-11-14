@@ -411,9 +411,17 @@ Assertion syntax:
 status == 200          status < 300           time < 500
 header <name> contains <value>                body <jsonpath> exists
 body-text matches <regex>
+cors <origin> allowed     cors <origin> credentials     cors <origin> blocked
 ```
 
 Operators: `==` `!=` `contains` `matches` `exists` `!exists` `<` `>`.
+
+`cors <origin> …` judges the response the way a browser on that origin would: `allowed` (a page
+there can read it), `credentials` (also when sent with cookies or the client certificate — what a
+mutual-TLS API needs, because a browser presents the certificate only on a credentialed request) or
+`blocked`; `!=` before the outcome negates it. The request is sent with `Origin: <origin>` unless
+it already names one, in `send`, `run` and the app alike. It checks the response only; [`cors`](#cors)
+also checks the preflight.
 
 ### Diff
 
@@ -1445,13 +1453,59 @@ URL the way a browser checks a cross-origin request, with your client certificat
 | `--credentials` | off | The page sends credentials (cookies, `fetch(…, {credentials: "include"})`), which tightens every rule |
 | `--actual` | off | Also send the request itself for a method other than GET or HEAD |
 | `--preflight-only` | off | Never send the request itself |
+| `--private-network` | off | Check **Private Network Access** too: the preflight carries `Access-Control-Request-Private-Network: true`, and the answer must say `Access-Control-Allow-Private-Network: true` — for a page on the internet calling an API on a private or loopback address. Without it, that case is pointed out in a note (current Chrome asks the user for permission to reach the local network instead of sending this preflight) |
+| `--audit` | off | **Probe for misconfigurations** instead of checking one request — see below |
 | `--json` | off | The result as JSON: the verdict, both exchanges' CORS headers, each rule, the readable headers |
 | `-q, --quiet` | off | Only the verdict line |
 
-Accepts the [certificate](#certificate-options) and [transport](#transport-options) blocks.
-Redirects are not followed: a redirected preflight is itself a failure, and a redirected request is
-reported with a note that the browser checks CORS again at the new address. Exit 0 when a browser
-would allow it, 1 when it would block it — so it works as a CI check on an API's CORS policy.
+**Several at once.** `--origin` and `-X` are repeatable (or comma-separated): every combination is
+checked and shown as a table — origin, method, the preflight's status, the response's status, the
+verdict — and the exit code is 1 if any of them is blocked. `--json` gives an array.
+
+```powershell
+certapi cors https://api.corp/orders --origin https://app.corp,http://localhost:3000,https://evil.example -X GET,PUT,DELETE
+```
+
+**Redirects** are followed one hop at a time, as a browser follows them. Every hop's response is
+CORS-checked (a redirect without `Access-Control-Allow-Origin` stops the browser there), a new
+preflight is sent where the new address needs one, a 301/302 turns a POST into a GET and a 303 any
+method, `Authorization` is dropped when the redirect leaves the origin, and once a redirect crosses
+origins the request carries **`Origin: null`** — so the final server must allow `null` (or `*`).
+That last rule is the one that surprises people: an API that redirects to a sign-in host or a CDN
+breaks CORS even when both allow the page's origin. A redirected preflight is a failure, as in a
+browser. `--max-redirs <n>` and `--no-redirect` from the [transport options](#transport-options)
+apply; the hops are in the output and in `--json` (`hops`).
+
+**`--audit`** looks for the mistakes that let another site read the API's answers. It sends a GET
+with each of these origins, and a preflight from a stranger asking for an invented method and
+header, and grades what was allowed:
+
+| Probe | Sent as `Origin` | If allowed |
+|---|---|---|
+| arbitrary origin | `https://certapi-cors-audit.example` | the server reflects any origin — **high** with credentials, medium without |
+| null origin | `null` | sandboxed iframes and `data:` URLs, which any site can create, are trusted — high / medium |
+| prefix look-alike | `https://certapi-cors-audit` + the trusted host | the check only looks at the end of the name — high / medium |
+| suffix look-alike | the trusted host + `.certapi-cors-audit.example` | the check only looks at the start of the name — high / medium |
+| unescaped dot | the trusted host with its first dot replaced | the check is a regular expression with an unescaped `.` — high / medium |
+| plain http | `http://` + the trusted host | anyone on the network path can inject a page there — medium / low |
+| subdomain | `https://certapi-cors-audit.` + the trusted host | every subdomain is trusted, so one taken over is enough — low / info |
+| trusted origin | the `--origin` given | (expected to be allowed; noted if it is not) |
+
+The trusted origin is `--origin`, or the URL's own origin when none is given. A
+`Access-Control-Allow-Origin: *` is reported as information (with credentials it cannot work at
+all), and a preflight that grants whatever it is asked as information. "With credentials" matters
+most for a mutual-TLS API: a browser presents the client certificate only on a credentialed
+request, so an origin the server reflects *with* `Access-Control-Allow-Credentials: true` can read
+anything the certificate can. Only GET and OPTIONS are sent. Exit 1 on a high or medium finding;
+`--json` gives the probes and the findings, `-q` the worst finding only.
+
+```powershell
+certapi cors https://api.corp/me --audit --origin https://app.corp --cert "CN=svc"
+```
+
+Accepts the [certificate](#certificate-options) and [transport](#transport-options) blocks. Exit 0
+when a browser would allow it, 1 when it would block it — so it works as a CI check on an API's
+CORS policy.
 [`send --origin`](#request) gives the response half in passing, and [`mock --cors`](#mock) is a
 server to try a front end against.
 
@@ -1511,6 +1565,7 @@ Accepts the [certificate](#certificate-options) and
 |---|---|---|
 | `--json` | off | The whole report as JSON, for scripts |
 | `-q, --quiet` | off | Only print stages that failed or carry advice |
+| `--origin <origin>` | none | Add a **cors** stage at the end: once the request gets through, would a page on this origin be allowed to read it? Checked with credentials when a certificate is given, because a browser presents a client certificate only on a credentialed request. Its advice names the [`cors`](#cors) command that checks the preflight too |
 | `--md <file>` | none | Also write the diagnosis as a markdown note: the stage table with timings, every detail line, the advice, and — the part worth keeping — the acceptable client-certificate authorities and any TLS-interception finding, **verbatim** |
 | `--md-vault <folder>` | none | File it as `certapi/investigations/<host>-<timestamp>.md` instead. **A new note per run**: a diagnosis is history, so nothing overwrites a past one |
 | `--md-open` | off | Open the written note afterwards. If nothing is registered for `.md` it prints the path rather than failing |

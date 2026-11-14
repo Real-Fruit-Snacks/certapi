@@ -75,7 +75,14 @@ It says whether a preflight was needed and why, what the preflight got back, and
 — in words: "the preflight was answered 401; a browser needs a 2xx" (the server wants
 authentication on `OPTIONS`, which a preflight never carries), "Access-Control-Allow-Origin: *,
 which a browser refuses for a request with credentials", "the preflight does not allow the header
-x-api-key". `send --origin <o>` adds the same readout to any send.
+x-api-key". `send --origin <o>` adds the same readout to any send, `doctor --origin <o>` ends the
+stage-by-stage diagnosis with it, and the app's Diagnostics view shows it for any request with an
+`Origin` header. When the API redirects (to a sign-in host, a CDN), look at the hops: after a
+redirect to another origin the browser sends `Origin: null`.
+
+To check that the policy is not too *loose*, `certapi cors <url> --audit --origin <the app>` tries
+the origins attackers use — any origin, `null`, look-alike domains, plain http — and grades each one
+it lets in.
 
 ## "It's slow" — reading the timings
 

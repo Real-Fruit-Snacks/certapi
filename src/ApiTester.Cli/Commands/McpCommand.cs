@@ -588,7 +588,7 @@ public static class McpCommand
 
         // ---- cors_check ----
         var corsCheck = new ToolDef("cors_check",
-            "Check whether a browser page on `origin` may make this request to an allowed host and read the response: sends the preflight a browser would (when one is needed) and the request itself with an Origin header, with the pinned certificate, and judges both against the CORS rules. Returns the verdict, each rule that passed or failed, and which response headers a script can read. An unsafe method (not GET/HEAD) is only preflighted unless sendActual is true.",
+            "Check whether a browser page on `origin` may make this request to an allowed host and read the response: sends the preflight a browser would (when one is needed) and the request itself with an Origin header, with the pinned certificate, and judges both against the CORS rules. Returns the verdict, each rule that passed or failed, and which response headers a script can read. An unsafe method (not GET/HEAD) is only preflighted unless sendActual is true. Redirects are followed as a browser follows them. With audit, probes for a loose policy instead (any origin, null, look-alikes, plain http) and grades each finding.",
             JsonNode.Parse("""
                 {"type":"object","additionalProperties":false,"required":["url","origin"],"properties":{
                   "url":{"type":"string","description":"Absolute http(s):// URL on an allowed host"},
@@ -598,7 +598,9 @@ public static class McpCommand
                   "body":{"type":"string"},
                   "contentType":{"type":"string","description":"The body's type (default application/json when there is a body)"},
                   "credentials":{"type":"boolean","description":"The page sends cookies / credentials: 'include' (default false)"},
-                  "sendActual":{"type":"boolean","description":"Also send the request itself for an unsafe method (default false)"}}}
+                  "sendActual":{"type":"boolean","description":"Also send the request itself for an unsafe method (default false)"},
+                  "privateNetwork":{"type":"boolean","description":"Also check Private Network Access, for a public page calling a private address (default false)"},
+                  "audit":{"type":"boolean","description":"Probe for misconfigurations instead (arbitrary origin, null, look-alikes of origin, plain http); only GET and OPTIONS are sent"}}}
                 """)!,
             a =>
             {
@@ -629,12 +631,24 @@ public static class McpCommand
                     headerList.Add(new("Content-Type", "application/json"));
                 bool credentials = a.TryGetProperty("credentials", out var cr) && cr.ValueKind == JsonValueKind.True;
                 bool sendActual = a.TryGetProperty("sendActual", out var sa) && sa.ValueKind == JsonValueKind.True;
+                bool privateNetwork = a.TryGetProperty("privateNetwork", out var pn) && pn.ValueKind == JsonValueKind.True;
+                bool audit = a.TryGetProperty("audit", out var au) && au.ValueKind == JsonValueKind.True;
                 var transport = McpTransport(new TransportOptions()) with { FollowRedirects = false };
                 if (ApiClient.ValidateTransport(transport, url!) is { } transportProblem) return Err(transportProblem);
-                var corsRequest = new CorsRequest(origin, method, headerList, credentials);
+                // Every hop is checked against the allowlist too: a redirect must not walk the
+                // certificate to a host the agent was never allowed to reach.
+                Task<ApiResponse> CorsSend(ApiRequest r) => Gate(r.Url) is { } hopRefused
+                    ? Task.FromResult(new ApiResponse { Error = new ApiError(ApiErrorKind.Unknown, hopRefused) })
+                    : services.Client.SendAsync(r, cert, transport, predicates.For(TokenService.HostOf(r.Url)), cancellationToken: CallCt());
+                if (audit)
+                {
+                    var auditResult = CorsAudit.RunAsync(url!, new Uri(origin == "null" ? target.GetLeftPart(UriPartial.Authority) : origin),
+                        headerList, CorsSend, TimeSpan.FromSeconds(timeout)).GetAwaiter().GetResult();
+                    return new ToolResult(CorsCommand.AuditJson(auditResult, MarkdownSecrets.RedactUrl(url!)), false);
+                }
+                var corsRequest = new CorsRequest(origin, method, headerList, credentials) { PrivateNetwork = privateNetwork };
                 var result = CorsProbe.RunAsync(url!, corsRequest, body, type, sendActual ? true : null,
-                    r => services.Client.SendAsync(r, cert, transport, predicates.For(TokenService.HostOf(url!)), cancellationToken: CallCt()),
-                    TimeSpan.FromSeconds(timeout)).GetAwaiter().GetResult();
+                    CorsSend, TimeSpan.FromSeconds(timeout)).GetAwaiter().GetResult();
                 return new ToolResult(CorsCommand.Json(result, corsRequest, MarkdownSecrets.RedactUrl(url!)), false);
             })
         { Annotations = new ToolAnnotations(ReadOnlyHint: false, DestructiveHint: true, IdempotentHint: false, OpenWorldHint: true) };

@@ -13,6 +13,10 @@ On the **Tests** tab, add one or more assertion rows. Each has:
   - **Header** — a response header (name in **Path**)
   - **Body** — a value in the JSON (JavaScript Object Notation) body at a **Path** (e.g. `data.id`)
   - **Body-text** — the raw body as text
+  - **CORS** — how a browser page on the origin in **Path** would take the response: Value
+    `allowed`, `credentials` (also with cookies or the client certificate) or `blocked`, with
+    `Equals` (or `NotEquals`). The request is sent with that `Origin` header unless it already has
+    one, and the Diagnostics view shows the CORS verdict for any request that carries an `Origin`
 - **Operator** — `Equals`, `NotEquals`, `Contains`, `Matches` (regex), `Exists`, `NotExists`,
   `LessThan`, `GreaterThan`, and `schema` (the JSON at the Path matches a JSON Schema — see below)
 - **Value** — the expected value (not needed for `Exists`/`NotExists`)
@@ -30,6 +34,7 @@ After a send, the Tests tab shows each rule's pass/fail and the actual value.
 | Header | Contains | `Content-Type` | `json` | JSON response |
 | Body | Equals | `data.ok` | `true` | a JSON field's value |
 | Body-text | Matches | | `"id":\s*\d+` | a regex over the whole body |
+| CORS | Equals | `https://app.example.com` | `credentials` | a page there can read it, with credentials |
 
 ## JSON Schema assertions
 

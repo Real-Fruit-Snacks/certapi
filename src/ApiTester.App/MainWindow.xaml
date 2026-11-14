@@ -772,10 +772,11 @@
                                                 <ComboBoxItem Content="Header"/>
                                                 <ComboBoxItem Content="Body (JSON)"/>
                                                 <ComboBoxItem Content="Body text"/>
+                                                <ComboBoxItem Content="CORS"/>
                                             </ComboBox>
                                             <TextBox Grid.Column="2" Text="{Binding Path, UpdateSourceTrigger=PropertyChanged}"
-                                                     Tag="header name / JSON path" Margin="6,0,0,0" VerticalContentAlignment="Center"
-                                                     ToolTip="Header: the header name. Body: dotted JSON path (data.id). Ignored for Status / Time / Body text."/>
+                                                     Tag="header name / JSON path / origin" Margin="6,0,0,0" VerticalContentAlignment="Center"
+                                                     ToolTip="Header: the header name. Body: dotted JSON path (data.id). CORS: the page's origin (https://app.example.com), with == allowed, credentials or blocked as the value; the request is sent with that Origin. Ignored for Status / Time / Body text."/>
                                             <ComboBox Grid.Column="3" Width="94" Margin="6,0,0,0" VerticalContentAlignment="Center"
                                                       SelectedIndex="{Binding Op, Converter={StaticResource AssertOpConverter}}"
                                                       ToolTip="Comparison">
