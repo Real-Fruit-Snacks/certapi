@@ -6,16 +6,15 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.99.0] - 2026-11-14
+
+CORS, checked the way a browser checks it. `cors` now follows redirects hop by hop, checks Private
+Network Access, grades a loose policy with `--audit` (WebSockets too), judges a whole browser
+capture with `--from-har`, and prints the server fix with `--suggest`. Suites, `doctor` and the app
+can check CORS as they go. `mock` and `serve` can answer with a strict, a public or a deliberately
+broken CORS policy. Nothing that worked before needs changing.
+
 ### Added
-- `mock --cors-headers`, `--cors-methods`, `--cors-expose` and `--cors-max-age`: a fixed CORS policy
-  instead of granting whatever a preflight asks. `--cors-star` answers `*` without credentials.
-- `mock --cors-fault`: deliberately broken CORS — `double-origin`, `preflight-401`,
-  `preflight-redirect`, `preflight-only`, `no-vary`.
-- A `--routes` route can carry its own `"cors"` policy (`false`, `true`, or an object), replacing
-  `--cors` for that route.
-- `serve --cors-methods` and `--cors-no-credentials`, and profile keys `corsHeaders`, `corsExpose`,
-  `corsMethods`, `corsMaxAge` and `corsCredentials`.
-- `serve --cors` logs, once per site, when it replaces an upstream's own CORS headers.
 - `cors --audit`: probes for the CORS mistakes that let another site read an API's answers — any
   origin reflected, `null` trusted, look-alike domains that pass a substring or regular-expression
   check, plain http trusted, every subdomain trusted, preflights that grant anything — graded high
@@ -48,6 +47,15 @@ All notable changes to this project are documented here. The format follows
   sends an `Origin` header.
 - The app: a **CORS…** button opens a full check of the current request — preflight, redirects,
   audit, WebSocket origins, and the fix for a chosen server.
+- `mock --cors-headers`, `--cors-methods`, `--cors-expose` and `--cors-max-age`: a fixed CORS policy
+  instead of granting whatever a preflight asks. `--cors-star` answers `*` without credentials.
+- `mock --cors-fault`: deliberately broken CORS — `double-origin`, `preflight-401`,
+  `preflight-redirect`, `preflight-only`, `no-vary`.
+- A `--routes` route can carry its own `"cors"` policy (`false`, `true`, or an object), replacing
+  `--cors` for that route.
+- `serve --cors-methods` and `--cors-no-credentials`, and profile keys `corsHeaders`, `corsExpose`,
+  `corsMethods`, `corsMaxAge` and `corsCredentials`.
+- `serve --cors` logs, once per site, when it replaces an upstream's own CORS headers.
 
 ## [1.98.0] - 2026-11-13
 
@@ -3448,7 +3456,8 @@ Initial release.
 - Save any response (including binary) to a file.
 - Self-contained single-file executable — no installer, no admin rights, no runtime dependency.
 
-[Unreleased]: https://github.com/Real-Fruit-Snacks/certapi/compare/v1.98.0...HEAD
+[Unreleased]: https://github.com/Real-Fruit-Snacks/certapi/compare/v1.99.0...HEAD
+[1.99.0]: https://github.com/Real-Fruit-Snacks/certapi/compare/v1.98.0...v1.99.0
 [1.98.0]: https://github.com/Real-Fruit-Snacks/certapi/compare/v1.97.0...v1.98.0
 [1.97.0]: https://github.com/Real-Fruit-Snacks/certapi/compare/v1.96.3...v1.97.0
 [1.96.3]: https://github.com/Real-Fruit-Snacks/certapi/compare/v1.96.2...v1.96.3
