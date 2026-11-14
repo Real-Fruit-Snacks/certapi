@@ -466,6 +466,7 @@
                                 <ComboBoxItem>Windows (integrated)</ComboBoxItem>
                                 <ComboBoxItem>Digest</ComboBoxItem>
                                 <ComboBoxItem>AWS Signature v4</ComboBoxItem>
+                                <ComboBoxItem>HMAC signature</ComboBoxItem>
                             </ComboBox>
                         </StackPanel>
                         <TextBlock x:Name="AutoAuthHint" FontSize="12" Foreground="{DynamicResource Text.Muted}"
@@ -504,6 +505,53 @@
                                 <TextBlock Text="SCOPE" Style="{StaticResource Caption}" VerticalAlignment="Center" Width="60"/>
                                 <TextBox x:Name="AwsScopeBox" Width="260" VerticalContentAlignment="Center"
                                          Tag="region/service — blank reads it from the host"/>
+                            </StackPanel>
+                        </StackPanel>
+                        <StackPanel x:Name="HmacPanel" Visibility="Collapsed">
+                            <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                                <TextBlock Text="SCHEME" Style="{StaticResource Caption}" VerticalAlignment="Center" Width="60"/>
+                                <ComboBox x:Name="HmacSchemeCombo" Width="300" SelectedIndex="0" SelectionChanged="HmacSchemeCombo_SelectionChanged">
+                                    <ComboBoxItem>Template (describe what is signed)</ComboBoxItem>
+                                    <ComboBoxItem>HTTP Message Signatures (RFC 9421)</ComboBoxItem>
+                                    <ComboBoxItem>HTTP Signatures (draft-cavage)</ComboBoxItem>
+                                </ComboBox>
+                            </StackPanel>
+                            <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                                <TextBlock Text="KEY ID" Style="{StaticResource Caption}" VerticalAlignment="Center" Width="60"/>
+                                <TextBox x:Name="HmacKeyBox" Width="260" VerticalContentAlignment="Center" Tag="key id ({keyId})"/>
+                            </StackPanel>
+                            <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                                <TextBlock Text="SECRET" Style="{StaticResource Caption}" VerticalAlignment="Center" Width="60"/>
+                                <TextBox x:Name="HmacSecretBox" Width="260" VerticalContentAlignment="Center" Tag="shared secret"/>
+                                <TextBlock Text="ALG" Style="{StaticResource Caption}" VerticalAlignment="Center" Margin="16,0,8,0"/>
+                                <TextBox x:Name="HmacAlgBox" Width="80" VerticalContentAlignment="Center" Tag="sha256"/>
+                            </StackPanel>
+                            <StackPanel x:Name="HmacTemplatePanel">
+                                <TextBlock FontSize="12" Foreground="{DynamicResource Text.Muted}" TextWrapping="Wrap" Margin="60,0,0,8"
+                                           Text="Placeholders: {method} {path} {query} {sortedQuery} {pathAndQuery} {url} {host} {timestamp} {timestampMs} {isoTimestamp} {httpDate} {nonce} {body} {bodySha256} {bodySha256Base64} {bodyMd5Base64} {contentType} {keyId} {header:Name}"/>
+                                <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                                    <TextBlock Text="SIGN" Style="{StaticResource Caption}" VerticalAlignment="Top" Margin="0,6,0,0" Width="60"/>
+                                    <TextBox x:Name="HmacSignBox" Width="520" Height="64" AcceptsReturn="True" TextWrapping="NoWrap"
+                                             VerticalScrollBarVisibility="Auto" Tag="{}{method}&#x0a;{path}&#x0a;{timestamp}&#x0a;{bodySha256}"/>
+                                </StackPanel>
+                                <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                                    <TextBlock Text="HEADER" Style="{StaticResource Caption}" VerticalAlignment="Center" Width="60"/>
+                                    <TextBox x:Name="HmacHeaderBox" Width="380" VerticalContentAlignment="Center" Tag="X-Signature: {signature}"/>
+                                    <TextBlock Text="AS" Style="{StaticResource Caption}" VerticalAlignment="Center" Margin="16,0,8,0"/>
+                                    <TextBox x:Name="HmacEncodingBox" Width="88" VerticalContentAlignment="Center" Tag="hex"/>
+                                </StackPanel>
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="ALSO" Style="{StaticResource Caption}" VerticalAlignment="Top" Margin="0,6,0,0" Width="60"/>
+                                    <TextBox x:Name="HmacAlsoBox" Width="520" Height="48" AcceptsReturn="True" TextWrapping="NoWrap"
+                                             VerticalScrollBarVisibility="Auto" Tag="X-Timestamp: {timestamp}  (one header per line, sent and signable)"/>
+                                </StackPanel>
+                            </StackPanel>
+                            <StackPanel x:Name="HmacSignaturePanel" Visibility="Collapsed">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="COVERS" Style="{StaticResource Caption}" VerticalAlignment="Center" Width="60"/>
+                                    <TextBox x:Name="HmacComponentsBox" Width="520" VerticalContentAlignment="Center"
+                                             Tag="blank: method, authority, path, query, content-type and a body digest"/>
+                                </StackPanel>
                             </StackPanel>
                         </StackPanel>
                         <StackPanel x:Name="WindowsPanel" Visibility="Collapsed">

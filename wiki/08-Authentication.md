@@ -100,6 +100,38 @@ certapi send https://abc123.execute-api.eu-west-1.amazonaws.com/prod/items --aws
 certapi send https://api.internal.example/items --aws-sigv4 "aws:amz:us-east-1:execute-api"
 ```
 
+## HMAC signature
+
+For APIs that sign each request with a shared secret. Pick **HMAC signature** and a scheme:
+
+- **Template** — you describe what is signed, for the in-house and vendor schemes that each do it
+  their own way. **SIGN** is the string to sign, built from placeholders — `{method}`, `{path}`,
+  `{sortedQuery}`, `{timestamp}`, `{nonce}`, `{bodySha256}`, `{header:Name}` and more (the panel
+  lists them all); **HEADER** is where the signature goes (`Authorization: HMAC {keyId}:{signature}`);
+  **AS** is `hex`, `base64` or `base64url`; **ALSO** sends more headers, one per line, filled before
+  signing so the template can sign them (`X-Timestamp: {timestamp}`); **ALG** is `sha256` (or
+  `sha384`, `sha512`, `sha1`). One clock and one nonce serve the whole send, so a timestamp header
+  and the signed timestamp always agree.
+- **HTTP Message Signatures (RFC 9421)** — the IETF standard with `hmac-sha256`: `Signature-Input`
+  and `Signature` headers, and a `Content-Digest` when there is a body. **COVERS** lists the
+  components (`@method @authority @path content-digest`); blank uses a sensible default.
+- **HTTP Signatures (draft-cavage)** — the `Signature: keyId=…,algorithm=…,headers=…,signature=…`
+  header many APIs adopted before the RFC, with `Date` and `Digest` added when covered.
+
+Every send is signed afresh, retries and same-origin redirects included; a redirect to another
+origin goes unsigned. An unknown placeholder or a covered header the request lacks stops the send
+with the reason, before anything goes out. CLI:
+
+```powershell
+# a template: method, path, timestamp and body hash, base64, in Authorization
+certapi send https://api.example.com/orders -d '{"id":1}' --hmac "{{hmacSecret}}" --hmac-key-id client-7 `
+  --hmac-sign "{method}\n{path}\n{header:X-Timestamp}\n{bodySha256}" --hmac-set "X-Timestamp: {timestamp}" `
+  --hmac-header "Authorization: HMAC {keyId}:{signature}" --hmac-encoding base64
+
+# RFC 9421
+certapi send https://api.example.com/orders -d '{"id":1}' --hmac "{{hmacSecret}}" --hmac-key-id key-1 --http-signature rfc9421
+```
+
 Postman's `awsv4` and `digest` auth, Insomnia's `iam` and `digest`, and Bruno's `awsv4`, `digest`
 and `ntlm` import as these types.
 

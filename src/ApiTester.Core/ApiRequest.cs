@@ -27,6 +27,10 @@ public sealed record ApiRequest
     /// origin it was made to; never on a hop elsewhere).</summary>
     public AwsSigV4Options? AwsSigV4 { get; init; }
 
+    /// <summary>When set, the request is signed with an HMAC — a template, RFC 9421 or
+    /// draft-cavage — on every hop to the origin it was made to, never on a hop elsewhere.</summary>
+    public HmacOptions? Hmac { get; init; }
+
     public TimeSpan Timeout { get; init; } = TimeSpan.FromSeconds(100);
 }
 

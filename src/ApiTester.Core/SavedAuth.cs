@@ -4,34 +4,40 @@ namespace ApiTester.Core;
 /// AWS Signature v4 — turned into what <see cref="ApiRequest"/> needs. Bearer and Basic are plain
 /// headers and are added where the headers are built. One place, so the app, <c>run</c>,
 /// <c>bench</c> and MCP treat a saved request the same way.</summary>
+/// <summary>The auth a saved request carries beyond its headers.</summary>
+public sealed record SavedAuthParts(WindowsAuthOptions? Windows, AwsSigV4Options? Aws, HmacOptions? Hmac);
+
 public static class SavedAuth
 {
     /// <summary>The auth types a saved request may name. Anything else loads as Auto.</summary>
-    public static readonly IReadOnlyList<string> Types = ["Auto", "None", "Bearer", "Basic", "Windows", "Digest", "AwsSigV4"];
+    public static readonly IReadOnlyList<string> Types = ["Auto", "None", "Bearer", "Basic", "Windows", "Digest", "AwsSigV4", "Hmac"];
 
     public static string Normalize(string? type) =>
         Types.FirstOrDefault(t => t.Equals(type, StringComparison.Ordinal)) ?? "Auto";
 
     /// <summary>What to set on the request for <paramref name="m"/>'s auth, with variables already
     /// resolved by <paramref name="resolve"/>. <paramref name="problem"/> is set when the saved auth
-    /// cannot be used as it stands (AWS without a region it can work out).</summary>
-    public static (WindowsAuthOptions? Windows, AwsSigV4Options? Aws) For(
-        RequestModel m, Func<string, string> resolve, string url, out string? problem)
+    /// cannot be used as it stands (AWS without a region it can work out, HMAC missing its template).</summary>
+    public static SavedAuthParts For(RequestModel m, Func<string, string> resolve, string url, out string? problem)
     {
         problem = null;
         switch (m.AuthType)
         {
             case "Windows":
-                return (WindowsAuthOptions.FromCredentials(resolve(m.AuthUser ?? ""), resolve(m.AuthSecret ?? "")), null);
+                return new(WindowsAuthOptions.FromCredentials(resolve(m.AuthUser ?? ""), resolve(m.AuthSecret ?? "")), null, null);
             case "Digest":
-                return (WindowsAuthOptions.ForDigest(resolve(m.AuthUser ?? ""), resolve(m.AuthSecret ?? "")), null);
+                return new(WindowsAuthOptions.ForDigest(resolve(m.AuthUser ?? ""), resolve(m.AuthSecret ?? "")), null, null);
             case "AwsSigV4":
+                return new(null, Aws(resolve(m.AuthUser ?? ""), resolve(m.AuthSecret ?? ""), resolve(m.AuthScope ?? ""), url, out problem), null);
+            case "Hmac":
             {
-                var aws = Aws(resolve(m.AuthUser ?? ""), resolve(m.AuthSecret ?? ""), resolve(m.AuthScope ?? ""), url, out problem);
-                return (null, aws);
+                string keyId = resolve(m.AuthUser ?? "");
+                var hmac = new HmacOptions(HmacSettings.FromScope(m.AuthScope), resolve(m.AuthSecret ?? ""), keyId.Length == 0 ? null : keyId);
+                problem = hmac.Problem();
+                return new(null, null, problem is null ? hmac : null);
             }
             default:
-                return (null, null);
+                return new(null, null, null);
         }
     }
 

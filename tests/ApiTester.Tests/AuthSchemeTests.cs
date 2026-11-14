@@ -247,11 +247,11 @@ public class ImportedAuthTests
     public void A_saved_aws_request_without_a_readable_region_says_so()
     {
         var m = new RequestModel { AuthType = "AwsSigV4", AuthUser = "AK", AuthSecret = "SK" };
-        var (_, aws) = SavedAuth.For(m, s => s, "https://api.internal.corp/", out var problem);
+        var (_, aws, _) = SavedAuth.For(m, s => s, "https://api.internal.corp/", out var problem);
         Assert.Null(aws);
         Assert.Contains("region", problem);
 
-        var (_, fromHost) = SavedAuth.For(m, s => s, "https://lambda.eu-central-1.amazonaws.com/", out problem);
+        var (_, fromHost, _) = SavedAuth.For(m, s => s, "https://lambda.eu-central-1.amazonaws.com/", out problem);
         Assert.Null(problem);
         Assert.Equal(("eu-central-1", "lambda"), (fromHost!.Region, fromHost.Service));
     }

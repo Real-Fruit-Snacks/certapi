@@ -154,7 +154,7 @@ public static class RequestRunner
                 break;
         }
         string url = m.EffectiveUrl(R);
-        var (winAuth, awsAuth) = SavedAuth.For(m, R, url, out var authProblem);
+        var (winAuth, awsAuth, hmacAuth) = SavedAuth.For(m, R, url, out var authProblem);
         if (authProblem is not null)
             return (new ApiResponse { Error = new ApiError(ApiErrorKind.Unknown, authProblem) }, url);
         string host = TokenService.HostOf(url);
@@ -227,6 +227,7 @@ public static class RequestRunner
             ContentType = !m.IsMultipart && body is not null && m.ContentType != "(none)" ? m.ContentType : null,
             WindowsAuth = winAuth,
             AwsSigV4 = awsAuth,
+            Hmac = hmacAuth,
             Timeout = TimeSpan.FromSeconds(m.TimeoutSeconds)
         };
         // Attach any browser-captured session cookies for this origin, on top of the optional

@@ -506,6 +506,15 @@ public partial class MainWindow : Window
             AwsKeyBox.Text = s.AwsKeyText;
             AwsSecretBox.Text = s.AwsSecretText;
             AwsScopeBox.Text = s.AwsScopeText;
+            HmacSchemeCombo.SelectedIndex = s.HmacSchemeIndex;
+            HmacKeyBox.Text = s.HmacKeyText;
+            HmacSecretBox.Text = s.HmacSecretText;
+            HmacAlgBox.Text = s.HmacAlgText;
+            HmacSignBox.Text = s.HmacSignText;
+            HmacHeaderBox.Text = s.HmacHeaderText;
+            HmacEncodingBox.Text = s.HmacEncodingText;
+            HmacAlsoBox.Text = s.HmacAlsoText;
+            HmacComponentsBox.Text = s.HmacComponentsText;
             IgnoreServerCertCheck.IsChecked = s.IgnoreServerCert;
             TimeoutBox.Text = s.TimeoutText;
             SelectCertByThumbprint(s.CertThumbprint);
@@ -550,6 +559,15 @@ public partial class MainWindow : Window
         AwsKeyText = AwsKeyBox.Text,
         AwsSecretText = AwsSecretBox.Text,
         AwsScopeText = AwsScopeBox.Text,
+        HmacSchemeIndex = HmacSchemeCombo.SelectedIndex,
+        HmacKeyText = HmacKeyBox.Text,
+        HmacSecretText = HmacSecretBox.Text,
+        HmacAlgText = HmacAlgBox.Text,
+        HmacSignText = HmacSignBox.Text,
+        HmacHeaderText = HmacHeaderBox.Text,
+        HmacEncodingText = HmacEncodingBox.Text,
+        HmacAlsoText = HmacAlsoBox.Text,
+        HmacComponentsText = HmacComponentsBox.Text,
         IgnoreServerCert = IgnoreServerCertCheck.IsChecked == true,
         TimeoutText = TimeoutBox.Text,
         ProxyIndex = TransportProxyCombo.SelectedIndex,
@@ -2356,6 +2374,14 @@ public partial class MainWindow : Window
         DigestHint.Visibility = AuthTypeCombo.SelectedIndex == 5 ? Visibility.Visible : Visibility.Collapsed;
         WindowsPanel.Visibility = AuthTypeCombo.SelectedIndex == 4 ? Visibility.Visible : Visibility.Collapsed;
         AwsPanel.Visibility = AuthTypeCombo.SelectedIndex == 6 ? Visibility.Visible : Visibility.Collapsed;
+        HmacPanel.Visibility = AuthTypeCombo.SelectedIndex == 7 ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private void HmacSchemeCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (HmacTemplatePanel is null) return; // during init
+        HmacTemplatePanel.Visibility = HmacSchemeCombo.SelectedIndex == 0 ? Visibility.Visible : Visibility.Collapsed;
+        HmacSignaturePanel.Visibility = HmacSchemeCombo.SelectedIndex == 0 ? Visibility.Collapsed : Visibility.Visible;
     }
 
     private void WindowsDefaultCheck_Changed(object sender, RoutedEventArgs e)
@@ -2406,7 +2432,7 @@ public partial class MainWindow : Window
 
         // A problem (AWS with no region it can read) is sent as configured and fails at the server,
         // where the response says why; the editor shows the fields that need filling.
-        var (savedWindows, savedAws) = SavedAuth.For(m, R, url, out _);
+        var (savedWindows, savedAws, savedHmac) = SavedAuth.For(m, R, url, out _);
         return new ApiRequest
         {
             Method = new HttpMethod(m.Method),
@@ -2417,6 +2443,7 @@ public partial class MainWindow : Window
             ContentType = contentType,
             WindowsAuth = savedWindows,
             AwsSigV4 = savedAws,
+            Hmac = savedHmac,
             Timeout = TimeSpan.FromSeconds(m.TimeoutSeconds)
         };
     }

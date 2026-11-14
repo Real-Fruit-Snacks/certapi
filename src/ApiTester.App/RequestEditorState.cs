@@ -36,6 +36,15 @@ public sealed record RequestEditorState
     public string AwsKeyText { get; init; } = "";
     public string AwsSecretText { get; init; } = "";
     public string AwsScopeText { get; init; } = "";
+    public int HmacSchemeIndex { get; init; }
+    public string HmacKeyText { get; init; } = "";
+    public string HmacSecretText { get; init; } = "";
+    public string HmacAlgText { get; init; } = "sha256";
+    public string HmacSignText { get; init; } = "";
+    public string HmacHeaderText { get; init; } = "X-Signature: {signature}";
+    public string HmacEncodingText { get; init; } = "hex";
+    public string HmacAlsoText { get; init; } = "";
+    public string HmacComponentsText { get; init; } = "";
     public bool IgnoreServerCert { get; init; }
     public string TimeoutText { get; init; } = "100";
     public int ProxyIndex { get; init; }
@@ -57,7 +66,24 @@ public sealed record RequestEditorState
 
     /// <summary>Everything <c>LoadIntoControls</c> used to put into the editor's controls, read out of
     /// a request model instead. Does not mutate <paramref name="m"/>.</summary>
-    public static RequestEditorState From(RequestModel m) => new()
+    public static RequestEditorState From(RequestModel m)
+    {
+        var hmac = m.AuthType == "Hmac" ? HmacSettings.FromScope(m.AuthScope) : new HmacSettings();
+        return FromModel(m) with
+        {
+            HmacSchemeIndex = (int)hmac.Scheme,
+            HmacKeyText = m.AuthType == "Hmac" ? m.AuthUser ?? "" : "",
+            HmacSecretText = m.AuthType == "Hmac" ? m.AuthSecret ?? "" : "",
+            HmacAlgText = hmac.Algorithm,
+            HmacSignText = (hmac.StringToSign ?? "").Replace("\r\n", "\n"),
+            HmacHeaderText = hmac.Header,
+            HmacEncodingText = hmac.Encoding,
+            HmacAlsoText = string.Join("\n", hmac.AlsoSend),
+            HmacComponentsText = hmac.Components ?? ""
+        };
+    }
+
+    private static RequestEditorState FromModel(RequestModel m) => new()
     {
         Method = m.Method,
         BaseUrlText = m.BaseUrl ?? "",
@@ -66,7 +92,7 @@ public sealed record RequestEditorState
         BodyText = m.Body ?? "",
         ContentType = m.ContentType,
         BodyModeForm = m.IsMultipart,
-        AuthTypeIndex = m.AuthType switch { "Bearer" => 2, "Basic" => 3, "Windows" => 4, "Digest" => 5, "AwsSigV4" => 6, "None" => 1, _ => 0 },
+        AuthTypeIndex = m.AuthType switch { "Bearer" => 2, "Basic" => 3, "Windows" => 4, "Digest" => 5, "AwsSigV4" => 6, "Hmac" => 7, "None" => 1, _ => 0 },
         BearerTokenText = m.AuthType == "Bearer" ? m.AuthSecret ?? "" : "",
         // Digest takes a user name and password exactly as Basic does, in the same two boxes.
         BasicUserText = m.AuthType is "Basic" or "Digest" ? m.AuthUser ?? "" : "",
@@ -121,17 +147,32 @@ public sealed record RequestEditorState
         m.Body = BodyText;
         m.ContentType = ContentType;
         m.IsMultipart = BodyModeForm;
-        m.AuthType = AuthTypeIndex switch { 2 => "Bearer", 3 => "Basic", 4 => "Windows", 5 => "Digest", 6 => "AwsSigV4", 1 => "None", _ => "Auto" };
+        m.AuthType = AuthTypeIndex switch { 2 => "Bearer", 3 => "Basic", 4 => "Windows", 5 => "Digest", 6 => "AwsSigV4", 7 => "Hmac", 1 => "None", _ => "Auto" };
         bool winSso = WindowsDefault;
-        m.AuthUser = AuthTypeIndex switch { 4 => winSso ? "" : WindowsUserText, 6 => AwsKeyText, _ => BasicUserText };
+        m.AuthUser = AuthTypeIndex switch { 4 => winSso ? "" : WindowsUserText, 6 => AwsKeyText, 7 => HmacKeyText, _ => BasicUserText };
         m.AuthSecret = AuthTypeIndex switch
         {
             2 => BearerTokenText,
             4 => winSso ? "" : WindowsPassText,
             6 => AwsSecretText,
+            7 => HmacSecretText,
             _ => BasicPassText
         };
-        m.AuthScope = AuthTypeIndex == 6 ? AwsScopeText : null;
+        m.AuthScope = AuthTypeIndex switch
+        {
+            6 => AwsScopeText,
+            7 => new HmacSettings
+            {
+                Scheme = HmacSchemeIndex is >= 0 and <= 2 ? (HmacScheme)HmacSchemeIndex : HmacScheme.Template,
+                Algorithm = string.IsNullOrWhiteSpace(HmacAlgText) ? "sha256" : HmacAlgText.Trim(),
+                StringToSign = string.IsNullOrEmpty(HmacSignText) ? null : HmacSignText.Replace("\r\n", "\n"),
+                Header = string.IsNullOrWhiteSpace(HmacHeaderText) ? "X-Signature: {signature}" : HmacHeaderText.Trim(),
+                Encoding = string.IsNullOrWhiteSpace(HmacEncodingText) ? "hex" : HmacEncodingText.Trim(),
+                AlsoSend = HmacAlsoText.Replace("\r", "").Split('\n').Select(l => l.Trim()).Where(l => l.Length > 0).ToList(),
+                Components = string.IsNullOrWhiteSpace(HmacComponentsText) ? null : HmacComponentsText.Trim()
+            }.ToScope(),
+            _ => null
+        };
         m.CertThumbprint = CertThumbprint;
         m.IgnoreServerCert = IgnoreServerCert;
         m.TimeoutSeconds = ParseTimeoutSeconds(TimeoutText);

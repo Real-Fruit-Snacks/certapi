@@ -124,6 +124,8 @@ public class RequestEditorStateTests
     [InlineData("Windows", "DOMAIN\\bob", "pw2")]      // explicit creds, not single sign-on
     [InlineData("Digest", "carol", "pw3")]
     [InlineData("AwsSigV4", "AKIDEXAMPLE", "secret-key", "eu-west-1/execute-api")]
+    [InlineData("Hmac", "client-7", "hmac-secret", "{\"Scheme\":\"Template\",\"StringToSign\":\"{method}\\n{path}\",\"AlsoSend\":[\"X-Ts: {timestamp}\"]}")]
+    [InlineData("Hmac", "key-1", "hmac-secret", "{\"Scheme\":\"Rfc9421\",\"Components\":\"@method @path\"}")]
     public void Round_trip_preserves_every_property_the_state_record_has(string authType, string? authUser, string? authSecret, string? authScope = null)
     {
         // Record equality is what makes this cover every property RequestEditorState has today AND
@@ -293,6 +295,7 @@ public class RequestEditorStateTests
     [InlineData("Windows", 4)]
     [InlineData("Digest", 5)]
     [InlineData("AwsSigV4", 6)]
+    [InlineData("Hmac", 7)]
     public void AuthType_round_trips_through_its_combo_index(string authType, int expectedIndex)
     {
         var model = new RequestModel { AuthType = authType };
@@ -316,6 +319,23 @@ public class RequestEditorStateTests
         captured = new RequestModel();
         RequestEditorState.From(digest).ApplyTo(captured);
         Assert.Equal(("Digest", "ann", "pw", (string?)null), (captured.AuthType, captured.AuthUser, captured.AuthSecret, captured.AuthScope));
+    }
+
+    [Fact]
+    public void Hmac_settings_survive_the_editor()
+    {
+        var settings = new HmacSettings
+        {
+            Scheme = HmacScheme.Template, StringToSign = "{method}\n{path}\n{bodySha256}", Header = "Authorization: HMAC {keyId}:{signature}",
+            Encoding = "base64", Algorithm = "sha512", AlsoSend = { "X-Timestamp: {timestamp}", "X-Nonce: {nonce}" }
+        };
+        var model = new RequestModel { AuthType = "Hmac", AuthUser = "client-7", AuthSecret = "s", AuthScope = settings.ToScope() };
+        var captured = new RequestModel();
+        RequestEditorState.From(model).ApplyTo(captured);
+        Assert.Equal(("Hmac", "client-7", "s"), (captured.AuthType, captured.AuthUser, captured.AuthSecret));
+        var back = HmacSettings.FromScope(captured.AuthScope);
+        Assert.Equal((settings.StringToSign, settings.Header, settings.Encoding, settings.Algorithm), (back.StringToSign, back.Header, back.Encoding, back.Algorithm));
+        Assert.Equal(settings.AlsoSend, back.AlsoSend);
     }
 
     [Fact]

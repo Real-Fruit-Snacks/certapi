@@ -37,6 +37,31 @@ public static class SendCommand
                                   and secret come from --basic <key:secret> or AWS_ACCESS_KEY_ID /
                                   AWS_SECRET_ACCESS_KEY (and AWS_SESSION_TOKEN); region and service
                                   left out are read from an *.amazonaws.com host
+          --hmac <secret>         Sign with an HMAC. With --hmac-sign it is a template you
+                                  describe; with --http-signature, the standard formats
+          --hmac-sign <template>  The string to sign. Placeholders: {method} {path} {query}
+                                  {sortedQuery} {pathAndQuery} {url} {host} {scheme} {timestamp}
+                                  {timestampMs} {isoTimestamp} {httpDate} {nonce} {uuid} {body}
+                                  {bodySha256} {bodySha256Base64} {bodySha512} {bodyMd5}
+                                  {bodyMd5Base64} {contentType} {contentLength} {keyId}
+                                  {header:Name}; \n \t \\ are escapes
+          --hmac-header <Name: value>
+                                  Where the signature goes (default "X-Signature: {signature}");
+                                  the value may also use {keyId} {timestamp} {nonce}
+          --hmac-set <Name: value>
+                                  Another header to send, filled before signing so the template
+                                  can refer to it (e.g. "X-Timestamp: {timestamp}"). Repeatable
+          --hmac-alg <alg>        sha256 (default), sha384, sha512, sha1
+          --hmac-encoding <enc>   The signature as hex (default), base64 or base64url
+          --hmac-key-id <id>      The key id ({keyId}; required for --http-signature)
+          --hmac-secret-encoding <enc>
+                                  How the secret is written: utf8 (default), base64, hex
+          --http-signature <rfc9421|cavage>
+                                  Sign as HTTP Message Signatures (RFC 9421, hmac-sha256) or the
+                                  older HTTP Signatures draft, with --hmac and --hmac-key-id
+          --hmac-components "<c> …"
+                                  What the signature covers (default: method, authority, path,
+                                  query, and content-type and a body digest when there is a body)
           --windows-auth          Windows Integrated Auth (Negotiate/NTLM) with your signed-in
                                   account (aliases: --ntlm, --negotiate)
           --windows-user <u>      Explicit Windows creds instead of SSO (DOMAIN\user); pair with
@@ -207,6 +232,16 @@ public static class SendCommand
         string? basic = args.Value("--basic");
         bool digest = args.Flag("--digest");
         string? sigv4 = args.Value("--aws-sigv4");
+        string? hmacSecret = args.Value("--hmac");
+        string? hmacSign = args.Value("--hmac-sign");
+        string? hmacHeader = args.Value("--hmac-header");
+        var hmacSet = args.Values("--hmac-set");
+        string? hmacAlg = args.Value("--hmac-alg");
+        string? hmacEncoding = args.Value("--hmac-encoding");
+        string? hmacKeyId = args.Value("--hmac-key-id");
+        string? hmacSecretEncoding = args.Value("--hmac-secret-encoding");
+        string? httpSignature = args.Value("--http-signature");
+        string? hmacComponents = args.Value("--hmac-components");
         string store = args.Value("--store") ?? services.Profile?.Store ?? "CurrentUser";
         // A switch rather than a plain flag: a profile's `insecure: true` applies when nothing is
         // typed, and --no-insecure undoes it for one run.
@@ -290,6 +325,18 @@ public static class SendCommand
             throw new CliUsageException("--graphql cannot be combined with -d/--data or -F/--form.");
         if (bearer is not null && basic is not null)
             throw new CliUsageException("--bearer and --basic are mutually exclusive.");
+        bool anyHmacOption = hmacSign is not null || hmacHeader is not null || hmacSet.Count > 0 || hmacAlg is not null ||
+            hmacEncoding is not null || hmacKeyId is not null || hmacSecretEncoding is not null || httpSignature is not null || hmacComponents is not null;
+        if (anyHmacOption && hmacSecret is null)
+            throw new CliUsageException("The --hmac-* and --http-signature options need the secret: give --hmac <secret>.");
+        if (hmacSecret is not null && (digest || sigv4 is not null))
+            throw new CliUsageException("--hmac and " + (digest ? "--digest" : "--aws-sigv4") + " are different schemes: give one.");
+        if (hmacSecret is not null && httpSignature is null && hmacSign is null)
+            throw new CliUsageException("--hmac needs --hmac-sign <template> (or --http-signature rfc9421|cavage).");
+        if (httpSignature is not null && (hmacSign is not null || hmacHeader is not null || hmacSet.Count > 0 || hmacEncoding is not null))
+            throw new CliUsageException("--http-signature has its own format: --hmac-sign, --hmac-header, --hmac-set and --hmac-encoding are for template signing.");
+        if (hmacComponents is not null && httpSignature is null)
+            throw new CliUsageException("--hmac-components only applies with --http-signature.");
         if (digest && basic is null)
             throw new CliUsageException("--digest answers with the --basic user:password; give -u/--basic too.");
         if (digest && sigv4 is not null)
@@ -405,6 +452,30 @@ public static class SendCommand
             awsAuth = SigV4Options(sigv4, basic is null ? null : R(basic), url, services.Environment);
         else if (basic is not null) headerPairs.Add(new("Authorization",
             "Basic " + Convert.ToBase64String(Encoding.UTF8.GetBytes(R(basic)))));
+        HmacOptions? hmacAuth = null;
+        if (hmacSecret is not null)
+        {
+            var scheme = httpSignature?.ToLowerInvariant() switch
+            {
+                null => HmacScheme.Template,
+                "rfc9421" or "9421" => HmacScheme.Rfc9421,
+                "cavage" => HmacScheme.Cavage,
+                _ => throw new CliUsageException($"--http-signature expects rfc9421 or cavage, got '{httpSignature}'.")
+            };
+            var settings = new HmacSettings
+            {
+                Scheme = scheme,
+                Algorithm = hmacAlg ?? "sha256",
+                SecretEncoding = hmacSecretEncoding ?? "utf8",
+                StringToSign = hmacSign is null ? null : R(hmacSign),
+                Header = hmacHeader ?? "X-Signature: {signature}",
+                Encoding = hmacEncoding ?? "hex",
+                AlsoSend = hmacSet.ToList(),
+                Components = hmacComponents
+            };
+            hmacAuth = new HmacOptions(settings, R(hmacSecret), hmacKeyId is null ? null : R(hmacKeyId));
+            if (hmacAuth.Problem() is { } hmacProblem) throw new CliUsageException(hmacProblem);
+        }
         // The profile's standing headers fill in behind whatever was typed: a name set here wins.
         if (services.Profile is { } sendProfile)
             headerPairs = new List<KeyValuePair<string, string>>(sendProfile.WithStandingHeaders(headerPairs));
@@ -486,6 +557,7 @@ public static class SendCommand
                        : windowsAuth ? new WindowsAuthOptions(true)
                        : digestAuth,
             AwsSigV4 = awsAuth,
+            Hmac = hmacAuth,
             Timeout = TimeSpan.FromSeconds(timeout)
         };
         services.Log.Debug($"{request.Method} {MarkdownSecrets.RedactUrl(request.Url)}");

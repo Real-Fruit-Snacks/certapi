@@ -458,6 +458,22 @@ public sealed class ApiClient : IDisposable
                 if (request.AwsSigV4 is { } sigv4 && credentialOrigin is not null &&
                     string.Equals(OriginKeyOf(hopUri), OriginKeyOf(credentialOrigin), StringComparison.OrdinalIgnoreCase))
                     await AwsSigV4.SignAsync(message, sigv4, DateTimeOffset.UtcNow, cancellationToken);
+                if (request.Hmac is { } hmac && credentialOrigin is not null &&
+                    string.Equals(OriginKeyOf(hopUri), OriginKeyOf(credentialOrigin), StringComparison.OrdinalIgnoreCase))
+                {
+                    try { await HmacSigner.SignAsync(message, hmac, DateTimeOffset.UtcNow, cancellationToken); }
+                    catch (HmacSigningException ex)
+                    {
+                        stopwatch.Stop();
+                        return new ApiResponse
+                        {
+                            Elapsed = stopwatch.Elapsed,
+                            Error = new ApiError(ApiErrorKind.Unknown, "Not sent: " + ex.Message),
+                            Redirects = hops,
+                            Connection = BuildConnection()
+                        };
+                    }
+                }
 
                 // With a body cap the body is streamed and cut, so it is never buffered whole first.
                 using var response = await http.SendAsync(

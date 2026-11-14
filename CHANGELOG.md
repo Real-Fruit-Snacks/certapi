@@ -26,6 +26,12 @@ All notable changes to this project are documented here. The format follows
   (curl's spelling) with the key from `-u` or the `AWS_*` environment variables, and AWS auth from
   Postman (`awsv4`), Insomnia (`iam`) and Bruno imports. Region and service are read from an AWS host
   when left out; only the origin named is signed.
+- HMAC request signing: the **HMAC signature** auth type and `send --hmac`. **Template** signing
+  builds the string to sign from placeholders (`{method}`, `{path}`, `{timestamp}`, `{nonce}`,
+  `{bodySha256}`, `{header:Name}`, …), puts the signature in the header you name as hex, base64 or
+  base64url, and can send timestamp and nonce headers it signs too. **HTTP Message Signatures**
+  (RFC 9421, `hmac-sha256`) and the older **HTTP Signatures** draft are built in. Only the origin
+  named is signed.
 - `mcp`: `ws_exchange` and `sse_read` tools. Each opens a WebSocket or event stream on an allowed
   host with the pinned certificate, gathers what arrives until a count, a time (never past
   `--timeout`) or the end, and returns it; `--max-body` bounds the total.
