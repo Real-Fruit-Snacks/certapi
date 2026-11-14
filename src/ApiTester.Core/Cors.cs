@@ -348,7 +348,7 @@ public static class CorsProbe
             string method = hopRequest.Method.ToUpperInvariant();
             if (problems.Count > 0) notSent = "a browser stops at the failed preflight";
             else if (hop == 0 && sendActual == false) notSent = "not asked for";
-            else if (hop == 0 && sendActual != true && !Safe.Contains(method)) notSent = $"{method} may change something on the server; --actual sends it";
+            else if (hop == 0 && sendActual != true && !Safe.Contains(method)) notSent = $"{method} may change something on the server, so only its preflight was checked (--actual, or Send unsafe methods in the app, sends it)";
             if (notSent is not null)
             {
                 hops.Add(new CorsHop(current.ToString(), hopRequest.Origin, method, preflight, null, null));
@@ -511,7 +511,7 @@ public static class CorsProbe
         !result.Verdict.Allowed
             ? $"blocked: a browser on {request.Origin} would refuse this{(request.Credentials ? " (with credentials)" : "")}"
             : result.Response is null
-                ? $"the preflight allows it: a page on {request.Origin} may send this request{(request.Credentials ? " with credentials" : "")}; whether it may read the answer depends on the response, which --actual checks"
+                ? $"the preflight allows it: a page on {request.Origin} may send this request{(request.Credentials ? " with credentials" : "")}; whether it may read the answer depends on the response, which sending the request checks (--actual)"
                 : $"allowed: a page on {request.Origin} can make this request{(request.Credentials ? " with credentials" : "")} and read the response";
 }
 
