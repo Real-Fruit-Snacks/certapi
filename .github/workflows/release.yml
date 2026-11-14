@@ -183,6 +183,21 @@ jobs:
           if [ -n "$COMPARE" ]; then
             printf '\n**Full Changelog**: %s\n' "$COMPARE" >> notes-body.md
           fi
+          # What to download comes first: a first-time visitor needs that before the changelog.
+          DL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}"
+          {
+            printf '## Which file do I need?\n\n'
+            printf '| You want | Download |\n|---|---|\n'
+            printf '| The desktop app | [`ApiTester.App.exe`](%s/ApiTester.App.exe) |\n' "$DL"
+            printf '| The command line | [`certapi.exe`](%s/certapi.exe) |\n' "$DL"
+            printf '| HTTP/3 (`--http3`) with either | [`msquic.dll`](%s/msquic.dll), saved in the same folder |\n\n' "$DL"
+            printf 'Both are self-contained: nothing else to install, no .NET needed. Keep them in one folder and the app'\''s update prompt, or `certapi update`, keeps them current.\n\n'
+            printf 'With [Scoop](https://scoop.sh): `scoop install %s/certapi.json`\n\n' "$DL"
+            printf 'Every file'\''s SHA-256 is in [`SHA256SUMS.txt`](%s/SHA256SUMS.txt). The rest are for building from source (the source at this tag, and a dev kit that builds and tests with no network) and a copy of the fuzz wordlist built into `certapi.exe`.\n\n' "$DL"
+            printf '## What'\''s new\n\n'
+            cat notes-body.md
+          } > notes-full.md
+          mv notes-full.md notes-body.md
           echo '----- release notes preview -----'; cat notes-body.md
 
       - name: Create GitHub Release
