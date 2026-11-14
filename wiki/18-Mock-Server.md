@@ -225,6 +225,41 @@ certapi cors http://127.0.0.1:8770/orders --origin http://localhost:3000 -X PUT 
 certapi cors http://127.0.0.1:8770/orders --origin https://evil.example      # blocked
 ```
 
+### Narrower policies, and broken ones
+
+`--cors-headers`, `--cors-methods`, `--cors-expose` and `--cors-max-age` fix what a preflight grants
+instead of granting whatever it asks; `--cors-star` answers `*` without credentials, which is what a
+request with a client certificate or a cookie fails against. `--cors-fault` gets it wrong on
+purpose — `double-origin`, `preflight-401`, `preflight-redirect`, `preflight-only` or `no-vary` —
+to see how a client, or a check, copes with a server that is broken in a known way:
+
+```powershell
+certapi mock --cors http://localhost:3000 --cors-headers Content-Type --cors-methods GET,POST
+certapi mock --cors --cors-star
+certapi mock --cors --cors-fault preflight-401
+```
+
+### A policy per route
+
+A route in a `--routes` file can say `"cors"` for itself — `false` for none, `true` for any origin,
+or an object with the same settings as the flags. It replaces `--cors` for that route, so one mock
+can serve a public endpoint, a locked-down one and one that is broken:
+
+```json
+{
+  "routes": [
+    { "match": { "path": "/public/**" }, "cors": { "star": true }, "respond": { "status": 200 } },
+    { "match": { "path": "/internal/**" }, "cors": false, "respond": { "status": 200 } },
+    { "match": { "method": "PUT", "path": "/admin" },
+      "cors": { "origins": ["https://admin.example"], "methods": ["PUT"], "maxAge": 0 },
+      "respond": { "status": 204 } },
+    { "match": { "path": "/legacy" }, "cors": { "fault": "double-origin" }, "respond": { "status": 200 } }
+  ]
+}
+```
+
+A preflight is matched to the route its real request would reach, by the method it asks about.
+
 ## Modes and certificates
 
 - **`--http`** (default) — plain HTTP; hit it with anything (curl, a browser, the app), no

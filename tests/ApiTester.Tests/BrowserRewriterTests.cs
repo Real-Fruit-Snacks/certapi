@@ -309,7 +309,8 @@ public class BrowserRewriterTests
         Assert.Empty(Values(result, "Access-Control-Allow-Methods"));
         Assert.Equal("Origin", Value(result, "Vary"));
         Assert.Equal("application/json", Value(result, "Content-Type"));
-        Assert.Empty(warnings);
+        // The one thing said: that the upstream answered CORS itself and was overruled.
+        Assert.StartsWith(BrowserRewriter.UpstreamCorsNote, Assert.Single(warnings));
     }
 
     [Fact]

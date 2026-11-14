@@ -7,6 +7,15 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- `mock --cors-headers`, `--cors-methods`, `--cors-expose` and `--cors-max-age`: a fixed CORS policy
+  instead of granting whatever a preflight asks. `--cors-star` answers `*` without credentials.
+- `mock --cors-fault`: deliberately broken CORS — `double-origin`, `preflight-401`,
+  `preflight-redirect`, `preflight-only`, `no-vary`.
+- A `--routes` route can carry its own `"cors"` policy (`false`, `true`, or an object), replacing
+  `--cors` for that route.
+- `serve --cors-methods` and `--cors-no-credentials`, and profile keys `corsHeaders`, `corsExpose`,
+  `corsMethods`, `corsMaxAge` and `corsCredentials`.
+- `serve --cors` logs, once per site, when it replaces an upstream's own CORS headers.
 - `cors --audit`: probes for the CORS mistakes that let another site read an API's answers — any
   origin reflected, `null` trusted, look-alike domains that pass a substring or regular-expression
   check, plain http trusted, every subdomain trusted, preflights that grant anything — graded high

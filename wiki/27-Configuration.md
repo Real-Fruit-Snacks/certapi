@@ -149,7 +149,8 @@ certapi serve --profile corp --check    # validate it and print the table of sit
 certapi serve --profile corp            # start it
 ```
 
-The `serve` fields are `port`, `vhost`, `browser`, `cors` (`true`, an origin, or a list), `token`,
+The `serve` fields are `port`, `vhost`, `browser`, `cors` (`true`, an origin, or a list),
+`corsHeaders`, `corsExpose`, `corsMethods` (a name or a list), `corsMaxAge`, `corsCredentials`, `token`,
 `allow`, `listen`, `cookieJar`, `autoToken`, `windowsAuth`, `windowsUser`, `windowsPassword`,
 `forwarded`, `maxBody`, `timeout`, `maxConnections`, `maxRequests`, `tls`, `rewriteBody` and
 `sites`. `sites` is exactly the

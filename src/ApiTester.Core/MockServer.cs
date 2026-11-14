@@ -14,35 +14,86 @@ namespace ApiTester.Core;
 /// certificate (mTLS).</summary>
 public enum MockTlsMode { Http, Https, Mtls }
 
+/// <summary>Ways `mock --cors-fault` gets CORS wrong on purpose, so a client's (or a checker's)
+/// handling of a broken server can be exercised.</summary>
+public enum MockCorsFault
+{
+    None,
+    /// <summary>Two Access-Control-Allow-Origin values, which a browser refuses outright.</summary>
+    DoubleOrigin,
+    /// <summary>Preflights answered 401, as by a server that wants authentication on OPTIONS.</summary>
+    PreflightUnauthorized,
+    /// <summary>Preflights answered with a redirect, which a browser never follows.</summary>
+    PreflightRedirect,
+    /// <summary>CORS headers on the preflight only, none on the response itself.</summary>
+    PreflightOnly,
+    /// <summary>The origin echoed without Vary: Origin.</summary>
+    NoVary
+}
+
 /// <summary>`mock --cors`: answer preflights and put CORS headers on every response, as a server
 /// with a real CORS policy would — so a front end can be tested against both outcomes.
 /// <paramref name="Origins"/> null allows any origin (echoed back, credentials allowed); a list
-/// allows only those, and every other origin gets no CORS headers at all, which a browser blocks.</summary>
+/// allows only those, and every other origin gets no CORS headers at all, which a browser blocks.
+/// The lists below narrow what is granted; null means grant whatever is asked.</summary>
 public sealed record MockCors(IReadOnlyList<string>? Origins)
 {
+    /// <summary>The request headers a preflight is allowed; null echoes what it asked for.</summary>
+    public IReadOnlyList<string>? AllowHeaders { get; init; }
+    /// <summary>The methods a preflight is allowed; null grants the one asked for and the usual ones.</summary>
+    public IReadOnlyList<string>? AllowMethods { get; init; }
+    /// <summary>The response headers a script may read; null exposes every header of the response.</summary>
+    public IReadOnlyList<string>? Expose { get; init; }
+    public int MaxAge { get; init; } = 600;
+    /// <summary>Answer Access-Control-Allow-Origin: * and no Access-Control-Allow-Credentials — fine
+    /// for public data, and the classic failure for a request sent with credentials.</summary>
+    public bool Star { get; init; }
+    public MockCorsFault Fault { get; init; }
+    /// <summary>No CORS at all: a route declared with "cors": false inside a mock that has a policy.</summary>
+    public bool Off { get; init; }
+
     public bool Allows(string origin) =>
-        Origins is null || Origins.Any(o => o == "*" || o.Equals(origin, StringComparison.OrdinalIgnoreCase));
+        Star || Origins is null || Origins.Any(o => o == "*" || o.Equals(origin, StringComparison.OrdinalIgnoreCase));
 
     /// <summary>The answer to a preflight: 204 with the grants, or 403 for an origin not allowed.</summary>
     public (int Status, IReadOnlyList<KeyValuePair<string, string>> Headers) Preflight(string origin, string method, string? requestHeaders,
-        bool privateNetwork = false)
+        bool privateNetwork = false, string path = "/")
     {
+        if (Off) return (405, new[] { new KeyValuePair<string, string>("Allow", "GET, HEAD, POST, PUT, PATCH, DELETE") });
         if (!Allows(origin)) return (403, new[] { new KeyValuePair<string, string>("Vary", "Origin") });
-        var headers = new List<KeyValuePair<string, string>>
+        if (Fault == MockCorsFault.PreflightUnauthorized)
+            return (401, new[] { new KeyValuePair<string, string>("WWW-Authenticate", "Bearer realm=\"certapi mock\"") });
+        if (Fault == MockCorsFault.PreflightRedirect)
+            return (302, new[] { new KeyValuePair<string, string>("Location", "/login?next=" + Uri.EscapeDataString(path)) });
+        var headers = new List<KeyValuePair<string, string>>();
+        AddOrigin(headers, origin);
+        headers.Add(new("Access-Control-Allow-Methods", string.Join(", ", AllowMethods ??
+            new[] { method.ToUpperInvariant(), "GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS" }.Distinct())));
+        if (AllowHeaders is { } fixedHeaders)
         {
-            new("Access-Control-Allow-Origin", origin),
-            new("Access-Control-Allow-Credentials", "true"),
-            new("Access-Control-Allow-Methods", string.Join(", ", new[] { method.ToUpperInvariant(), "GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS" }.Distinct())),
-            new("Access-Control-Max-Age", "600"),
-            new("Vary", "Origin")
-        };
-        if (!string.IsNullOrWhiteSpace(requestHeaders)) headers.Add(new("Access-Control-Allow-Headers", requestHeaders));
+            if (fixedHeaders.Count > 0) headers.Add(new("Access-Control-Allow-Headers", string.Join(", ", fixedHeaders)));
+        }
+        else if (!string.IsNullOrWhiteSpace(requestHeaders)) headers.Add(new("Access-Control-Allow-Headers", requestHeaders));
         if (privateNetwork) headers.Add(new("Access-Control-Allow-Private-Network", "true"));
+        headers.Add(new("Access-Control-Max-Age", MaxAge.ToString(System.Globalization.CultureInfo.InvariantCulture)));
         return (204, headers);
     }
 
+    private void AddOrigin(List<KeyValuePair<string, string>> headers, string origin)
+    {
+        if (Star) headers.Add(new("Access-Control-Allow-Origin", "*"));
+        else
+        {
+            headers.Add(new("Access-Control-Allow-Origin", origin));
+            headers.Add(new("Access-Control-Allow-Credentials", "true"));
+        }
+        if (Fault == MockCorsFault.DoubleOrigin) headers.Add(new("Access-Control-Allow-Origin", Star ? origin : "*"));
+        if (!Star && Fault != MockCorsFault.NoVary) headers.Add(new("Vary", "Origin"));
+    }
+
     /// <summary>A response head with any Access-Control-* lines replaced by this policy's for
-    /// <paramref name="origin"/>; every other header the response carries is exposed to scripts.</summary>
+    /// <paramref name="origin"/>; every other header the response carries is exposed to scripts
+    /// unless <see cref="Expose"/> says which.</summary>
     public string Rewrite(string head, string origin)
     {
         var lines = head.Split("\r\n").ToList();
@@ -60,14 +111,69 @@ public sealed record MockCors(IReadOnlyList<string>? Origins)
                 !name.Equals("Set-Cookie", StringComparison.OrdinalIgnoreCase) && !names.Contains(name, StringComparer.OrdinalIgnoreCase))
                 names.Add(name);
         }
-        if (Allows(origin))
+        if (!Off && Fault != MockCorsFault.PreflightOnly && Allows(origin))
         {
-            kept.Add("Access-Control-Allow-Origin: " + origin);
-            kept.Add("Access-Control-Allow-Credentials: true");
-            kept.Add("Vary: Origin");
-            if (names.Count > 0) kept.Add("Access-Control-Expose-Headers: " + string.Join(", ", names));
+            var headers = new List<KeyValuePair<string, string>>();
+            AddOrigin(headers, origin);
+            var expose = Expose ?? names;
+            if (expose.Count > 0) headers.Add(new("Access-Control-Expose-Headers", string.Join(", ", expose)));
+            kept.AddRange(headers.Select(h => $"{h.Key}: {h.Value}"));
         }
         return string.Join("\r\n", kept) + "\r\n\r\n";
+    }
+
+    /// <summary>Read a policy from a scenario route's "cors": false (none), true (any origin), or
+    /// an object with origins, headers, methods, expose, maxAge, star and fault.</summary>
+    public static MockCors? FromJson(System.Text.Json.JsonElement element, string where, List<string> warnings)
+    {
+        switch (element.ValueKind)
+        {
+            case System.Text.Json.JsonValueKind.False: return new MockCors((IReadOnlyList<string>?)null) { Off = true };
+            case System.Text.Json.JsonValueKind.True: return new MockCors((IReadOnlyList<string>?)null);
+            case System.Text.Json.JsonValueKind.Object: break;
+            default:
+                warnings.Add($"{where}: \"cors\" must be true, false or an object; ignored.");
+                return null;
+        }
+        IReadOnlyList<string>? List(string name)
+        {
+            if (!element.TryGetProperty(name, out var v)) return null;
+            if (v.ValueKind == System.Text.Json.JsonValueKind.String) return new[] { v.GetString()! };
+            if (v.ValueKind == System.Text.Json.JsonValueKind.Array)
+                return v.EnumerateArray().Where(x => x.ValueKind == System.Text.Json.JsonValueKind.String).Select(x => x.GetString()!).ToList();
+            warnings.Add($"{where}: \"cors.{name}\" must be a string or a list of strings; ignored.");
+            return null;
+        }
+        var fault = MockCorsFault.None;
+        if (element.TryGetProperty("fault", out var f) && f.ValueKind == System.Text.Json.JsonValueKind.String)
+            if (!TryParseFault(f.GetString()!, out fault))
+                warnings.Add($"{where}: unknown cors.fault '{f.GetString()}' (known: {string.Join(", ", FaultNames)}); ignored.");
+        return new MockCors(List("origins"))
+        {
+            AllowHeaders = List("headers"),
+            AllowMethods = List("methods")?.Select(m => m.ToUpperInvariant()).ToList(),
+            Expose = List("expose"),
+            MaxAge = element.TryGetProperty("maxAge", out var age) && age.TryGetInt32(out var seconds) && seconds >= 0 ? seconds : 600,
+            Star = element.TryGetProperty("star", out var star) && star.ValueKind == System.Text.Json.JsonValueKind.True,
+            Fault = fault
+        };
+    }
+
+    public static readonly IReadOnlyList<string> FaultNames =
+        new[] { "double-origin", "preflight-401", "preflight-redirect", "preflight-only", "no-vary" };
+
+    public static bool TryParseFault(string name, out MockCorsFault fault)
+    {
+        fault = name.ToLowerInvariant() switch
+        {
+            "double-origin" => MockCorsFault.DoubleOrigin,
+            "preflight-401" => MockCorsFault.PreflightUnauthorized,
+            "preflight-redirect" => MockCorsFault.PreflightRedirect,
+            "preflight-only" => MockCorsFault.PreflightOnly,
+            "no-vary" => MockCorsFault.NoVary,
+            _ => (MockCorsFault)(-1)
+        };
+        return fault != (MockCorsFault)(-1);
     }
 }
 
@@ -317,13 +423,20 @@ public sealed class MockServer : IAsyncDisposable
             // --cors: a preflight is answered by the policy before anything else (a browser sends
             // it without credentials, so not even a scenario's requirements apply), and every
             // other response to a page's request has its CORS headers set by the policy.
-            if (_cors is not null && headers.TryGetValue("Origin", out var corsOrigin))
+            // The policy for this request: the matched route's own "cors", when it declares one,
+            // else the mock's. For a preflight, the route is the one the real request would reach.
+            var corsPolicy = _cors;
+            bool isPreflight = method == "OPTIONS" && headers.ContainsKey("Origin") && headers.ContainsKey("Access-Control-Request-Method");
+            if (_scenario is not null &&
+                _scenario.Match(isPreflight ? headers["Access-Control-Request-Method"] : method, target, headers) is { Cors: { } routePolicy })
+                corsPolicy = routePolicy;
+            if (corsPolicy is not null && headers.TryGetValue("Origin", out var corsOrigin))
             {
-                if (method == "OPTIONS" && headers.TryGetValue("Access-Control-Request-Method", out var wanted))
+                if (isPreflight)
                 {
-                    var (preflightStatus, preflightHeaders) = _cors.Preflight(corsOrigin, wanted,
+                    var (preflightStatus, preflightHeaders) = corsPolicy.Preflight(corsOrigin, headers["Access-Control-Request-Method"],
                         headers.TryGetValue("Access-Control-Request-Headers", out var asked) ? asked : null,
-                        headers.TryGetValue("Access-Control-Request-Private-Network", out var pna) && pna.Trim() == "true");
+                        headers.TryGetValue("Access-Control-Request-Private-Network", out var pna) && pna.Trim() == "true", path);
                     var head = new StringBuilder();
                     head.Append("HTTP/1.1 ").Append(preflightStatus).Append(' ').Append(ReasonPhrase(preflightStatus)).Append("\r\n");
                     foreach (var h in preflightHeaders) head.Append(h.Key).Append(": ").Append(h.Value).Append("\r\n");
@@ -334,7 +447,10 @@ public sealed class MockServer : IAsyncDisposable
                     return;
                 }
                 if (!(headers.TryGetValue("Upgrade", out var upgrade) && upgrade.Contains("websocket", StringComparison.OrdinalIgnoreCase)))
-                    stream = new CorsHeadStream(stream, head => _cors.Rewrite(head, corsOrigin));
+                {
+                    var policy = corsPolicy;
+                    stream = new CorsHeadStream(stream, head => policy.Rewrite(head, corsOrigin));
+                }
             }
 
             // Before any route: what the scenario says every caller must present. A protected

@@ -874,6 +874,18 @@ A local test server to fire requests at. Runs until Ctrl+C. See [Mock Server](18
 | `--cert-dir <dir>` | `./certapi-mock-certs` | Where generated certificates are written |
 | `-q, --quiet` | off | Do not log each request |
 | `--cors [<origins>]` | off | Behave like a server with a CORS policy: answer preflights itself (204, or 403 for an origin it does not allow) and put `Access-Control-*` headers on every response to a page — the exact origin, credentials allowed, every header exposed, `Vary: Origin`. With no value any origin is allowed; a comma-separated list (repeatable) allows only those, and any other origin gets **no** CORS headers, so a browser blocks it — a front end can be tested against both answers. Applies to declared routes and replays too. Without `--cors` the built-in routes answer `Access-Control-Allow-Origin: *`, as before |
+| `--cors-headers <list>` | echo | The request headers a preflight is allowed, comma-separated (repeatable), instead of echoing what it asked for. Only with `--cors` |
+| `--cors-methods <list>` | the one asked + common | The methods a preflight is allowed, instead of the one it asked about plus GET, HEAD, POST, PUT, PATCH, DELETE and OPTIONS. Only with `--cors` |
+| `--cors-expose <list>` | every header | The response headers a script may read. Only with `--cors` |
+| `--cors-max-age <n>` | `600` | `Access-Control-Max-Age` on a preflight, in seconds. Only with `--cors` |
+| `--cors-star` | off | Answer `Access-Control-Allow-Origin: *` with no `Access-Control-Allow-Credentials` — right for public data, and exactly what a credentialed request (a client certificate, a cookie) fails against. Not with a list of origins |
+| `--cors-fault <fault>` | none | Get CORS wrong on purpose, so a client's (or a checker's) handling of a broken server can be tested: `double-origin` (two `Access-Control-Allow-Origin` values), `preflight-401` (preflights answered 401, as by a server that wants authentication on OPTIONS), `preflight-redirect` (a 302 a browser will not follow), `preflight-only` (CORS headers on the preflight, none on the response), `no-vary` (the origin echoed without `Vary: Origin`) |
+
+A [`--routes`](18-Mock-Server.md#declaring-your-own-routes) route can carry its own `"cors"`:
+`false` (no CORS at all for that route), `true` (any origin), or an object with `origins`, `headers`,
+`methods`, `expose`, `maxAge`, `star` and `fault`, as the flags above. It replaces `--cors` for
+requests to that route, and works without `--cors`; a preflight is matched to the route its real
+request would reach, by the method it asks about.
 
 With `--tls` or `--mtls`, the server certificate — and for `--mtls` a ready-to-use client `.pfx` —
 are written to the certificate directory, so you can trust one and present the other.
@@ -1073,7 +1085,8 @@ The gateway answers two paths itself, never forwarding them: `/_certapi/health` 
 and `/_certapi/routes` (each site's name, prefix, upstream, certificate and settings; the allow
 list). Both honour `--token`.
 
-**From a profile.** A profile's `serve` section has `port`, `vhost`, `browser`, `cors`, `token`,
+**From a profile.** A profile's `serve` section has `port`, `vhost`, `browser`, `cors`, `corsHeaders`,
+`corsExpose`, `corsMethods`, `corsMaxAge`, `corsCredentials`, `token`,
 `allow`, `listen`, `cookieJar`, `autoToken`, `windowsAuth`, `windowsUser`, `windowsPassword`,
 `forwarded`, `maxBody`, `timeout`, `maxConnections`, `maxRequests`, `tls`, `rewriteBody`, and `sites`
 in the `--routes` format. The other options
@@ -1127,6 +1140,12 @@ So a page on another origin can call the upstream through the gateway.
 | `--cors-max-age <n>` | `600` | How long a browser may cache a preflight answer, in seconds. Only with `--cors` (or `--browser`) |
 | `--cors-headers <list>` | echo | The request headers every preflight is told it may send, comma-separated (repeatable), instead of echoing whatever it asked for. A header outside the list is then refused by the browser, which is how you find out which ones a front end really needs. Only with `--cors` |
 | `--cors-expose <list>` | every upstream header | The response headers a script may read (`Access-Control-Expose-Headers`), comma-separated (repeatable), instead of all of them. Only with `--cors` |
+| `--cors-methods <list>` | echo | The methods every preflight is told it may use, comma-separated (repeatable), instead of the one it asked about. Only with `--cors` |
+| `--cors-no-credentials` | off | Leave out `Access-Control-Allow-Credentials`, so a page's credentialed fetch fails as it would against a server that does not allow credentials. Only with `--cors` |
+
+When an upstream answers CORS itself, `--cors` still replaces its `Access-Control-*` headers (two
+`Access-Control-Allow-Origin` values would be refused by the browser), and the log says so once per
+site, with the origin the upstream had named.
 | `--rewrite-cookies` | off | `Set-Cookie` loses `Domain=` and `Secure`, and `SameSite=None` becomes `Lax` — so a cookie issued for the real origin is actually kept by a browser talking to loopback |
 | `--rewrite-location` | off | A 3xx `Location` (and a `Refresh` header's URL) pointing at the upstream comes back pointing at the gateway, so a redirect does not walk the browser out of the tunnel |
 | `--rewrite-origin` | off | `Origin` and `Referer` on a forwarded request point at the upstream instead of at the gateway, so a login form's CSRF check sees the host it expects. In the `--browser` bundle |

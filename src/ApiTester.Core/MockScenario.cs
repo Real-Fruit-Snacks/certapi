@@ -48,6 +48,10 @@ public sealed record MockRoute(
     /// Empty when the route answers the same way every time.</summary>
     public IReadOnlyList<MockResponse> Sequence { get; init; } = Array.Empty<MockResponse>();
 
+    /// <summary>This route's own CORS policy ("cors" in the scenario), overriding the mock's
+    /// `--cors`; null when the route declares none.</summary>
+    public MockCors? Cors { get; init; }
+
     private int _calls;
 
     /// <summary>The answer for the next call. Thread-safe: the mock serves connections
@@ -293,9 +297,11 @@ public sealed record MockScenario(
                     : ReadResponse(respond, index, baseDirectory, read, warnings);
                 if (response is null) continue;
 
+                MockCors? routeCors = element.TryGetProperty("cors", out var corsElement)
+                    ? MockCors.FromJson(corsElement, $"route {index}", warnings) : null;
                 routes.Add(new MockRoute(method, pathGlob, pathRegex,
                     Pairs(match, "query"), Pairs(match, "headers"), response)
-                { Sequence = sequence });
+                { Sequence = sequence, Cors = routeCors });
             }
 
             MockResponse? fallback = null;

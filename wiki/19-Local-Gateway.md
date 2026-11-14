@@ -159,6 +159,7 @@ certapi serve --profile corp
 ```
 
 `serve` takes `port`, `vhost` (`true` or a suffix), `browser`, `cors` (`true`, an origin or a list),
+`corsHeaders`, `corsExpose`, `corsMethods` (each a name or a list), `corsMaxAge`, `corsCredentials`,
 `token`, `allow` (a host or a list), `listen`, `cookieJar` (`true` or a file), `autoToken`,
 `windowsAuth`, `windowsUser`, `windowsPassword`, `forwarded`, `maxBody`, `timeout`,
 `maxConnections`, `maxRequests`, `tls`, `rewriteBody` and `sites` (exactly the `--routes` format). The certificate, `insecure`, proxy, CA files, revocation,
@@ -215,6 +216,8 @@ secret masked.
 | `--cors-max-age <seconds>` | How long a browser may cache a preflight answer (default 600). Only with `--cors` (or `--browser`) |
 | `--cors-headers <list>` | The request headers every preflight is allowed, instead of whatever it asked for — so a header the front end sends that is not on the list fails in the browser, as it would against a strict server. Only with `--cors` |
 | `--cors-expose <list>` | The response headers a script may read, instead of every header the upstream sent. Only with `--cors` |
+| `--cors-methods <list>` | The methods every preflight is allowed, instead of the one it asked about. Only with `--cors` |
+| `--cors-no-credentials` | No `Access-Control-Allow-Credentials`, so a credentialed fetch fails as against a server that does not allow credentials. Only with `--cors` |
 | `--rewrite-cookies` | Strip `Domain=` and `Secure` from each `Set-Cookie` and turn `SameSite=None` into `Lax`, so the browser stores the cookie against the gateway |
 | `--rewrite-location` | Bring a 3xx `Location` (and a `Refresh` header's URL) aimed at the upstream, another site or an allowed host back through the gateway |
 | `--rewrite-origin` | `Origin` and `Referer` on a forwarded request point at the upstream |
@@ -377,6 +380,11 @@ in order to read the reply. With no value it answers pages served from this mach
 `localhost`, a `*.localhost` name or a loopback address — and never a public site; give it a
 comma-separated list to allow exactly those origins instead. The gateway's own origin is always
 allowed.
+
+An upstream that answers CORS for itself has its `Access-Control-*` headers replaced by the
+gateway's — two `Access-Control-Allow-Origin` values would be refused — and the log says so once per
+site, naming the origin the upstream had allowed, so a policy that only seems to work through the
+gateway is not a surprise later.
 
 A preflight protects only the requests that need one: a form `POST`, an image or a WebSocket from
 another site arrives without asking. So the gateway also refuses, with 403 and before anything is

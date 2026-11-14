@@ -55,6 +55,14 @@ public sealed record BrowserOptions(
     /// header the upstream sent.</summary>
     public IReadOnlyList<string>? CorsExposeHeaders { get; init; }
 
+    /// <summary>`serve --cors-methods`: the methods a preflight is told it may use. Null grants
+    /// whichever method the preflight asked about.</summary>
+    public IReadOnlyList<string>? CorsAllowMethods { get; init; }
+
+    /// <summary>False under `serve --cors-no-credentials`: no Access-Control-Allow-Credentials, so a
+    /// page's credentialed fetch fails the way it would against a server that does not allow them.</summary>
+    public bool CorsCredentials { get; init; } = true;
+
     /// <summary>Rewrite the request's <c>Origin</c> and <c>Referer</c> from the gateway's origin to
     /// the upstream's — `serve --rewrite-origin`. A login form's CSRF check compares them with its
     /// own host, and a browser talking to the gateway sends the gateway's.</summary>
@@ -112,7 +120,7 @@ public static class BrowserRewriter
             // Access-Control-Allow-Credentials: true, which the gateway always sends because the
             // whole point of the relay is carrying the caller's credentials.
             new("Access-Control-Allow-Origin", origin),
-            new("Access-Control-Allow-Methods", method)
+            new("Access-Control-Allow-Methods", options.CorsAllowMethods is { Count: > 0 } methods ? string.Join(", ", methods) : method)
         };
         // Echoed only when asked for: an empty Access-Control-Allow-Headers is not the same as no
         // header at all, and the browser only needs an answer to a question it posed.
@@ -124,7 +132,7 @@ public static class BrowserRewriter
         }
         else if (Header(request.Headers, "Access-Control-Request-Headers") is { } requested)
             headers.Add(new("Access-Control-Allow-Headers", requested));
-        headers.Add(new("Access-Control-Allow-Credentials", "true"));
+        if (options.CorsCredentials) headers.Add(new("Access-Control-Allow-Credentials", "true"));
         // Only ever the answer to a question an allowed origin actually asked: the allowlist check
         // above (or echo mode's implicit "any origin is allowed") has already run by this point, so
         // an origin the operator did not permit can never reach this line and receive it. Private
@@ -151,6 +159,7 @@ public static class BrowserRewriter
     {
         var notes = new List<string>();
         var result = new List<KeyValuePair<string, string>>(headers.Count);
+        string? replacedCors = null;
         foreach (var h in headers)
         {
             // Headers that leave state in the browser for the gateway's own origin, which is not
@@ -185,7 +194,11 @@ public static class BrowserRewriter
             // already answers CORS for its own origin would otherwise leave the browser holding two
             // Access-Control-Allow-Origin values, which it rejects outright.
             if (options.Cors && h.Key.StartsWith("Access-Control-", StringComparison.OrdinalIgnoreCase))
+            {
+                if (requestOrigin is not null && h.Key.Equals("Access-Control-Allow-Origin", StringComparison.OrdinalIgnoreCase))
+                    replacedCors ??= h.Value;
                 continue;
+            }
             if (options.StripCsp && (h.Key.Equals("Content-Security-Policy", StringComparison.OrdinalIgnoreCase) ||
                                      h.Key.Equals("Content-Security-Policy-Report-Only", StringComparison.OrdinalIgnoreCase)))
                 continue;
@@ -239,15 +252,23 @@ public static class BrowserRewriter
                 // The exact origin rather than "*", for the same reason as on a preflight: a
                 // wildcard is not valid alongside Allow-Credentials, and a relay carries credentials.
                 result.Add(new("Access-Control-Allow-Origin", requestOrigin));
-                result.Add(new("Access-Control-Allow-Credentials", "true"));
+                if (options.CorsCredentials) result.Add(new("Access-Control-Allow-Credentials", "true"));
                 result.Add(new("Vary", "Origin"));
                 if (exposed.Length > 0) result.Add(new("Access-Control-Expose-Headers", exposed));
             }
         }
 
+        if (replacedCors is not null)
+            notes.Add($"{UpstreamCorsNote} {route.Upstream.Host} answers CORS itself (Access-Control-Allow-Origin: {replacedCors}); " +
+                      "the gateway replaced its Access-Control-* headers with the --cors policy, so a page sees the gateway's answer, not the upstream's.");
+
         warnings = notes;
         return result;
     }
+
+    /// <summary>How the note about an upstream's own CORS headers begins, so `serve` can show it
+    /// once per site rather than on every response.</summary>
+    public const string UpstreamCorsNote = "cors:";
 
     /// <summary>The request headers as the upstream should see them: Origin and Referer pointing at
     /// the upstream rather than at the gateway, when <see cref="BrowserOptions.RewriteOrigin"/> is

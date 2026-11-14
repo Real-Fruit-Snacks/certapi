@@ -254,6 +254,11 @@ public static class ConfigCommand
         Line("serve.vhost", s.Vhost is null ? null : s.VhostSuffix ?? B(s.Vhost));
         Line("serve.browser", B(s.Browser));
         Line("serve.cors", s.Cors is null ? null : s.CorsOrigins.Count > 0 ? string.Join(", ", s.CorsOrigins) : B(s.Cors));
+        Line("serve.corsHeaders", s.CorsHeaders is null ? null : string.Join(", ", s.CorsHeaders));
+        Line("serve.corsExpose", s.CorsExpose is null ? null : string.Join(", ", s.CorsExpose));
+        Line("serve.corsMethods", s.CorsMethods is null ? null : string.Join(", ", s.CorsMethods));
+        Line("serve.corsMaxAge", s.CorsMaxAge?.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        Line("serve.corsCredentials", s.CorsCredentials is null ? null : B(s.CorsCredentials));
         Line("serve.token", s.Token is null ? null : "(set)");
         Line("serve.allow", s.Allow.Count == 0 ? null : string.Join(", ", s.Allow));
         Line("serve.listen", s.Listen);

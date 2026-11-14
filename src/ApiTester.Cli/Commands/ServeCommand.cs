@@ -159,6 +159,10 @@ public static class ServeCommand
           --cors-expose <list>    The response headers a script may read, comma-separated
                                   (repeatable), instead of every header the upstream sent. Only
                                   with --cors
+          --cors-methods <list>   The methods a preflight is allowed, comma-separated (repeatable),
+                                  instead of the one it asked about. Only with --cors
+          --cors-no-credentials   No Access-Control-Allow-Credentials, so a credentialed fetch
+                                  fails as against a server that does not allow them. Only with --cors
           --rewrite-cookies       Set-Cookie loses Domain= and Secure, and SameSite=None becomes
                                   Lax, so the browser can store the cookie against the gateway
           --rewrite-location      A 3xx Location (or a Refresh header's URL) pointing at the
@@ -388,9 +392,14 @@ public static class ServeCommand
         if (cookieJar && cookieJarOff) throw new CliUsageException("--cookie-jar and --no-cookie-jar contradict each other; give one.");
         if (!cookieJar && !cookieJarOff && sp?.CookieJar == true) { cookieJar = true; cookieJarFile = sp.CookieJarFile; }
         bool autoToken = args.Switch("--auto-token", sp?.AutoToken);
-        string? corsMaxAgeRaw = args.Value("--cors-max-age");
+        string? corsMaxAgeRaw = args.Value("--cors-max-age") ?? sp?.CorsMaxAge?.ToString(System.Globalization.CultureInfo.InvariantCulture);
         var corsHeaderSpecs = args.Values("--cors-headers");
+        if (corsHeaderSpecs.Count == 0 && sp?.CorsHeaders is { } profileHeaders) corsHeaderSpecs = profileHeaders.ToList();
         var corsExposeSpecs = args.Values("--cors-expose");
+        if (corsExposeSpecs.Count == 0 && sp?.CorsExpose is { } profileExpose) corsExposeSpecs = profileExpose.ToList();
+        var corsMethodSpecs = args.Values("--cors-methods");
+        if (corsMethodSpecs.Count == 0 && sp?.CorsMethods is { } profileMethods) corsMethodSpecs = profileMethods.ToList();
+        bool corsNoCredentials = args.Flag("--cors-no-credentials") || sp?.CorsCredentials == false;
         // Header rules are not a browser concern (they work with or without --browser), but they are
         // read alongside the browser flags here so every repeatable option is consumed before
         // Positionals() runs.
@@ -507,8 +516,12 @@ public static class ServeCommand
                 .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         var corsAllowHeaders = HeaderList(corsHeaderSpecs);
         var corsExposeHeaders = HeaderList(corsExposeSpecs);
-        if ((corsAllowHeaders is not null || corsExposeHeaders is not null) && !cors)
-            throw new CliUsageException("--cors-headers and --cors-expose shape the CORS answers, so they need --cors (or --browser).");
+        var corsAllowMethods = HeaderList(corsMethodSpecs)?.Select(m => m.ToUpperInvariant()).ToList();
+        if ((corsAllowHeaders is not null || corsExposeHeaders is not null || corsAllowMethods is not null || corsNoCredentials) && !cors)
+            throw new CliUsageException("--cors-headers, --cors-expose, --cors-methods and --cors-no-credentials shape the CORS answers, so they need --cors (or --browser).");
+        foreach (var name in corsAllowMethods ?? new List<string>())
+            if (name.Length == 0 || !name.All(c => char.IsAsciiLetterOrDigit(c) || c is '-' or '_'))
+                throw new CliUsageException($"'{name}' is not an HTTP method.");
         foreach (var name in (corsAllowHeaders ?? Array.Empty<string>()).Concat(corsExposeHeaders ?? Array.Empty<string>()))
             if (name != "*" && !name.All(c => c > 0x20 && c < 0x7F && !"()<>@,;:\\\"/[]?={}".Contains(c)))
                 throw new CliUsageException($"'{name}' is not a header name.");
@@ -591,6 +604,7 @@ public static class ServeCommand
         {
             SecureOrigin = tls, CorsMaxAgeSeconds = corsMaxAge, RewriteOrigin = rewriteOrigin, StripCsp = stripCsp,
             CorsAllowHeaders = corsAllowHeaders, CorsExposeHeaders = corsExposeHeaders,
+            CorsAllowMethods = corsAllowMethods, CorsCredentials = !corsNoCredentials,
             RewriteBody = rewriteBody
         };
 
@@ -1253,6 +1267,11 @@ public static class ServeCommand
         public bool LoopbackOnly { get; init; }
     }
 
+    /// <summary>The sites whose own CORS headers this gateway has already said it replaced — kept
+    /// per gateway (its options), so the note appears once per site, not on every response.</summary>
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<BrowserOptions,
+        System.Collections.Concurrent.ConcurrentDictionary<string, bool>> UpstreamCorsNoted = new();
+
     private static async Task HandleAsync(
         HttpListenerContext context, MtlsGateway gateway, GatewayRoutes routes,
         BrowserOptions browser, HeaderRules headerRules, GatewayWebSocketRelay? relay, ServePolicy policy,
@@ -1535,7 +1554,14 @@ public static class ServeCommand
                 {
                     responseHeaders = BrowserRewriter.RewriteResponseHeaders(
                         gwResp.Headers, req.Headers["Origin"], ForBrowser(responseRoute), browser, out var warnings);
-                    foreach (var warning in warnings) log("warning: " + warning);
+                    foreach (var warning in warnings)
+                    {
+                        // The upstream answering CORS itself is the same news on every response;
+                        // said once per site, it is a hint rather than noise.
+                        if (warning.StartsWith(BrowserRewriter.UpstreamCorsNote, StringComparison.Ordinal) &&
+                            !UpstreamCorsNoted.GetOrCreateValue(browser).TryAdd(responseRoute.Upstream.Host, true)) continue;
+                        log("warning: " + warning);
+                    }
                 }
 
                 // After the browser rewrites, so a header the operator configured explicitly wins

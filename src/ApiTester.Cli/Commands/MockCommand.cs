@@ -49,6 +49,27 @@ public static class MockCommand
                             (repeatable) allows only those, and any other origin gets no CORS
                             headers, which a browser blocks. Without --cors the built-in routes
                             answer Access-Control-Allow-Origin: * as before
+          --cors-headers <list>
+                            The request headers a preflight is allowed, comma-separated
+                            (repeatable), instead of echoing what it asked for
+          --cors-methods <list>
+                            The methods a preflight is allowed, instead of the one asked for
+                            plus GET, HEAD, POST, PUT, PATCH, DELETE and OPTIONS
+          --cors-expose <list>
+                            The response headers a script may read, instead of all of them
+          --cors-max-age <n>
+                            Access-Control-Max-Age on a preflight, in seconds (default 600)
+          --cors-star
+                            Answer Access-Control-Allow-Origin: * with no credentials: right
+                            for public data, and what a credentialed request fails against
+          --cors-fault <fault>
+                            Get CORS wrong on purpose: double-origin (two
+                            Access-Control-Allow-Origin values), preflight-401,
+                            preflight-redirect, preflight-only (headers on the preflight, none
+                            on the response) or no-vary (the origin echoed without Vary)
+                            A --routes route can carry its own "cors": false, true, or an
+                            object with origins, headers, methods, expose, maxAge, star and
+                            fault; it replaces --cors for requests to that route
 
         With --tls / --mtls the server certificate (and, for --mtls, a ready-to-use client .pfx) are
         written to the cert dir so you can trust/present them. Runs until Ctrl+C.
@@ -101,7 +122,31 @@ public static class MockCommand
                 corsOrigins.AddRange(oneCors.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
                     .Select(o => o == "*" ? o : CorsCommand.NormalizeOrigin(o)));
         }
-        MockCors? cors = corsOn ? new MockCors(corsOrigins.Count == 0 ? null : corsOrigins) : null;
+        static List<string>? NameList(List<string> specs) => specs.Count == 0 ? null :
+            specs.SelectMany(v => v.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+                .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        var corsHeaders = NameList(args.Values("--cors-headers"));
+        var corsMethods = NameList(args.Values("--cors-methods"))?.Select(m => m.ToUpperInvariant()).ToList();
+        var corsExpose = NameList(args.Values("--cors-expose"));
+        string? corsMaxAgeRaw = args.Value("--cors-max-age");
+        bool corsStar = args.Flag("--cors-star");
+        string? corsFaultRaw = args.Value("--cors-fault");
+        if (!corsOn && (corsHeaders is not null || corsMethods is not null || corsExpose is not null ||
+                        corsMaxAgeRaw is not null || corsStar || corsFaultRaw is not null))
+            throw new CliUsageException("--cors-headers, --cors-methods, --cors-expose, --cors-max-age, --cors-star and --cors-fault shape the --cors policy, so they need --cors.");
+        int corsMaxAge = 600;
+        if (corsMaxAgeRaw is not null && (!int.TryParse(corsMaxAgeRaw, out corsMaxAge) || corsMaxAge < 0))
+            throw new CliUsageException($"--cors-max-age expects a whole number of seconds (0 or more), got '{corsMaxAgeRaw}'.");
+        var corsFault = MockCorsFault.None;
+        if (corsFaultRaw is not null && !MockCors.TryParseFault(corsFaultRaw, out corsFault))
+            throw new CliUsageException($"--cors-fault expects one of {string.Join(", ", MockCors.FaultNames)}, got '{corsFaultRaw}'.");
+        if (corsStar && corsOrigins.Count > 0)
+            throw new CliUsageException("--cors-star answers every origin with *, so it cannot be combined with a list of origins.");
+        MockCors? cors = corsOn ? new MockCors(corsOrigins.Count == 0 ? null : corsOrigins)
+        {
+            AllowHeaders = corsHeaders, AllowMethods = corsMethods, Expose = corsExpose,
+            MaxAge = corsMaxAge, Star = corsStar, Fault = corsFault
+        } : null;
         string? tlsDefectRaw = args.Value("--tls-mode");
         var tlsDefect = tlsDefectRaw?.ToLowerInvariant() switch
         {
@@ -167,9 +212,15 @@ public static class MockCommand
 
         stderr.WriteLine($"certapi mock listening on {server.BaseUrl}  ({mode})");
         if (cors is not null)
-            stderr.WriteLine(cors.Origins is null
+        {
+            stderr.WriteLine(cors.Star
+                ? "cors: preflights answered, Access-Control-Allow-Origin: * (no credentials)"
+                : cors.Origins is null
                 ? "cors: preflights answered, any origin allowed (with credentials)"
                 : $"cors: preflights answered for {string.Join(", ", cors.Origins)}; any other origin gets no CORS headers");
+            if (cors.Fault != MockCorsFault.None)
+                stderr.WriteLine($"cors: deliberately broken — {corsFaultRaw!.ToLowerInvariant()}");
+        }
         if (tlsDefect != MockTlsDefect.None)
             stderr.WriteLine($"serving a deliberately {tlsDefectRaw} certificate — clients are SUPPOSED to refuse this one");
         if (scenario is not null)

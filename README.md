@@ -63,7 +63,7 @@ Two front ends over one engine (`ApiTester.Core`). The desktop app covers everyt
 | `certapi cors <url> --origin <o>` | Would a browser on that origin allow this request? Preflight, redirects, rules and verdict; `--audit` grades a loose policy (WebSockets too), `--from-har` checks a whole page, `--suggest` prints the server fix |
 | `certapi tls <host[:port]>` | Handshakes with any TLS service (STARTTLS too) and shows the chain and which CAs it asks a client certificate from |
 | `certapi serve` | Local mTLS gateway for apps that can't do client certificates, in front of one site or many: named sites, a certificate and settings per site, one origin each with `--vhost`, `--browser` for SSO flows, a whole gateway in a profile |
-| `certapi mock` | Standing test server over HTTP, HTTPS or mTLS, or a replay of a captured HAR |
+| `certapi mock` | Standing test server over HTTP, HTTPS or mTLS, or a replay of a captured HAR; `--cors` gives it a real CORS policy, per route if you like, or a deliberately broken one |
 | `certapi grpc list\|call` | gRPC behind mutual TLS, via server reflection or `--protoset`; gRPC-Web with `--grpc-web` |
 | `certapi token` | OAuth 2.0 client-credentials, password, refresh, device code, auth-code + PKCE; the certificate as the client credential (`private_key_jwt`, `tls_client_auth`) |
 | `certapi ws` / `certapi sse` | WebSocket and Server-Sent Events through the same certificate |

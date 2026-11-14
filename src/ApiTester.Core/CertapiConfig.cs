@@ -77,6 +77,11 @@ public sealed record ServeProfile
     public bool? Browser { get; init; }
     public bool? Cors { get; init; }
     public IReadOnlyList<string> CorsOrigins { get; init; } = Array.Empty<string>();
+    public IReadOnlyList<string>? CorsHeaders { get; init; }
+    public IReadOnlyList<string>? CorsExpose { get; init; }
+    public IReadOnlyList<string>? CorsMethods { get; init; }
+    public int? CorsMaxAge { get; init; }
+    public bool? CorsCredentials { get; init; }
     public string? Token { get; init; }
     public IReadOnlyList<string> Allow { get; init; } = Array.Empty<string>();
     public string? Listen { get; init; }
@@ -97,7 +102,8 @@ public sealed record ServeProfile
 
     public static readonly string[] Fields =
     {
-        "port", "vhost", "browser", "cors", "token", "allow", "listen", "cookieJar", "autoToken",
+        "port", "vhost", "browser", "cors", "corsHeaders", "corsExpose", "corsMethods", "corsMaxAge",
+        "corsCredentials", "token", "allow", "listen", "cookieJar", "autoToken",
         "windowsAuth", "windowsUser", "windowsPassword", "forwarded", "maxBody", "timeout",
         "maxConnections", "maxRequests", "tls", "rewriteBody", "sites",
     };
@@ -381,6 +387,19 @@ public static class ConfigLoader
             }
         }
 
+        // A string or a list of strings — the shape of a repeatable, comma-separated flag.
+        List<string>? Names(string name)
+        {
+            switch (Get(name))
+            {
+                case null: return null;
+                case { ValueKind: JsonValueKind.String } one: return new List<string> { one.GetString()! };
+                case { ValueKind: JsonValueKind.Array } many when many.EnumerateArray().All(i => i.ValueKind == JsonValueKind.String):
+                    return many.EnumerateArray().Select(i => i.GetString()!).ToList();
+                default: throw new ConfigException($"{where}: \"serve.{name}\" must be a string or a list of strings.");
+            }
+        }
+
         var (vhostOn, vhostValues) = Switch("vhost");
         var (corsOn, corsValues) = Switch("cors");
         var (_, allow) = Switch("allow");
@@ -410,6 +429,11 @@ public static class ConfigLoader
             Browser = Bool("browser"),
             Cors = corsOn,
             CorsOrigins = corsValues,
+            CorsHeaders = Names("corsHeaders"),
+            CorsExpose = Names("corsExpose"),
+            CorsMethods = Names("corsMethods"),
+            CorsMaxAge = Int("corsMaxAge"),
+            CorsCredentials = Bool("corsCredentials"),
             Token = Str("token"),
             Allow = allow,
             Listen = Str("listen"),
