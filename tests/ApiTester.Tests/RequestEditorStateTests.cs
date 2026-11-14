@@ -29,7 +29,7 @@ public class RequestEditorStateTests
         var roundTripped = new[]
         {
             "Method", "BaseUrl", "Path", "Body", "ContentType", "AuthType", "AuthUser", "AuthSecret",
-            "CertThumbprint", "IgnoreServerCert", "TimeoutSeconds", "IsMultipart", "Transport"
+            "AuthScope", "CertThumbprint", "IgnoreServerCert", "TimeoutSeconds", "IsMultipart", "Transport"
         };
         // Bound straight to a grid as ItemsSource; the grid edits these in place, so ApplyTo never
         // copies them back.
@@ -77,7 +77,7 @@ public class RequestEditorStateTests
     /// non-default value, so a dropped field or a wrong index shows up immediately. Only the auth
     /// fields vary between callers — everything else stays identical across the theory so the same
     /// assertion covers every field regardless of which auth type is under test.</summary>
-    private static RequestModel BuildPopulatedModel(string authType, string? authUser, string? authSecret)
+    private static RequestModel BuildPopulatedModel(string authType, string? authUser, string? authSecret, string? authScope = null)
     {
         var m = new RequestModel
         {
@@ -89,6 +89,7 @@ public class RequestEditorStateTests
             AuthType = authType,
             AuthUser = authUser,
             AuthSecret = authSecret,
+            AuthScope = authScope,
             CertThumbprint = "AA:BB:CC:DD:EE:FF",
             IgnoreServerCert = true,
             TimeoutSeconds = 45,
@@ -121,12 +122,14 @@ public class RequestEditorStateTests
     [InlineData("Bearer", null, "tok-abc")]
     [InlineData("Basic", "alice", "pw1")]
     [InlineData("Windows", "DOMAIN\\bob", "pw2")]      // explicit creds, not single sign-on
-    public void Round_trip_preserves_every_property_the_state_record_has(string authType, string? authUser, string? authSecret)
+    [InlineData("Digest", "carol", "pw3")]
+    [InlineData("AwsSigV4", "AKIDEXAMPLE", "secret-key", "eu-west-1/execute-api")]
+    public void Round_trip_preserves_every_property_the_state_record_has(string authType, string? authUser, string? authSecret, string? authScope = null)
     {
         // Record equality is what makes this cover every property RequestEditorState has today AND
         // every one it gains later, with no maintenance: a field dropped on either side of the round
         // trip changes one of the two states without changing the other, and Assert.Equal catches it.
-        var model = BuildPopulatedModel(authType, authUser, authSecret);
+        var model = BuildPopulatedModel(authType, authUser, authSecret, authScope);
 
         var loaded = RequestEditorState.From(model);
         var captured = new RequestModel();
@@ -288,6 +291,8 @@ public class RequestEditorStateTests
     [InlineData("Bearer", 2)]
     [InlineData("Basic", 3)]
     [InlineData("Windows", 4)]
+    [InlineData("Digest", 5)]
+    [InlineData("AwsSigV4", 6)]
     public void AuthType_round_trips_through_its_combo_index(string authType, int expectedIndex)
     {
         var model = new RequestModel { AuthType = authType };
@@ -297,6 +302,20 @@ public class RequestEditorStateTests
         var captured = new RequestModel();
         state.ApplyTo(captured);
         Assert.Equal(authType, captured.AuthType);
+    }
+
+    [Fact]
+    public void Aws_and_digest_fields_survive_the_editor()
+    {
+        var aws = new RequestModel { AuthType = "AwsSigV4", AuthUser = "AK", AuthSecret = "SK", AuthScope = "us-east-1/sqs" };
+        var captured = new RequestModel();
+        RequestEditorState.From(aws).ApplyTo(captured);
+        Assert.Equal(("AwsSigV4", "AK", "SK", "us-east-1/sqs"), (captured.AuthType, captured.AuthUser, captured.AuthSecret, captured.AuthScope));
+
+        var digest = new RequestModel { AuthType = "Digest", AuthUser = "ann", AuthSecret = "pw", AuthScope = "stale" };
+        captured = new RequestModel();
+        RequestEditorState.From(digest).ApplyTo(captured);
+        Assert.Equal(("Digest", "ann", "pw", (string?)null), (captured.AuthType, captured.AuthUser, captured.AuthSecret, captured.AuthScope));
     }
 
     [Fact]

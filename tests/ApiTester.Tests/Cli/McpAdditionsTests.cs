@@ -166,12 +166,13 @@ public class McpLaunchOptionTests
     [Fact]
     public void Print_config_makes_paths_absolute_and_will_not_write_secrets()
     {
+        string work = Path.GetTempPath();
         string json = McpHostConfig.Render("claude", new[] { "--workspace", "suite.json", "--print-config", "claude" },
-            "/opt/certapi/certapi", "/work");
+            "/opt/certapi/certapi", work);
         using var doc = JsonDocument.Parse(json);
         var args = doc.RootElement.GetProperty("mcpServers").GetProperty("certapi").GetProperty("args")
             .EnumerateArray().Select(a => a.GetString()).ToList();
-        Assert.Equal(Path.GetFullPath("suite.json", "/work"), args[2]);
+        Assert.Equal(Path.GetFullPath("suite.json", work), args[2]);
         Assert.Equal("/opt/certapi/certapi", doc.RootElement.GetProperty("mcpServers").GetProperty("certapi").GetProperty("command").GetString());
 
         var ex = Assert.Throws<CliUsageException>(() =>
