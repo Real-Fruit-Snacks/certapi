@@ -6,7 +6,18 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+- Faster start-up: `certapi.exe` and the app are published ReadyToRun and no longer compressed.
+  On Windows x64, `certapi send` to a local server went from 240 ms to 134 ms and its peak memory
+  from 89 MB to 46 MB; the app's window is ready in 0.73 s instead of 1.0 s, using 131 MB instead
+  of 225 MB. The downloads are larger for it: about 95 MB and 160 MB.
+- `mock` keeps connections alive between requests, so `bench` against it measures requests
+  rather than handshakes. `--no-keep-alive` answers `Connection: close` as before.
+
 ### Fixed
+- `bench` no longer claims connections were pooled and reused when the server answered
+  `Connection: close`; it says how many responses closed their connection (`closedByServer` in
+  `--json`).
 - `--help` for `browse`, `call`, `cors`, `crawl`, `mock`, `mqtt`, `signalr` and `tls` now ends with
   the global options line like every other command. `crawl --help` lists the certificate and
   transport options in full instead of pointing at `send`, and `mqtt --help` lists `--workspace`.

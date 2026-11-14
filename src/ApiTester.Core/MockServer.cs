@@ -275,7 +275,9 @@ public sealed record MockRequestLog(string Method, string Path, int Status, stri
 ///   <item>anything else — the JSON echo.</item>
 /// </list>
 /// Built on <see cref="TcpListener"/> + <see cref="SslStream"/> so TLS and mTLS work on loopback with
-/// no netsh URL/cert reservation. One request per connection (<c>Connection: close</c>).
+/// no netsh URL/cert reservation. Connections are kept alive between requests when the response
+/// is framed by its length (not a stream, an upgrade or a deliberate fault), so a client measures
+/// requests rather than handshakes; <c>keepAlive: false</c> answers <c>Connection: close</c> to each.
 /// </summary>
 public sealed class MockServer : IAsyncDisposable
 {
@@ -300,8 +302,9 @@ public sealed class MockServer : IAsyncDisposable
 
     private MockServer(TcpListener listener, int port, MockTlsMode tls,
         X509Certificate2? serverCert, Action<MockRequestLog>? onRequest, HarReplaySource? replay,
-        MockScenario? scenario, MockCors? cors)
+        MockScenario? scenario, MockCors? cors, bool keepAlive)
     {
+        _keepAlive = keepAlive;   // before the accept loop starts, so the first connection sees it
         _cors = cors;
         _listener = listener;
         Port = port;
@@ -322,7 +325,8 @@ public sealed class MockServer : IAsyncDisposable
     /// routes you care about, and the recording covers everything else.</para></summary>
     public static MockServer Start(int port, MockTlsMode tls,
         X509Certificate2? serverCert = null, Action<MockRequestLog>? onRequest = null,
-        HarReplaySource? replay = null, MockScenario? scenario = null, MockCors? cors = null)
+        HarReplaySource? replay = null, MockScenario? scenario = null, MockCors? cors = null,
+        bool keepAlive = true)
     {
         if (tls != MockTlsMode.Http && serverCert is null)
             throw new ArgumentException("A server certificate is required for HTTPS/mTLS.", nameof(serverCert));
@@ -330,7 +334,7 @@ public sealed class MockServer : IAsyncDisposable
         var listener = new TcpListener(IPAddress.Loopback, port);
         listener.Start();
         int actualPort = ((IPEndPoint)listener.LocalEndpoint).Port;
-        return new MockServer(listener, actualPort, tls, serverCert, onRequest, replay, scenario, cors);
+        return new MockServer(listener, actualPort, tls, serverCert, onRequest, replay, scenario, cors, keepAlive);
     }
 
     /// <summary>The largest request body the mock reads; a larger one closes the connection.</summary>
@@ -344,6 +348,14 @@ public sealed class MockServer : IAsyncDisposable
     internal const int MaxConnections = 256;
 
     private readonly SemaphoreSlim _connectionSlots = new(MaxConnections, MaxConnections);
+
+    /// <summary>How long a kept-alive connection may sit idle between requests before the mock
+    /// closes it — shorter than the first request's allowance, so idle clients free their slot.</summary>
+    internal static TimeSpan KeepAliveIdle { get; set; } = TimeSpan.FromSeconds(10);
+
+    /// <summary>False under `mock --no-keep-alive`: one request per connection, every response
+    /// <c>Connection: close</c>, as a server that does not keep connections would answer.</summary>
+    private readonly bool _keepAlive;
 
     private async Task AcceptLoopAsync()
     {
@@ -412,11 +424,48 @@ public sealed class MockServer : IAsyncDisposable
             stream = ssl;
         }
 
+        // Requests on this connection, one after another, for as long as each response can share
+        // it. Bytes that arrived past one request (a pipelining client) are carried to the next.
+        var carry = new List<byte>();
         try
         {
-            var request = await ReadRequestAsync(stream, ct);
-            if (request is null) return;
-            var (method, target, headers, body) = request.Value;
+            for (int served = 0; ; served++)
+            {
+                var request = await ReadRequestAsync(stream, carry, served == 0 ? RequestReadTimeout : KeepAliveIdle, ct);
+                if (request is null) return;
+                bool clientKeeps = _keepAlive && !request.Value.Http10 &&
+                    !(request.Value.Headers.TryGetValue("Connection", out var connectionHeader) &&
+                      connectionHeader.Contains("close", StringComparison.OrdinalIgnoreCase));
+                bool kept = await ServeAsync(stream, request.Value, client, carry, clientKeeps,
+                    clientCertSubject, clientCertIssuer, clientCertThumbprint, ct);
+                if (!kept || !client.Connected) return;
+            }
+        }
+        finally { await stream.DisposeAsync(); }
+    }
+
+    /// <summary>Answer one request. True when the response left the connection open for another.</summary>
+    private async Task<bool> ServeAsync(Stream connection,
+        (string Method, string Target, Dictionary<string, string> Headers, string Body, bool Http10) request,
+        TcpClient client, List<byte> carry, bool clientKeeps,
+        string? clientCertSubject, string? clientCertIssuer, string? clientCertThumbprint, CancellationToken ct)
+    {
+        var (method, target, headers, body, _) = request;
+        // Every response head goes through here: the CORS policy (once it is known) rewrites its
+        // Access-Control-* lines, and a head that can share the connection says keep-alive.
+        bool kept = false;
+        Func<string, string>? cors = null;
+        var stream = new HeadRewriteStream(connection, head =>
+        {
+            if (cors is not null) head = cors(head);
+            if (clientKeeps && CanKeepAlive(head, method))
+            {
+                kept = true;
+                head = head.Replace("\r\nConnection: close\r\n", "\r\nConnection: keep-alive\r\n", StringComparison.Ordinal);
+            }
+            return head;
+        });
+        {
             string path = target.Split('?')[0];
             string query = target.Contains('?') ? target[(target.IndexOf('?') + 1)..] : "";
 
@@ -444,12 +493,12 @@ public sealed class MockServer : IAsyncDisposable
                     await stream.WriteAsync(Encoding.ASCII.GetBytes(head.ToString()), ct);
                     await stream.FlushAsync(ct);
                     _onRequest?.Invoke(new MockRequestLog(method, path, preflightStatus, clientCertSubject) { Replay = "preflight" });
-                    return;
+                    return kept;
                 }
                 if (!(headers.TryGetValue("Upgrade", out var upgrade) && upgrade.Contains("websocket", StringComparison.OrdinalIgnoreCase)))
                 {
                     var policy = corsPolicy;
-                    stream = new CorsHeadStream(stream, head => policy.Rewrite(head, corsOrigin));
+                    cors = head => policy.Rewrite(head, corsOrigin);
                 }
             }
 
@@ -471,7 +520,7 @@ public sealed class MockServer : IAsyncDisposable
                 {
                     Replay = "refused"
                 });
-                return;
+                return kept;
             }
 
             // WebSocket upgrade (any path) — after the scenario's requirements, so a protected
@@ -480,7 +529,7 @@ public sealed class MockServer : IAsyncDisposable
             {
                 await HandleWebSocketAsync(stream, headers, ct);
                 _onRequest?.Invoke(new(method, path, 101, clientCertSubject));
-                return;
+                return kept;
             }
 
             // A declared scenario is consulted first: it states the routes someone deliberately
@@ -495,12 +544,17 @@ public sealed class MockServer : IAsyncDisposable
                     // Next() advances the route's own call counter, so a declared sequence answers
                     // differently each time — which is the whole point of testing a retry policy.
                     var answer = route.Next();
+                    // A deliberate fault, or a route that states its own Connection header, keeps
+                    // the connection behaviour it asked for rather than this server's.
+                    if (answer.Fault != MockFault.None ||
+                        answer.Headers.Any(h => h.Key.Equals("Connection", StringComparison.OrdinalIgnoreCase)))
+                        clientKeeps = false;
                     await WriteMockResponseAsync(stream, answer, client, ct);
                     _onRequest?.Invoke(new MockRequestLog(method, path, answer.Status, clientCertSubject)
                     {
                         Replay = route.Sequence.Count > 0 ? $"route #{route.Calls}" : "route"
                     });
-                    return;
+                    return kept;
                 }
                 if (_replay is null)
                 {
@@ -513,7 +567,7 @@ public sealed class MockServer : IAsyncDisposable
                     {
                         Replay = "no route"
                     });
-                    return;
+                    return kept;
                 }
             }
 
@@ -538,14 +592,14 @@ public sealed class MockServer : IAsyncDisposable
                 {
                     Replay = kind switch { ReplayMatch.Exact => "exact", ReplayMatch.Path => "path", _ => "miss" }
                 });
-                return;
+                return kept;
             }
 
             // Windows Integrated Auth (Negotiate/NTLM) challenge on this route.
             if (path.Equals("/windows-auth", StringComparison.Ordinal))
             {
-                await HandleWindowsAuthAsync(stream, method, headers, clientCertSubject, ct);
-                return;
+                await HandleWindowsAuthAsync(stream, method, headers, clientCertSubject, carry, ct);
+                return kept;
             }
 
             int status;
@@ -592,8 +646,8 @@ public sealed class MockServer : IAsyncDisposable
             }
 
             _onRequest?.Invoke(new(method, path, status, clientCertSubject));
+            return kept;
         }
-        finally { await stream.DisposeAsync(); }
     }
 
     private static string BuildEcho(string method, string path, string query,
@@ -617,15 +671,35 @@ public sealed class MockServer : IAsyncDisposable
         });
     }
 
-    /// <summary>Passes a response through, rewriting its head (everything up to the blank line) on
-    /// the way: every writer here sends the whole head in its first write.</summary>
-    private sealed class CorsHeadStream : Stream
+    /// <summary>Whether a response head can leave its connection open for the next request: it must
+    /// say how long its body is, and that body must be one the client will actually read — not the
+    /// body of a HEAD, and not a body on a status that has none (1xx, 204, 304), which a client would
+    /// otherwise take for the start of the next response.</summary>
+    internal static bool CanKeepAlive(string head, string method)
+    {
+        if (!head.Contains("\r\nConnection: close\r\n", StringComparison.Ordinal)) return false;
+        if (!head.StartsWith("HTTP/1.1 ", StringComparison.Ordinal) || head.Length < 12 ||
+            !int.TryParse(head.AsSpan(9, 3), out int status)) return false;
+        long? length = null;
+        foreach (var line in head.Split("\r\n"))
+            if (line.StartsWith("Content-Length:", StringComparison.OrdinalIgnoreCase) &&
+                long.TryParse(line.AsSpan(15).Trim(), out long n)) length = n;
+        if (length is not { } bodyLength) return false;
+        if (bodyLength == 0) return true;
+        if (method.Equals("HEAD", StringComparison.OrdinalIgnoreCase)) return false;
+        return status >= 200 && status != 204 && status != 304;
+    }
+
+    /// <summary>Passes one response through, rewriting its head (everything up to the blank line) on
+    /// the way: every writer here sends the whole head in its first write. Made per request and
+    /// never closes the connection under it, which outlives the request.</summary>
+    private sealed class HeadRewriteStream : Stream
     {
         private readonly Stream _inner;
         private readonly Func<string, string> _rewrite;
         private bool _headDone;
 
-        public CorsHeadStream(Stream inner, Func<string, string> rewrite)
+        public HeadRewriteStream(Stream inner, Func<string, string> rewrite)
         {
             _inner = inner;
             _rewrite = rewrite;
@@ -665,8 +739,8 @@ public sealed class MockServer : IAsyncDisposable
         public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
         public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
         public override void SetLength(long value) => throw new NotSupportedException();
-        protected override void Dispose(bool disposing) { if (disposing) _inner.Dispose(); base.Dispose(disposing); }
-        public override ValueTask DisposeAsync() => _inner.DisposeAsync();
+        // The connection is the caller's to close.
+        public override ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 
     private static async Task WriteResponseAsync(Stream stream, int status, string contentType, string body,
@@ -781,7 +855,7 @@ public sealed class MockServer : IAsyncDisposable
     // the client presents an Authorization header, then accepts it (short-circuiting the handshake).
     // The challenge is sent keep-alive so the client can continue on the same connection.
     private async Task HandleWindowsAuthAsync(Stream stream, string method,
-        Dictionary<string, string> headers, string? clientCertSubject, CancellationToken ct)
+        Dictionary<string, string> headers, string? clientCertSubject, List<byte> carry, CancellationToken ct)
     {
         var currentHeaders = headers;
         string currentMethod = method;
@@ -802,7 +876,7 @@ public sealed class MockServer : IAsyncDisposable
             await stream.FlushAsync(ct);
             _onRequest?.Invoke(new(currentMethod, "/windows-auth", 401, clientCertSubject));
 
-            var next = await ReadRequestAsync(stream, ct);
+            var next = await ReadRequestAsync(stream, carry, RequestReadTimeout, ct);
             if (next is null) return;
             currentMethod = next.Value.Method;
             currentHeaders = next.Value.Headers;
@@ -891,15 +965,18 @@ public sealed class MockServer : IAsyncDisposable
 
     // ---------- request parsing ----------
 
-    private static async Task<(string Method, string Target, Dictionary<string, string> Headers, string Body)?>
-        ReadRequestAsync(Stream stream, CancellationToken outer)
+    /// <summary>Read one request. <paramref name="carry"/> holds bytes already read past the
+    /// previous request on this connection; whatever arrives past this one is left in it.</summary>
+    private static async Task<(string Method, string Target, Dictionary<string, string> Headers, string Body, bool Http10)?>
+        ReadRequestAsync(Stream stream, List<byte> carry, TimeSpan timeout, CancellationToken outer)
     {
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(outer);
-        deadline.CancelAfter(RequestReadTimeout);
+        deadline.CancelAfter(timeout);
         var ct = deadline.Token;
         var buffer = new byte[8192];
-        var acc = new List<byte>();
-        int headerEnd = -1;
+        var acc = new List<byte>(carry);
+        carry.Clear();
+        int headerEnd = acc.Count > 0 ? IndexOfHeaderEnd(acc) : -1;
         while (headerEnd < 0)
         {
             int n = await stream.ReadAsync(buffer, ct);
@@ -916,6 +993,7 @@ public sealed class MockServer : IAsyncDisposable
         if (requestLine.Length < 2) return null;
         string method = requestLine[0];
         string target = requestLine[1];
+        bool http10 = requestLine.Length > 2 && requestLine[2].Equals("HTTP/1.0", StringComparison.OrdinalIgnoreCase);
 
         var headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         for (int i = 1; i < lines.Length; i++)
@@ -929,9 +1007,9 @@ public sealed class MockServer : IAsyncDisposable
         {
             // A streamed body: decoded, so the echo shows what was sent rather than its framing,
             // and read to its end, so the mock never answers while the client is still sending.
-            var decoded = await ReadChunkedAsync(bodyBytes, stream, buffer, ct);
+            var decoded = await ReadChunkedAsync(bodyBytes, stream, buffer, carry, ct);
             if (decoded is null) return null;   // over the size limit
-            return (method, target, headers, Encoding.UTF8.GetString(decoded));
+            return (method, target, headers, Encoding.UTF8.GetString(decoded), http10);
         }
         int contentLength = headers.TryGetValue("Content-Length", out var clRaw) && int.TryParse(clRaw, out var cl) ? cl : 0;
         if (contentLength > MaxRequestBody || contentLength < 0) return null;
@@ -941,13 +1019,18 @@ public sealed class MockServer : IAsyncDisposable
             if (n == 0) break;
             bodyBytes.AddRange(new ArraySegment<byte>(buffer, 0, n));
         }
+        if (bodyBytes.Count > contentLength)
+        {
+            carry.AddRange(bodyBytes.Skip(contentLength));
+            bodyBytes.RemoveRange(contentLength, bodyBytes.Count - contentLength);
+        }
         string body = Encoding.UTF8.GetString(bodyBytes.ToArray());
-        return (method, target, headers, body);
+        return (method, target, headers, body, http10);
     }
 
     /// <summary>Decodes a chunked body: <paramref name="pending"/> holds what already arrived with
     /// the headers, the rest is read from <paramref name="stream"/>. Trailers are read and dropped.</summary>
-    private static async Task<byte[]?> ReadChunkedAsync(List<byte> pending, Stream stream, byte[] buffer, CancellationToken ct)
+    private static async Task<byte[]?> ReadChunkedAsync(List<byte> pending, Stream stream, byte[] buffer, List<byte> carry, CancellationToken ct)
     {
         var body = new List<byte>();
         int pos = 0;
@@ -998,6 +1081,7 @@ public sealed class MockServer : IAsyncDisposable
             body.AddRange(pending.GetRange(pos, size));
             pos += size + 2;
         }
+        if (pos < pending.Count) carry.AddRange(pending.Skip(pos));
         return body.ToArray();
     }
 

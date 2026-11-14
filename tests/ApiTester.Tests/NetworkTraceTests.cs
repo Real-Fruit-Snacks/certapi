@@ -51,7 +51,7 @@ public class NetworkTraceTests
         // ABSENCE of ConnectStart/HandshakeStart is the signal.
         //
         // Three things this test had to be built around, all learned by getting it wrong first:
-        //   * `MockServer` answers `Connection: close`, so nothing is ever reusable against it —
+        //   * `MockServer` answered `Connection: close` when this was written (it keeps connections now),
         //     a keep-alive server is required to observe reuse at all. Kestrel is one.
         //   * The trace is PROCESS-wide, so with an in-process server it also sees that server's
         //     own accept and handshake. Client-side facts are the ones with isServer=False.

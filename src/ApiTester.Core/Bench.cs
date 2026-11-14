@@ -21,7 +21,13 @@ public sealed record BenchResult(
     TimeSpan Elapsed, double RequestsPerSecond,
     double MinMs, double P50Ms, double P90Ms, double P99Ms, double MaxMs,
     IReadOnlyDictionary<int, int> StatusCounts,
-    IReadOnlyDictionary<string, int> ErrorCounts);
+    IReadOnlyDictionary<string, int> ErrorCounts)
+{
+    /// <summary>Responses that came back with <c>Connection: close</c>: each one ended its
+    /// connection, so the request after it paid a new connect (and TLS handshake) that pooling would
+    /// otherwise have saved. Zero is the normal case.</summary>
+    public int ClosedByServer { get; init; }
+}
 
 /// <summary>Latency and load measurement over the ordinary certificate-authenticated send path: the
 /// same <see cref="ApiClient"/> a single request uses, so what is measured is what the product
@@ -84,8 +90,12 @@ public static class Bench
                 if (ct.IsCancellationRequested && response.Error is { Kind: ApiErrorKind.None }) return null;
                 // A 3xx that was not followed is the endpoint answering, not failing.
                 bool ok = response.Error is null && response.StatusCode is >= 200 and < 400;
+                bool closed = false;
+                foreach (var h in response.Headers)
+                    if (h.Key.Equals("Connection", StringComparison.OrdinalIgnoreCase) &&
+                        h.Value.Contains("close", StringComparison.OrdinalIgnoreCase)) { closed = true; break; }
                 return new Sample(response.Elapsed.TotalMilliseconds, response.StatusCode,
-                                  response.Error?.Kind.ToString(), ok);
+                                  response.Error?.Kind.ToString(), ok, closed);
             }
             catch (OperationCanceledException) { return null; }
             catch (Exception ex)
@@ -94,7 +104,7 @@ public static class Bench
                 // it is one failed request, named by the exception that caused it.
                 // Timed to the throw, so it neither drags the latency figures toward zero nor
                 // pretends to be instant.
-                return new Sample(started.Elapsed.TotalMilliseconds, null, ex.GetType().Name, false);
+                return new Sample(started.Elapsed.TotalMilliseconds, null, ex.GetType().Name, false, false);
             }
         }
 
@@ -150,7 +160,7 @@ public static class Bench
     /// <summary>One measured request: how long it took, what it answered, and whether that counts as
     /// the endpoint working. A struct because a bench of thousands allocates one of these per request
     /// and none of them outlive the run.</summary>
-    private readonly record struct Sample(double Ms, int? Status, string? ErrorKind, bool Succeeded);
+    private readonly record struct Sample(double Ms, int? Status, string? ErrorKind, bool Succeeded, bool Closed);
 
     private static BenchResult Summarize(List<Sample> samples, TimeSpan elapsed)
     {
@@ -178,7 +188,10 @@ public static class Bench
                 .ToDictionary(g => g.Key, g => g.Count()),
             ErrorCounts: samples.Where(s => s.ErrorKind is not null)
                 .GroupBy(s => s.ErrorKind!).OrderByDescending(g => g.Count()).ThenBy(g => g.Key, StringComparer.Ordinal)
-                .ToDictionary(g => g.Key, g => g.Count(), StringComparer.Ordinal));
+                .ToDictionary(g => g.Key, g => g.Count(), StringComparer.Ordinal))
+        {
+            ClosedByServer = samples.Count(s => s.Closed)
+        };
     }
 
     /// <summary>The nearest-rank percentile of the full retained array. Exact rather than estimated:

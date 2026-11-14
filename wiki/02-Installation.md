@@ -67,7 +67,7 @@ Both check every file against the SHA-256 GitHub publishes for it before anythin
 
 ## Verifying a download
 
-The self-contained `.exe` files are large (~35–65 MB — megabytes) because they bundle the runtime — that's
+The self-contained `.exe` files are large (about 95 MB for `certapi.exe` and 160 MB for the app) because they bundle the runtime, already compiled for Windows x64 so they start fast — that's
 expected. To verify a file by hand, compare `Get-FileHash certapi.exe` with its line in the release's
 `SHA256SUMS.txt`. The executables are **not** code-signed unless your build pipeline signs them.
 

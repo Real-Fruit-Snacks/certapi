@@ -27,6 +27,9 @@ public static class MockCommand
           --mtls            HTTPS that also requires a client certificate (any cert is accepted)
           --cert-dir <dir>  Where to write generated certificates (default ./certapi-mock-certs)
           -q, --quiet       Don't log each request
+          --no-keep-alive   One request per connection, every response Connection: close, as a
+                            server that does not keep connections answers (by default a
+                            connection is kept for the next request)
           --tls-mode <m>    Serve a deliberately broken server certificate, so a client's own
                             error paths can be exercised from a terminal: valid (default),
                             expired, wrong-host, or self-signed. Needs --tls or --mtls
@@ -105,6 +108,7 @@ public static class MockCommand
         var mode = mtls ? MockTlsMode.Mtls : tls ? MockTlsMode.Https : MockTlsMode.Http;
         string certDir = args.Value("--cert-dir") ?? Path.Combine(Directory.GetCurrentDirectory(), "certapi-mock-certs");
         bool quiet = args.Flag("-q", "--quiet");
+        bool noKeepAlive = args.Flag("--no-keep-alive");
 
         string? harFile = args.Value("--har");
         string? noMatchRaw = args.Value("--no-match-status");
@@ -203,7 +207,7 @@ public static class MockCommand
         MockServer server;
         try
         {
-            server = MockServer.Start(port, mode, serverCert, onRequest, replay, scenario, cors);
+            server = MockServer.Start(port, mode, serverCert, onRequest, replay, scenario, cors, keepAlive: !noKeepAlive);
         }
         catch (System.Net.Sockets.SocketException ex)
         {

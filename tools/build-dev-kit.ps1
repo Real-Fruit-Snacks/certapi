@@ -233,7 +233,8 @@ $downloads
     })
     if ($nupkgs.Count -eq 0) { throw 'the restore fetched no packages' }
     $nupkgs | Copy-Item -Destination (Join-Path $offline 'nuget')
-    foreach ($pack in 'microsoft.netcore.app.runtime.win-x64', 'microsoft.windowsdesktop.app.runtime.win-x64') {
+    # The ReadyToRun compiler (PublishReadyToRun in both exes) comes as a pack of its own.
+    foreach ($pack in 'microsoft.netcore.app.runtime.win-x64', 'microsoft.windowsdesktop.app.runtime.win-x64', 'microsoft.netcore.app.crossgen2.win-x64') {
         if (-not (Test-Path -LiteralPath (Join-Path $offline "nuget\$pack.$runtime.nupkg"))) {
             throw "$pack $runtime is not among the restored packages, so the kit could not publish the exes"
         }

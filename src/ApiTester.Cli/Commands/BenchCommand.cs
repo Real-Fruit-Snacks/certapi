@@ -76,6 +76,8 @@ public static class BenchCommand
           endpoint instead of "how long the first request takes, from cold". A request routed
           through a proxy still opens its own connection every time, because the proxied path
           cannot be pooled — see --proxy above.
+          A server that answers 'Connection: close' ends each connection after one response, so
+          every request pays a new connection; the note under the figures says when that happened.
 
         A bench never writes anything: no known-good results, no captured tokens, no state
         file. The workspace is read for {{variables}}, saved requests, and pinned certificates
@@ -112,6 +114,15 @@ public static class BenchCommand
     private const string ConnectionCaveat =
         "connections are pooled and reused, so only the first request to an origin pays the TCP " +
         "connect and TLS handshake.";
+
+    /// <summary>The note that fits what actually happened: the pooling caveat, unless the server
+    /// closed connections, in which case saying "pooled and reused" would be false.</summary>
+    internal static string ConnectionNote(BenchResult result) =>
+        result.ClosedByServer == 0
+            ? ConnectionCaveat
+            : $"the server answered 'Connection: close' on {result.ClosedByServer} of {result.Sent} responses, so " +
+              (result.ClosedByServer >= result.Sent ? "every request" : "those requests") +
+              " opened a new connection (and TLS handshake), and the latencies include it.";
 
     public static int Run(Args args, TextWriter stdout, TextWriter stderr, CliServices services)
     {
@@ -396,7 +407,7 @@ public static class BenchCommand
             stdout.WriteLine("  errors     " + string.Join(" · ",
                 result.ErrorCounts.OrderByDescending(k => k.Value).ThenBy(k => k.Key, StringComparer.Ordinal)
                     .Select(k => $"{k.Key} × {k.Value}")));
-        stdout.WriteLine("  note: " + ConnectionCaveat);
+        stdout.WriteLine("  note: " + ConnectionNote(result));
     }
 
     /// <param name="connections">The connections this run used, or null when --pool was not asked
@@ -427,7 +438,8 @@ public static class BenchCommand
                 .ToDictionary(k => k.Key, k => k.Value),
             // Carried in the machine-readable form too: a dashboard that plots these numbers has to be
             // able to label what they include.
-            ["notes"] = new[] { ConnectionCaveat }
+            ["closedByServer"] = result.ClosedByServer,
+            ["notes"] = new[] { ConnectionNote(result) }
         };
 
         if (connections is not null)

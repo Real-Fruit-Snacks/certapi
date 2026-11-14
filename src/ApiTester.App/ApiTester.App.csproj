@@ -26,7 +26,12 @@
     <ApplicationIcon>icon.ico</ApplicationIcon>
     <PublishSingleFile>true</PublishSingleFile>
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
-    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+    <!-- Speed over download size: a compressed bundle is unpacked into memory on every launch, and
+         without ReadyToRun every method is compiled as it is first called. Measured on Windows x64:
+         the command line's `send` 240 ms → 134 ms and peak memory 89 → 46 MB; the app's window
+         1.0 s → 0.73 s and 225 → 131 MB. The exes are about 2.5 times larger for it. -->
+    <EnableCompressionInSingleFile>false</EnableCompressionInSingleFile>
+    <PublishReadyToRun>true</PublishReadyToRun>
   </PropertyGroup>
 
   <Import Project="..\MsQuicBesideExe.targets" />

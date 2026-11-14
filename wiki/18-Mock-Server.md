@@ -260,6 +260,20 @@ can serve a public endpoint, a locked-down one and one that is broken:
 
 A preflight is matched to the route its real request would reach, by the method it asks about.
 
+## Connections
+
+The mock keeps a connection open for the next request whenever the response can share it — one
+framed by its length, not a stream, a WebSocket, a HEAD, a 204/304 or a route's deliberate fault —
+so `bench` against it measures requests rather than handshakes (over HTTPS, the difference is
+several times the throughput). A connection idle for 10 seconds is closed. `--no-keep-alive`
+answers every response with `Connection: close`, to see how a client copes with a server that does
+not keep connections:
+
+```powershell
+certapi mock --tls --no-keep-alive
+certapi bench https://127.0.0.1:8770/ -n 500 --insecure    # the note says every request paid a handshake
+```
+
 ## Modes and certificates
 
 - **`--http`** (default) — plain HTTP; hit it with anything (curl, a browser, the app), no

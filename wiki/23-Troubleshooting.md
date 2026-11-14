@@ -293,10 +293,9 @@ client per request. `--parallel <n>` sends several at a time — those genuinely
 each, so read requests against connections rather than counting connections alone. `--json` gives
 the same answer for a script.
 
-`certapi bench --pool` reports the same thing for a load run. Bench has always printed a note
-saying connections are pooled and reused; `--pool` measures it for the run that just happened,
-which matters because a server closing connections silently makes every request pay a handshake and
-changes what the latency figures mean.
+`certapi bench --pool` reports the same thing for a load run. Bench's own note says whether the
+server answered `Connection: close` — then every request paid a new connection and handshake,
+which changes what the latency figures mean — and `--pool` shows the connections themselves.
 
 **How this is known, and its two limits.** It reads the runtime's own HTTP event source — no
 driver, no administrator rights, no private API. `ConnectionEstablished` gives a connection's

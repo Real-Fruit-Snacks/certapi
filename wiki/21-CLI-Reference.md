@@ -758,7 +758,10 @@ latency array, not an approximation**, so p99 means p99.
 and the TLS handshake; `--warmup` removes that cost from the figures, and `--pool` shows whether it
 happened. A request routed through a proxy opens its own connection every time — the proxied path
 cannot be pooled. The command prints this caveat under every summary and carries it in the `--json`
-envelope, because a latency figure without it is misleading.
+envelope, because a latency figure without it is misleading. When the server answered
+`Connection: close`, the note says so instead — "the server answered 'Connection: close' on 8 of 8
+responses, so every request opened a new connection (and TLS handshake)" — and `--json` gives the
+count as `closedByServer`.
 
 ---
 
@@ -873,6 +876,7 @@ A local test server to fire requests at. Runs until Ctrl+C. See [Mock Server](18
 | `--mtls` | off | HTTPS that **also requires** a client certificate. Any certificate is accepted; the point is to exercise the presenting side |
 | `--cert-dir <dir>` | `./certapi-mock-certs` | Where generated certificates are written |
 | `-q, --quiet` | off | Do not log each request |
+| `--no-keep-alive` | off | One request per connection: every response says `Connection: close`, as a server that does not keep connections would. By default a connection is kept for the next request whenever the response is framed by its length (not a stream, a WebSocket, a HEAD, a 204/304, or a route's deliberate fault), so a client or `bench` measures requests rather than handshakes |
 | `--cors [<origins>]` | off | Behave like a server with a CORS policy: answer preflights itself (204, or 403 for an origin it does not allow) and put `Access-Control-*` headers on every response to a page — the exact origin, credentials allowed, every header exposed, `Vary: Origin`. With no value any origin is allowed; a comma-separated list (repeatable) allows only those, and any other origin gets **no** CORS headers, so a browser blocks it — a front end can be tested against both answers. Applies to declared routes and replays too. Without `--cors` the built-in routes answer `Access-Control-Allow-Origin: *`, as before |
 | `--cors-headers <list>` | echo | The request headers a preflight is allowed, comma-separated (repeatable), instead of echoing what it asked for. Only with `--cors` |
 | `--cors-methods <list>` | the one asked + common | The methods a preflight is allowed, instead of the one it asked about plus GET, HEAD, POST, PUT, PATCH, DELETE and OPTIONS. Only with `--cors` |

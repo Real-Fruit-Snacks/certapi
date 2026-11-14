@@ -81,8 +81,11 @@ public class BenchCliTests
         Assert.Contains("p99", r.Out);
         Assert.Contains("req/s", r.Out);
         Assert.Contains("200", r.Out);          // the status line
-        // The one thing a user must not be misled about: what the number includes.
-        Assert.Contains("connections are pooled and reused", r.Out);
+        // The one thing a user must not be misled about: what the number includes. This test
+        // server answers 'Connection: close', so every request paid a new connection, and the
+        // note says exactly that rather than claiming the pool was used.
+        Assert.Contains("'Connection: close' on 8 of 8 responses", r.Out);
+        Assert.DoesNotContain("pooled and reused", r.Out);
     }
 
     [Fact]
@@ -103,7 +106,8 @@ public class BenchCliTests
         foreach (var key in new[] { "min", "p50", "p90", "p99", "max" })
             Assert.True(latency.GetProperty(key).GetDouble() > 0, $"{key} was not measured");
         Assert.Equal(8, root.GetProperty("statusCounts").GetProperty("200").GetInt32());
-        Assert.Contains("connections are pooled and reused",
+        Assert.Equal(8, root.GetProperty("closedByServer").GetInt32());
+        Assert.Contains("every request opened a new connection",
             string.Join(" ", root.GetProperty("notes").EnumerateArray().Select(n => n.GetString())));
     }
 
