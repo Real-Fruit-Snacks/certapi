@@ -115,7 +115,7 @@ public class MockCertificateReuseTests : IDisposable
     {
         if (!System.Net.Sockets.Socket.OSSupportsIPv6) return;
         await using var mock = MockServer.Start(0, MockTlsMode.Http);
-        using var http = new System.Net.Http.HttpClient();
+        using var http = new System.Net.Http.HttpClient(new System.Net.Http.HttpClientHandler { UseProxy = false });
         var body = await http.GetStringAsync($"http://[::1]:{mock.Port}/echo");
         Assert.Contains("certapi mock", body);
     }
