@@ -76,8 +76,14 @@ public static class CliCert
             NoteMissingIntermediates(certFile, cert.Thumbprint!, stderr);
         }
         else if (certQuery is null) return null;
-        else cert = CertPicker.Resolve(services.ListCertificates(localMachine),
-            certQuery.Length == 0 ? null : certQuery, certIssuer, certSerial, stderr).Certificate;
+        else
+        {
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            var candidates = services.ListCertificates(localMachine);
+            services.Log.Debug($"certificate store: {candidates.Count} with a private key in {(localMachine ? "CurrentUser and LocalMachine" : "CurrentUser")}, read in {clock.Elapsed.TotalMilliseconds:0} ms");
+            cert = CertPicker.Resolve(candidates,
+                certQuery.Length == 0 ? null : certQuery, certIssuer, certSerial, stderr).Certificate;
+        }
 
         var unlocked = WithPin(cert, pin, stderr);
         // A PIN makes a copy bound to the unlocked key; it is this invocation's too.

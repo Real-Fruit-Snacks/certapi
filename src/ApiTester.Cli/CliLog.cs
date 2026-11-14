@@ -12,14 +12,38 @@ public sealed class CliLog : IDisposable
     private readonly StreamWriter? _file;
     private readonly object _lock = new();
 
+    // Time since the process started, so a line says where in the run it happened — including the
+    // runtime's own start-up, which the first line's offset shows. Measured once, when diagnostics
+    // are on at all; a monotonic clock from there.
+    private readonly TimeSpan _startOffset;
+    private readonly long _created = System.Diagnostics.Stopwatch.GetTimestamp();
+
     public bool DebugEnabled { get; }
+
+    /// <summary>Whether a debug line goes anywhere: --debug, or a --log-file.</summary>
+    public bool Active => DebugEnabled || _file is not null;
 
     private CliLog(bool debug, StreamWriter? file, TextWriter stderr)
     {
         DebugEnabled = debug;
         _file = file;
         _stderr = stderr;
+        if (debug || file is not null)
+        {
+            try
+            {
+                using var self = System.Diagnostics.Process.GetCurrentProcess();
+                var sinceStart = DateTime.Now - self.StartTime;
+                _startOffset = sinceStart > TimeSpan.Zero && sinceStart < TimeSpan.FromMinutes(10) ? sinceStart : TimeSpan.Zero;
+            }
+            catch { _startOffset = TimeSpan.Zero; }
+        }
     }
+
+    /// <summary>Time since the process started.</summary>
+    public TimeSpan Elapsed => _startOffset + System.Diagnostics.Stopwatch.GetElapsedTime(_created);
+
+    private string Stamp() => $"[+{Elapsed.TotalSeconds.ToString("0.000", System.Globalization.CultureInfo.InvariantCulture)}s]";
 
     /// <summary>Open the sink. A log file that cannot be opened is a one-line warning, not an error.</summary>
     public static CliLog Create(bool debug, string? logFilePath, TextWriter stderr)
@@ -43,12 +67,14 @@ public sealed class CliLog : IDisposable
     /// <summary>A debug diagnostic: stderr under --debug, log file always.</summary>
     public void Debug(string message)
     {
-        if (DebugEnabled) _stderr.WriteLine("debug: " + message);
-        ToFile("debug", message);
+        if (!DebugEnabled && _file is null) return;
+        string stamp = Stamp();
+        if (DebugEnabled) _stderr.WriteLine($"debug: {stamp} {message}");
+        ToFile("debug", message, stamp);
     }
 
     /// <summary>Record a line the command wrote to stderr (notes, warnings, errors).</summary>
-    public void Note(string line) => ToFile("stderr", line);
+    public void Note(string line) => ToFile("stderr", line, _file is null ? null : Stamp());
 
     /// <summary>The error text for an exception: full chain and stack under --debug.</summary>
     public string Describe(Exception ex) => DebugEnabled ? ex.ToString() : ex.Message;
@@ -56,12 +82,12 @@ public sealed class CliLog : IDisposable
     /// <summary>Wrap stderr so every completed line is also recorded in the log file.</summary>
     public TextWriter WrapStderr(TextWriter stderr) => _file is null ? stderr : new TeeWriter(stderr, this);
 
-    private void ToFile(string level, string message)
+    private void ToFile(string level, string message, string? stamp)
     {
         if (_file is null) return;
         lock (_lock)
         {
-            try { _file.WriteLine($"{DateTime.UtcNow:yyyy-MM-dd'T'HH:mm:ss.fff'Z'} [{level}] {message}"); }
+            try { _file.WriteLine($"{DateTime.UtcNow:yyyy-MM-dd'T'HH:mm:ss.fff'Z'} [{level}] {stamp} {message}"); }
             catch { /* never break the command over logging */ }
         }
     }

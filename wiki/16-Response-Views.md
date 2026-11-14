@@ -15,8 +15,9 @@ Every way the app shows you a response, plus copying, saving, and themes.
 | **Network** | A browser-style trace of every HTTP (Hypertext Transfer Protocol) call (below). |
 
 **A large body is shown in part.** Raw shows the first 1 MB and Pretty the first 512 KB, ending
-with a line that says how much is left out. A body over 4 MB is shown as received, without
-formatting, and a binary body's hex dump covers its first 64 KB. JSON and XML are coloured up to
+with a line that says how much is left out. A JSON body over 4 MB is formatted only as far as
+Pretty shows it — the rest is not read for that, so not checked either; any other body over 4 MB is
+shown as received, without formatting. A binary body's hex dump covers its first 64 KB. JSON and XML are coloured up to
 64,000 characters and shown in one colour beyond that. **Copy body** and **Save…** always take the
 whole body. The app lays out every character it shows on the window's own thread, so showing all
 of a large body left the window not responding until it finished.

@@ -33,7 +33,23 @@ public class CliLogTests
 
         using var loud = CliLog.Create(debug: true, logFilePath: null, se);
         loud.Debug("visible");
-        Assert.Contains("debug: visible", se.ToString());
+        Assert.Matches(@"^debug: \[\+\d+\.\d{3}s\] visible\r?$", se.ToString().Split('\n')[0]);
+    }
+
+    [Fact]
+    public void Debug_timestamps_count_up_from_the_start_of_the_process()
+    {
+        var se = new StringWriter();
+        using var log = CliLog.Create(debug: true, logFilePath: null, se);
+        log.Debug("first");
+        Thread.Sleep(30);
+        log.Debug("second");
+        var stamps = System.Text.RegularExpressions.Regex.Matches(se.ToString(), @"\[\+(\d+\.\d{3})s\]")
+            .Select(m => double.Parse(m.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture)).ToList();
+        Assert.Equal(2, stamps.Count);
+        Assert.True(stamps[1] - stamps[0] >= 0.025, $"{stamps[0]} then {stamps[1]}");
+        // From the process's own start, not the log's: the test host has been running a while.
+        Assert.True(stamps[0] > 0.0, $"first stamp {stamps[0]}");
     }
 
     [Fact]
@@ -50,8 +66,8 @@ public class CliLogTests
                 tee.WriteLine("note: something happened");
             }
             var text = File.ReadAllText(path);
-            Assert.Contains("[debug] a diagnostic", text);
-            Assert.Contains("[stderr] note: something happened", text);
+            Assert.Matches(@"\[debug\] \[\+\d+\.\d{3}s\] a diagnostic", text);
+            Assert.Matches(@"\[stderr\] \[\+\d+\.\d{3}s\] note: something happened", text);
             Assert.Contains("something happened", se.ToString());   // still reaches real stderr
 
             using (var again = CliLog.Create(debug: false, path, new StringWriter()))
@@ -74,7 +90,7 @@ public class CliLogTests
             using var log = CliLog.Create(debug: true, Path.Combine(blocker, "x.log"), se);
             log.Debug("still works");
             Assert.Contains("warning: could not open log file", se.ToString());
-            Assert.Contains("debug: still works", se.ToString());
+            Assert.Matches(@"debug: \[\+\d+\.\d{3}s\] still works", se.ToString());
         }
         finally { File.Delete(blocker); }
     }

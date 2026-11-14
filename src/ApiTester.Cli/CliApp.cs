@@ -231,6 +231,8 @@ public static class CliApp
 
             using var log = CliLog.Create(g.Debug, g.LogFile, stderr);
             services.Log = log;
+            CliWorkspace.Debug = log.Active ? log.Debug : null;
+            LogStart(log, g.Remaining);
             var err = log.WrapStderr(stderr);
             TransportFlags.Warn = err.WriteLine;
             // The streaming commands trace too: a hanging WebSocket handshake is exactly the case
@@ -268,6 +270,16 @@ public static class CliApp
         return Run(args, stdout, stderr, bodyOut, services);
     }
 
+    /// <summary>The first diagnostic line: what is running, on what, and — through its timestamp —
+    /// how long the runtime took to reach this point.</summary>
+    private static void LogStart(CliLog log, string[] remaining)
+    {
+        if (!log.DebugEnabled) return;
+        var version = typeof(CliApp).Assembly.GetName().Version;
+        log.Debug($"certapi {version?.ToString(3)} {remaining.FirstOrDefault() ?? ""} · .NET {Environment.Version} · " +
+                  $"{System.Runtime.InteropServices.RuntimeInformation.RuntimeIdentifier}");
+    }
+
     private static bool IsStreamingCommand(string arg) =>
         arg.Equals("mcp", StringComparison.OrdinalIgnoreCase) ||
         arg.Equals("fuzz", StringComparison.OrdinalIgnoreCase) ||
@@ -293,6 +305,8 @@ public static class CliApp
 
         using var log = CliLog.Create(g.Debug, g.LogFile, stderr);
         services.Log = log;
+        CliWorkspace.Debug = log.Active ? log.Debug : null;
+        LogStart(log, g.Remaining);
         var err = log.WrapStderr(stderr);
         // Every command names the NO_PROXY entries it cannot honour, not only the streaming ones.
         TransportFlags.Warn = err.WriteLine;

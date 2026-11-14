@@ -27,9 +27,27 @@ if (OperatingSystem.IsWindows())
     try { Console.OutputEncoding = new System.Text.UTF8Encoding(false); outputSwitched = true; }
     catch (IOException) { /* no console to configure */ }
 }
+// Console.Out writes through a 256-byte buffer and flushes after every write, and on Windows each
+// flush is a system call: a 60 MB formatted body (--pretty, --json) going to a file or a pipe took
+// over ten seconds, against one second for the same bytes as a raw body. Redirected output gets a
+// 64 KB buffer instead — still flushed after every write, so streamed output (sse, ws, a server's
+// log, an MCP reply) appears as it happens. A console keeps the console's own writer.
+TextWriter stdout = Console.Out;
+if (Console.IsOutputRedirected)
+    stdout = TextWriter.Synchronized(new StreamWriter(Console.OpenStandardOutput(), Console.Out.Encoding, bufferSize: 64 * 1024)
+    {
+        AutoFlush = true
+    });
+// The same for stderr, which carries --trace-verbose and --debug's full output when redirected.
+TextWriter stderr = Console.Error;
+if (Console.IsErrorRedirected)
+    stderr = TextWriter.Synchronized(new StreamWriter(Console.OpenStandardError(), Console.Error.Encoding, bufferSize: 64 * 1024)
+    {
+        AutoFlush = true
+    });
 try
 {
-    return CliApp.Run(args, Console.In, Console.Out, Console.Error, Console.OpenStandardOutput(),
+    return CliApp.Run(args, Console.In, stdout, stderr, Console.OpenStandardOutput(),
                       new CliServices
                       {
                           Cancel = cts.Token,
@@ -39,6 +57,8 @@ try
 }
 finally
 {
+    try { stdout.Flush(); } catch (IOException) { /* the reader went away */ }
+    try { stderr.Flush(); } catch (IOException) { /* the reader went away */ }
     if (OperatingSystem.IsWindows())
     {
         try { if (inputSwitched) Console.InputEncoding = inputBefore; } catch (IOException) { }

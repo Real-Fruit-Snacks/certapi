@@ -27,18 +27,54 @@ public class ResponseViewTests
     }
 
     [Fact]
-    public void A_body_too_large_to_format_is_shown_from_the_start_as_received()
+    public void A_large_json_body_is_formatted_for_as_much_as_the_view_shows()
     {
         var json = Encoding.UTF8.GetBytes("[" + string.Join(",", Enumerable.Repeat("{\"name\":\"café\",\"n\":1}", 250_000)) + "]");
         Assert.True(json.Length > ResponseView.MaxFormatBytes);
 
         var shown = ResponseView.Pretty(With(json, "application/json"));
 
+        Assert.Equal(BodyKind.Json, shown.Kind);
+        Assert.StartsWith("[" + System.Environment.NewLine + "  {" + System.Environment.NewLine + "    \"name\": \"café\",", shown.Text);
+        Assert.Contains("is formatted here in part", shown.Text);
+        Assert.True(shown.Text.Length < ResponseView.MaxPrettyChars + 300);
+        Assert.DoesNotContain('\uFFFD', shown.Text);   // the cut did not split the é
+        // What is shown is exactly the start of the full formatting.
+        string full = new ResponseFormatter().Format(With(json, "application/json")).Text;
+        Assert.StartsWith(shown.Text[..shown.Text.IndexOf("\n\n… this", StringComparison.Ordinal)], full);
+    }
+
+    [Fact]
+    public void A_large_body_that_is_not_json_from_the_start_is_shown_as_received()
+    {
+        var text = Encoding.UTF8.GetBytes("not json: [" + string.Join(",", Enumerable.Repeat("{\"name\":\"café\",\"n\":1}", 250_000)) + "]");
+        Assert.True(text.Length > ResponseView.MaxFormatBytes);
+
+        var shown = ResponseView.Pretty(With(text, "application/json"));
+
         Assert.Equal(BodyKind.Text, shown.Kind);
-        Assert.StartsWith("[{\"name\":\"café\"", shown.Text);   // as received: not indented
+        Assert.StartsWith("not json: [{\"name\":\"café\"", shown.Text);   // as received: not indented
         Assert.Contains("is too large to format here", shown.Text);
         Assert.True(shown.Text.Length < ResponseView.MaxPrettyChars + 300);
-        Assert.DoesNotContain('�', shown.Text);   // the cut did not split the é
+        Assert.DoesNotContain('\uFFFD', shown.Text);
+    }
+
+    [Theory]
+    [InlineData("a")]
+    [InlineData("é")]
+    [InlineData("😀")]
+    [InlineData("中")]
+    public void A_cut_formatted_view_never_ends_in_half_a_character(string ch)
+    {
+        // Strings of one repeated character, so some cut lands inside it whatever its width.
+        foreach (int count in new[] { 1_100_000, 1_100_001, 1_100_002, 1_100_003 })
+        {
+            var json = Encoding.UTF8.GetBytes("[\"" + string.Concat(Enumerable.Repeat(ch, count / Encoding.UTF8.GetByteCount(ch) + 1)) + "\"]");
+            if (json.Length <= ResponseView.MaxFormatBytes) json = Encoding.UTF8.GetBytes("[" + string.Join(",", Enumerable.Repeat("\"" + new string('x', 1000) + ch + "\"", 5000)) + "]");
+            var shown = ResponseView.Pretty(With(json, "application/json"));
+            Assert.Equal(BodyKind.Json, shown.Kind);
+            Assert.DoesNotContain('\uFFFD', shown.Text);
+        }
     }
 
     [Fact]

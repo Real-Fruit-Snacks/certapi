@@ -360,6 +360,20 @@ full trace — resolved URL (Uniform Resource Locator),
 headers (Authorization masked), certificate lookup, TLS version/cipher, timings, and full stack
 traces. In the app, the **Diagnostics** response tab shows the connection details.
 
+Every line says when it happened, counted from the start of the process, which makes "where did
+the time go?" a matter of reading the gaps:
+
+```
+debug: [+0.048s] certapi 1.99.0 send · .NET 10.0.15 · win-x64
+debug: [+0.052s] workspace: C:\Users\me\AppData\Roaming\CertApiTester\state.json (12 KB) read in 3 ms
+debug: [+0.072s] certificate store: 6 with a private key in CurrentUser, read in 16 ms
+debug: [+0.074s] GET https://api.example.com/orders
+debug: [+0.311s] result: 200 OK · 230 ms · 1.2 KB
+```
+
+The first offset is the runtime starting up (about 50 ms); a large gap before `result:` is the
+network or the server, which `--timing` breaks down into DNS, connect, TLS and waiting.
+
 ## "Which of my certificates will this server take?"
 
 Ask the server. `certapi tls` handshakes with any TLS service — HTTPS, LDAPS, SMTP with STARTTLS, a

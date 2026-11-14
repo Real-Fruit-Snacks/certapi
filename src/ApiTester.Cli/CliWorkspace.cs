@@ -4,7 +4,28 @@ namespace ApiTester.Cli;
 
 public static class CliWorkspace
 {
+    /// <summary>Where the load reports what it read and how long that took (the --debug log). Per
+    /// async flow, so two commands running in one process (tests, an MCP host) never write into
+    /// each other's log.</summary>
+    public static Action<string>? Debug { get => _debug.Value; set => _debug.Value = value; }
+    private static readonly AsyncLocal<Action<string>?> _debug = new();
+
     public static AppState Load(string? workspacePath, string liveStatePath, TextWriter? warn = null)
+    {
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        AppState state = LoadCore(workspacePath, liveStatePath);
+        if (Debug is { } debug)
+        {
+            string path = workspacePath ?? liveStatePath;
+            debug(File.Exists(path)
+                ? $"workspace: {path} ({new FileInfo(path).Length / 1024} KB) read in {clock.Elapsed.TotalMilliseconds:0} ms"
+                : $"workspace: none at {path}");
+        }
+        ReportSecretWarnings(state, warn);
+        return state;
+    }
+
+    private static AppState LoadCore(string? workspacePath, string liveStatePath)
     {
         AppState state;
         if (workspacePath is null)
@@ -17,7 +38,6 @@ public static class CliWorkspace
                 throw new CliDataException($"Workspace file not found: {workspacePath}");
             state = SafeLoad(workspacePath);
         }
-        ReportSecretWarnings(state, warn);
         return state;
     }
 

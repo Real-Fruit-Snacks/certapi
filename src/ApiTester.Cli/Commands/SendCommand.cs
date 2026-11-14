@@ -1124,6 +1124,15 @@ public static class SendCommand
                              "the first 1 MB is shown as received. -o <file> saves all of it; -o - --pretty formats all of it here.");
             return;
         }
+        // A JSON body that is not going to a console is written as it is formatted, in chunks,
+        // rather than built into one string first — several times the body's size for a big one.
+        if (!consoleLimits && ResponseFormatter.TriesJsonFirst(response) && ResponseFormatter.IsWellFormedJson(response.Body))
+        {
+            using (var chunks = new TextWriterBufferWriter(stdout))
+                ResponseFormatter.TryWriteJson(response.Body, chunks);
+            stdout.WriteLine();
+            return;
+        }
         string text = new ResponseFormatter().Format(response).Text;
         if (consoleLimits && text.Length > ConsoleBody.MaxBytes)
         {

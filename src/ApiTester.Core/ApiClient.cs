@@ -418,11 +418,16 @@ public sealed class ApiClient : IDisposable
                     }
                 }
 
-                // With a body cap the body is streamed and cut, so it is never buffered whole first.
-                using var response = await http.SendAsync(
-                    message,
-                    transport.MaxResponseBytes is null ? HttpCompletionOption.ResponseContentRead : HttpCompletionOption.ResponseHeadersRead,
-                    cancellationToken);
+                // The body is read here rather than by HttpClient, which buffers it and then copies
+                // it — twice its size in memory at the end of a large download. With a cap it is
+                // also cut as it streams, so it is never buffered whole first.
+                long hopSent = Stopwatch.GetTimestamp();
+                using var response = await http.SendAsync(message, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+                // Read before anything else looks at the response, as HttpClient did: a redirect's
+                // body too, so its connection goes back to the pool and its hop time includes it.
+                byte[]? body = transport.MaxResponseBytes is null
+                    ? await ReadBodyAsync(response.Content, request.Timeout - Stopwatch.GetElapsedTime(hopSent), cancellationToken)
+                    : null;
 
                 // Applied before the redirect decision below, so the next hop carries what this one
                 // just set.
@@ -503,14 +508,20 @@ public sealed class ApiClient : IDisposable
                     continue;
                 }
 
-                stopwatch.Stop();
-
                 bool truncated = false;
                 byte[] bytes;
                 if (transport.MaxResponseBytes is long cap)
+                {
+                    stopwatch.Stop();
                     (bytes, truncated) = await ReadCappedAsync(response.Content, cap, cancellationToken);
+                }
                 else
-                    bytes = await response.Content.ReadAsByteArrayAsync(cancellationToken);
+                {
+                    // As before: the time reported includes the body, and the request's timeout
+                    // covers it — HttpClient's own timeout stops at the headers now.
+                    bytes = body!;
+                    stopwatch.Stop();
+                }
                 var headers = response.Headers
                     .Concat(response.Content.Headers)
                     .SelectMany(h => h.Value.Select(v => new KeyValuePair<string, string>(h.Key, v)))
@@ -1044,6 +1055,52 @@ public sealed class ApiClient : IDisposable
     // host:port, lowercased, IPv6 brackets stripped, computed from a Uri on both the recording side
     // (inside the ConnectCallback above) and the lookup side (BuildConnection in SendOnceAsync) so
     // the two can never disagree about which origin a connection belongs to.
+    /// <summary>The whole body, held once: read straight into an array of the declared length when
+    /// there is one (growing past it only for a decoded body that turns out longer), otherwise
+    /// into a growing buffer handed back without a further copy when it is already the right size.
+    /// Failures read as HttpClient's own would have: running out of <paramref name="remaining"/>
+    /// is a timeout, and a connection that ends mid-body is an <see cref="HttpRequestException"/>.</summary>
+    private static async Task<byte[]> ReadBodyAsync(HttpContent content, TimeSpan remaining, CancellationToken ct)
+    {
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        if (remaining != Timeout.InfiniteTimeSpan)
+            deadline.CancelAfter(remaining > TimeSpan.Zero ? remaining : TimeSpan.FromMilliseconds(1));
+        try
+        {
+            await using var stream = await content.ReadAsStreamAsync(deadline.Token).ConfigureAwait(false);
+            long? declared = content.Headers.ContentLength;
+            byte[] exact = declared is long n && n >= 0 && n <= Array.MaxLength ? new byte[n] : Array.Empty<byte>();
+            int filled = 0;
+            while (filled < exact.Length)
+            {
+                int read = await stream.ReadAsync(exact.AsMemory(filled), deadline.Token).ConfigureAwait(false);
+                if (read == 0) break;
+                filled += read;
+            }
+            if (filled < exact.Length) return exact.AsSpan(0, filled).ToArray();
+
+            // Without a length, or with more than it said (a decoded body): read on to the end.
+            var chunk = new byte[81920];
+            int more = declared is null ? 0 : await stream.ReadAsync(chunk, deadline.Token).ConfigureAwait(false);
+            if (declared is not null && more == 0) return exact;
+            using var rest = new MemoryStream(capacity: Math.Max(chunk.Length, exact.Length * 2));
+            rest.Write(exact, 0, exact.Length);
+            if (more > 0) rest.Write(chunk, 0, more);
+            int got;
+            while ((got = await stream.ReadAsync(chunk, deadline.Token).ConfigureAwait(false)) > 0)
+                rest.Write(chunk, 0, got);
+            return rest.Length == rest.Capacity ? rest.GetBuffer() : rest.ToArray();
+        }
+        catch (OperationCanceledException ex) when (!ct.IsCancellationRequested)
+        {
+            throw new TaskCanceledException("The request timed out.", ex);
+        }
+        catch (IOException ex)
+        {
+            throw new HttpRequestException(HttpRequestError.ResponseEnded, "Error while copying content to a stream.", ex);
+        }
+    }
+
     /// <summary>Reads at most <paramref name="cap"/> bytes of a body and reports whether more was
     /// there. The rest is never buffered: the connection is dropped instead of being drained.</summary>
     private static async Task<(byte[] Bytes, bool Truncated)> ReadCappedAsync(

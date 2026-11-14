@@ -63,8 +63,8 @@ These work on **every** command, before or after its own options.
 
 | Option | Default | What it does |
 |---|---|---|
-| `--debug` | off | Verbose diagnostics on stderr: what was resolved, which certificate was chosen, which proxy, what was negotiated. The first thing to reach for when a command does something you did not expect |
-| `--log-file <path>` | none | Also append every diagnostic and all stderr output to this file; the screen still shows them |
+| `--debug` | off | Verbose diagnostics on stderr: what was resolved, which certificate was chosen, which proxy, what was negotiated. The first thing to reach for when a command does something you did not expect. Each line carries the time since the process started — `debug: [+0.059s] GET https://…` — so a slow step shows as a gap: the first line's offset is the runtime's own start-up, and the workspace and certificate-store lines say how long reading each took |
+| `--log-file <path>` | none | Also append every diagnostic and all stderr output to this file; the screen still shows them. Each line has the clock time and the same `[+seconds]` offset |
 | `--config <file>` | discovered | Use this configuration file instead of the discovered one — see [Configuration](27-Configuration.md) |
 | `--profile <name>` | file's default | Use this named profile from the configuration file |
 | `--no-config` | off | Ignore configuration files entirely. Every command then behaves exactly as it did before profiles existed, which is what makes it the right first step when a command behaves oddly. Not with `--config` or `--profile` |
