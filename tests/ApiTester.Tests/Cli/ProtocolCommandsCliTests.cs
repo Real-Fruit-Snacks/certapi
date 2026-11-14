@@ -175,7 +175,9 @@ public class ProtocolCommandsCliTests
     public async Task Connect_to_and_proxy_header_are_parsed_on_send()
     {
         await using var server = new RawHttpServer(_ => RawHttpServer.Response(200, "OK", "here"));
-        var r = Run("send", "http://api.invalid/x", "--connect-to", $"api.invalid:80:127.0.0.1:{server.Port}", "-s");
+        // --no-proxy: a proxy from the environment would make the connection itself, and the
+        // combination is refused (the offline CI job points every proxy variable at a dead port).
+        var r = Run("send", "http://api.invalid/x", "--connect-to", $"api.invalid:80:127.0.0.1:{server.Port}", "--no-proxy", "-s");
         Assert.Equal(0, r.Code);
         Assert.Equal("here", r.Body);
         var bad = Run("send", "http://127.0.0.1:9/", "--proxy-header", "X-A: 1");
