@@ -6,6 +6,14 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.98.0] - 2026-11-13
+
+More ways to reach a service with a client certificate: seven new commands (`call`, `tls`,
+`crawl`, `browse`, `signalr`, `mqtt`, `cors`), more of curl on `send`, connection routing options,
+gRPC-Web, and OAuth clients that authenticate with the certificate instead of a secret. Nothing
+that worked before needs changing; the **Changed** list covers the few curl options that used to
+be refused and now work.
+
 ### Added
 - `run --junit <file>`: the results as JUnit XML for a CI test report (Azure DevOps, GitLab,
   Jenkins, GitHub reporters). One test case per request, grouped by folder; failed assertions are
@@ -3397,7 +3405,8 @@ Initial release.
 - Save any response (including binary) to a file.
 - Self-contained single-file executable — no installer, no admin rights, no runtime dependency.
 
-[Unreleased]: https://github.com/Real-Fruit-Snacks/certapi/compare/v1.97.0...HEAD
+[Unreleased]: https://github.com/Real-Fruit-Snacks/certapi/compare/v1.98.0...HEAD
+[1.98.0]: https://github.com/Real-Fruit-Snacks/certapi/compare/v1.97.0...v1.98.0
 [1.97.0]: https://github.com/Real-Fruit-Snacks/certapi/compare/v1.96.3...v1.97.0
 [1.96.3]: https://github.com/Real-Fruit-Snacks/certapi/compare/v1.96.2...v1.96.3
 [1.96.2]: https://github.com/Real-Fruit-Snacks/certapi/compare/v1.96.1...v1.96.2
