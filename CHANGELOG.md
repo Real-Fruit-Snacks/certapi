@@ -14,9 +14,12 @@ All notable changes to this project are documented here. The format follows
 - Large responses use about half the memory: the body is read once, into an array of its own size,
   instead of being buffered and then copied (a 286 MB download: 689 MB peak → 341 MB, and about
   twice as fast). The time reported and the request timeout still include the body.
-- The app's Pretty view formats a JSON body over 4 MB too, for as much as it shows (the first
-  512 K characters), instead of showing it unformatted; it reads only as far as it formats, so a
-  28 MB body costs the app 65 ms rather than the second it took to format all of it.
+- The app's Pretty view formats a JSON body over 4 MB too, for as much as it shows, instead of
+  showing it unformatted; it reads only as far as it formats, so a 28 MB body costs the app 65 ms
+  rather than the second it took to format all of it.
+- The app's Pretty view shows the first 128 K characters of a large body (was 512 K): laying out
+  512 K characters of coloured text held the window for about 0.9 s. Raw still shows the first
+  1 MB, and Copy and Save… take all of it.
 - Text output to a file or a pipe is no longer slowed by .NET's 256-byte console buffer, which on
   Windows made every 256 bytes a separate system call: `--pretty` and `--json` on a 28 MB body
   took 11 s and 9 s when redirected. Redirected stdout now has a 64 KB buffer, still flushed after

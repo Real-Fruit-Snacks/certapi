@@ -14,8 +14,10 @@ public static class ResponseView
     /// <summary>The most of a body the Raw view shows.</summary>
     public const int MaxRawChars = 1024 * 1024;
 
-    /// <summary>The most text the Pretty view shows.</summary>
-    public const int MaxPrettyChars = 512 * 1024;
+    /// <summary>The most text the Pretty view shows. Its rich text is laid out whole on the
+    /// window's thread — 512 K characters of coloured JSON held the window for about 0.9 s — so
+    /// it shows the start of a large body, and Copy and Save… take all of it.</summary>
+    public const int MaxPrettyChars = 128 * 1024;
 
     /// <summary>The most of a binary body the Pretty view shows as hex.</summary>
     public const int MaxHexBytes = 64 * 1024;

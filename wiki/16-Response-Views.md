@@ -14,7 +14,7 @@ Every way the app shows you a response, plus copying, saving, and themes.
 | **Rendered** | The request's URL (Uniform Resource Locator) opened as a **web page** (below). |
 | **Network** | A browser-style trace of every HTTP (Hypertext Transfer Protocol) call (below). |
 
-**A large body is shown in part.** Raw shows the first 1 MB and Pretty the first 512 KB, ending
+**A large body is shown in part.** Raw shows the first 1 MB and Pretty the first 128 KB, ending
 with a line that says how much is left out. A JSON body over 4 MB is formatted only as far as
 Pretty shows it — the rest is not read for that, so not checked either; any other body over 4 MB is
 shown as received, without formatting. A binary body's hex dump covers its first 64 KB. JSON and XML are coloured up to
