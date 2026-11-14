@@ -6,6 +6,7 @@ namespace ApiTester.Core;
 /// <list type="bullet">
 ///   <item>targets: <c>status</c>, <c>time</c>, <c>header &lt;name&gt;</c>, <c>body &lt;jsonpath&gt;</c>, <c>body-text</c></item>
 ///   <item>ops: <c>==</c> <c>!=</c> <c>contains</c> <c>matches</c> <c>exists</c> <c>!exists</c> <c>&lt;</c> <c>&gt;</c>
+///     <c>schema</c> (the value is a JSON Schema, or <c>@file.json</c>; <c>body $ schema …</c> checks the whole body)
 ///     (aliases: <c>equals</c>, <c>notequals</c>, <c>lt</c>, <c>gt</c>, <c>missing</c>)</item>
 /// </list>
 /// Examples: <c>status == 200</c>, <c>time &lt; 500</c>, <c>header Content-Type contains json</c>,
@@ -36,6 +37,21 @@ public static class AssertionParser
 
         var op = ParseOp(parts[i]);
         string value = i + 1 < parts.Length ? string.Join(' ', parts[(i + 1)..]) : "";
+        if (op == AssertOp.MatchesSchema)
+        {
+            // The schema exactly as typed (whitespace inside strings matters), or read from a file.
+            int at = IndexAfterToken(expr, parts, i);
+            value = at < expr.Length ? expr[at..].Trim() : "";
+            if (value.StartsWith('@'))
+            {
+                string file = value[1..].Trim().Trim('"');
+                try { value = File.ReadAllText(file); }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { throw new FormatException($"cannot read the schema file '{file}': {ex.Message}"); }
+            }
+            if (value.Length > 0)
+                try { using var _ = System.Text.Json.JsonDocument.Parse(value); }
+                catch (System.Text.Json.JsonException ex) { throw new FormatException($"the schema in '{expr}' is not valid JSON: {ex.Message}"); }
+        }
 
         bool needsValue = op is not (AssertOp.Exists or AssertOp.NotExists);
         if (needsValue && value.Length == 0)
@@ -69,6 +85,20 @@ public static class AssertionParser
         "!exists" or "notexists" or "missing" or "absent" => AssertOp.NotExists,
         "<" or "lt" => AssertOp.LessThan,
         ">" or "gt" => AssertOp.GreaterThan,
-        _ => throw new FormatException($"unknown assertion operator '{o}' (== != contains matches exists !exists < >)")
+        "schema" or "matches-schema" => AssertOp.MatchesSchema,
+        _ => throw new FormatException($"unknown assertion operator '{o}' (== != contains matches exists !exists < > schema)")
     };
+
+    /// <summary>Where the text after the <paramref name="opIndex"/>th token starts in the original
+    /// expression.</summary>
+    private static int IndexAfterToken(string expr, string[] parts, int opIndex)
+    {
+        int pos = 0;
+        for (int k = 0; k <= opIndex; k++)
+        {
+            pos = expr.IndexOf(parts[k], pos, StringComparison.Ordinal);
+            pos += parts[k].Length;
+        }
+        return pos;
+    }
 }

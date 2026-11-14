@@ -18,6 +18,29 @@ Wire that command into your MCP-capable client (an agent framework, an IDE (inte
 environment) assistant, etc.) as a
 stdio server. The agent then has a small, safe toolset for talking to your API.
 
+`--print-config` writes the configuration block for you, with the options you give it, and exits:
+
+```powershell
+certapi mcp --cert "CN=Agent Client" --allow api.example.com --print-config claude
+```
+
+```json
+{
+  "mcpServers": {
+    "certapi": {
+      "command": "C:\\Program Files\\certapi\\certapi.exe",
+      "args": [ "mcp", "--cert", "CN=Agent Client", "--allow", "api.example.com" ]
+    }
+  }
+}
+```
+
+Merge it into `claude_desktop_config.json` (Claude Desktop) or `.mcp.json` (Claude Code). `vscode`
+gives the `servers` form for `.vscode/mcp.json`, and `cursor` the form for `.cursor/mcp.json`. File
+paths such as `--workspace` are written out in full, because the host chooses the working
+directory. A secret is never written into the file: `--cert-pin` is refused (put
+`CERTAPI_CERT_PIN` in the host's `env` block instead), as are `--cert-password` and `--proxy-user`.
+
 ## Tools exposed
 
 | Tool | Does |
@@ -30,6 +53,8 @@ stdio server. The agent then has a small, safe toolset for talking to your API.
 | `list_certificates` | List the client certificates available |
 | `grpc_list` | List a gRPC (remote procedure call) server's services and methods, via reflection or a descriptor set pinned at launch |
 | `grpc_call` | Invoke a gRPC method — unary, server-streaming, client-streaming, or bidirectional — with the pinned certificate |
+| `ws_exchange` | Open a WebSocket on an allowed host, send text messages, and return what comes back — until a count, a time or a close |
+| `sse_read` | Read a Server-Sent Events stream on an allowed host and return the events that arrive — until a count, a time or the end of the stream |
 | `self_test` | Prove the mTLS path end-to-end |
 
 ### Tool arguments
@@ -42,7 +67,16 @@ stdio server. The agent then has a small, safe toolset for talking to your API.
 | `list_certificates` | `filter` (matches subject, issuer or thumbprint) |
 | `grpc_list` | `address` — optional when `--protoset` was given at launch |
 | `grpc_call` | `address` and `method` (`Service/Method`) required; `data` (one message, or an array of messages for a streaming request); `metadata` (an object); `maxMessages` (default 100) |
+| `ws_exchange` | `url` (`ws://` or `wss://`, required); `messages` (text to send, in order); `headers`; `maxMessages` (default 20; 0 sends only); `seconds` (default 10) |
+| `sse_read` | `url` (required); `headers`; `lastEventId` (sent as `Last-Event-ID`, to resume); `maxEvents` (default 20); `seconds` (default 10) |
 | `list_saved`, `list_environments`, `self_test` | none |
+
+A stream tool always returns: it listens until its count is reached, its time is up (never longer
+than `--timeout`), or the other side closes, and its result says which in `ended` (`count`, `time`,
+`closed`, `max-body` or `broken`). Everything the stream sends counts against `--max-body` together.
+`sse_read` returns the `lastEventId` to pass to the next call, so an agent can poll a feed without
+missing or repeating an event. A WebSocket address is checked against the allowlist by its host,
+like any other URL.
 
 Bearer tokens seen in responses are captured in memory for the session and attached to later calls to
 the same host (like the app's automatic tokens), unless you pass `--no-auto-token`. Values captured
@@ -99,7 +133,8 @@ The point of `mcp` is to give an agent **capability without keys**:
   `http://` or `https://` is always refused. A `Host` header that differs from the URL's host is
   refused, as is gRPC `host` metadata, so the request cannot ask a shared front end for another
   name. A refusal names the host only, never the resolved URL. **Omit `--allow` and any host is
-  permitted** — the start-up line on stderr says so, but an MCP host may never show it. Always set
+  permitted** — the start-up line on stderr says so, but an MCP host may never show it. Pass
+  `--allow-any` to say you mean it; it cannot be combined with `--allow`. Always set
   an allowlist for anything but local experimentation. Enforced per request, including every chain
   step and every gRPC call.
 - **Pinned trust, not blanket trust** — a host pinned with `certapi trust add` is reachable without
@@ -133,11 +168,13 @@ The point of `mcp` is to give an agent **capability without keys**:
 | `--cert-issuer <name>` / `--cert-serial <hex>` | Pick the store certificate by issuer or serial number, as on [`send`](21-CLI-Reference.md#certificate-options) |
 | `--cert-pin <pin>` | Smart-card or HSM PIN, supplied ahead of the prompt (or `CERTAPI_CERT_PIN`) |
 | `--allow <host>` | Allowed upstream host (repeatable): a bare host name or IP address (`[::1]` for IPv6) |
+| `--allow-any` | Allow every host, on purpose (the warning becomes a note); refused beside `--allow` |
 | `--insecure` | Ignore upstream server-certificate errors (internal CAs — certificate authorities) |
 | `--timeout <seconds>` | Deadline for `send_request`, `grpc_list` and `grpc_call` (default 100; a saved request keeps its own saved timeout). A gRPC call past it returns a tool error instead of holding up later calls; a stream cut off this way still lists the messages it delivered |
 | `--workspace <file>` | Load saved requests / environments / chains from a workspace file (read once at launch). Without it, the app's live `state.json` is read, stored logins included |
 | `--no-auto-token` | Don't capture/reuse bearer tokens across the session, and don't attach the workspace's stored tokens or cookies |
 | `--max-body <size>` | Most of a response body a tool returns (default `1m`); the rest is not read and the result says `"truncated": true` |
+| `--print-config <claude\|vscode\|cursor>` | Print the host configuration block for these options and exit |
 | `--protoset <file>` | Compiled descriptor set for `grpc_list`/`grpc_call` against a server without reflection — pinned at launch; the agent cannot name files |
 | `--proxy` / `--proxy-user` / `--no-proxy` / `--noproxy` | The same proxy control as [`send`](21-CLI-Reference.md#send), applied to every call the tools make |
 | `--revocation <mode>` / `--revocation-strict` | The same [revocation checking](06-Certificates-and-mTLS.md) as `send`, applied to every call |

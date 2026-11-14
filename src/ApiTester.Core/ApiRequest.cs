@@ -23,6 +23,10 @@ public sealed record ApiRequest
     /// using either the signed-in account or explicit credentials.</summary>
     public WindowsAuthOptions? WindowsAuth { get; init; }
 
+    /// <summary>When set, the request is signed with AWS Signature Version 4 (on every hop to the
+    /// origin it was made to; never on a hop elsewhere).</summary>
+    public AwsSigV4Options? AwsSigV4 { get; init; }
+
     public TimeSpan Timeout { get; init; } = TimeSpan.FromSeconds(100);
 }
 
@@ -36,6 +40,16 @@ public sealed record MultipartPart(string Name, string? Value, string? FilePath,
 public sealed record WindowsAuthOptions(
     bool UseDefaultCredentials, string? Domain = null, string? Username = null, string? Password = null)
 {
+    /// <summary>Answer an HTTP Digest challenge (RFC 7616: MD5 or SHA-256, <c>qop=auth</c>) with
+    /// <see cref="Username"/> and <see cref="Password"/> instead of Negotiate/NTLM. It rides the
+    /// same challenge/response machinery, and the same rule: only the origin the request was made
+    /// to is ever answered. A Basic challenge is never answered with these credentials.</summary>
+    public bool Digest { get; init; }
+
+    /// <summary>Digest credentials for a request.</summary>
+    public static WindowsAuthOptions ForDigest(string username, string? password) =>
+        new(false, null, username, password ?? "") { Digest = true };
+
     /// <summary>Build options from a saved request's fields: an empty user means "use the signed-in
     /// account" (SSO); otherwise the value is parsed as <c>DOMAIN\user</c> (or a bare <c>user</c>)
     /// with the given password.</summary>

@@ -453,6 +453,12 @@ public sealed class ApiClient : IDisposable
                 if (!string.IsNullOrEmpty(cookieHeader))
                     message.Headers.TryAddWithoutValidation("Cookie", cookieHeader);
 
+                // Signed last, over exactly what goes out — and only for the origin the caller
+                // named: a hop elsewhere gets no signature made with their key.
+                if (request.AwsSigV4 is { } sigv4 && credentialOrigin is not null &&
+                    string.Equals(OriginKeyOf(hopUri), OriginKeyOf(credentialOrigin), StringComparison.OrdinalIgnoreCase))
+                    await AwsSigV4.SignAsync(message, sigv4, DateTimeOffset.UtcNow, cancellationToken);
+
                 // With a body cap the body is streamed and cut, so it is never buffered whole first.
                 using var response = await http.SendAsync(
                     message,
@@ -733,9 +739,11 @@ public sealed class ApiClient : IDisposable
             // Bound to the origin the request was made to: redirects are followed by hand on this
             // same handler, so .NET's own rule (no credentials after a redirect) never applies, and
             // a 302 to any other host would otherwise be answered with the user's password.
-            handler.Credentials = new OriginBoundCredentials(wa.UseDefaultCredentials
-                ? CredentialCache.DefaultCredentials
-                : new NetworkCredential(wa.Username, wa.Password, wa.Domain));
+            handler.Credentials = new OriginBoundCredentials(
+                wa.Digest ? new NetworkCredential(wa.Username, wa.Password)
+                : wa.UseDefaultCredentials ? CredentialCache.DefaultCredentials
+                : new NetworkCredential(wa.Username, wa.Password, wa.Domain),
+                digest: wa.Digest);
             handler.PreAuthenticate = true;
         }
         return handler;
@@ -1292,12 +1300,14 @@ public sealed class ApiClient : IDisposable
 /// <summary>Windows credentials that answer only the origin the request was sent to. The origin
 /// is set per send (an async-local, so concurrent sends sharing one handler each see their own);
 /// a hop to any other scheme, host or port gets no credential at all.</summary>
-internal sealed class OriginBoundCredentials(ICredentials inner) : ICredentials
+internal sealed class OriginBoundCredentials(ICredentials inner, bool digest = false) : ICredentials
 {
     public static readonly AsyncLocal<string?> Origin = new();
 
+    /// <summary>Digest credentials answer Digest alone; Windows credentials answer Negotiate/NTLM
+    /// alone. Neither is ever given to a Basic challenge, which would send the password as it is.</summary>
     public NetworkCredential? GetCredential(Uri uri, string authType) =>
-        IntegratedOnlyCredentials.IsIntegrated(authType) &&
+        (digest ? authType.Equals("Digest", StringComparison.OrdinalIgnoreCase) : IntegratedOnlyCredentials.IsIntegrated(authType)) &&
         Origin.Value is { } origin && string.Equals(origin, ApiClient.OriginKeyOf(uri), StringComparison.OrdinalIgnoreCase)
             ? inner.GetCredential(uri, authType)
             : null;

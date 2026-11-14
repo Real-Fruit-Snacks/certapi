@@ -17,7 +17,8 @@ public static class McpCommand
 
         Runs a Model Context Protocol server on stdio so an AI agent can make mutual-TLS calls
         with a pinned Windows-store client certificate. Tools: send_request, run_saved, run_chain,
-        list_saved, list_environments, list_certificates, grpc_list, grpc_call, self_test. Saved
+        list_saved, list_environments, list_certificates, grpc_list, grpc_call, ws_exchange,
+        sse_read, self_test. Saved
         requests, environments, and chains are also published as read-only MCP resources.
         Configure your MCP host to launch this command.
 
@@ -38,6 +39,8 @@ public static class McpCommand
                                   to allow any host (the start-up line says so; set it for anything
                                   but local experiments). Enforced per request — a chain step whose
                                   URL comes from an earlier capture is still checked.
+          --allow-any             Allow every host, on purpose: the start-up warning becomes a note.
+                                  Cannot be combined with --allow
           --insecure              Ignore upstream server-certificate errors (internal CAs)
           --timeout <seconds>     send_request and gRPC call deadline (default 100; a saved
                                   request keeps its own saved timeout)
@@ -52,6 +55,12 @@ public static class McpCommand
                                   server without reflection (produce it with protoc's
                                   descriptor_set_out and include_imports options). Pinned at
                                   launch; the agent cannot name files.
+          --print-config <host>   Print the configuration block that launches this server with the
+                                  other options given, for claude (Claude Desktop's
+                                  claude_desktop_config.json, also Claude Code's .mcp.json),
+                                  vscode (.vscode/mcp.json) or cursor (.cursor/mcp.json), and
+                                  exit. Nothing is started. Secrets (--cert-password, --cert-pin,
+                                  --proxy-user) are refused: use their environment variables
 
         The transport options apply to every call the tools make, with the same rules as `send`.
         """ + "\n\n" + TransportFlags.Help + "\n\n" + """
@@ -73,6 +82,7 @@ public static class McpCommand
 
         Examples:
           certapi mcp --cert "CN=Agent Client" --allow api.example.com
+          certapi mcp --cert "CN=Agent Client" --allow api.example.com --print-config claude
           certapi mcp --cert 4A8823… --allow api.example.com --allow auth.example.com --insecure
           certapi mcp --cert "CN=Agent Client" --allow api.example.com --workspace .\suite.json
           certapi mcp --cert "CN=Agent Client" --allow grpc.internal --protoset .\contracts.protoset
@@ -93,6 +103,8 @@ public static class McpCommand
         bool noAutoToken = args.Flag("--no-auto-token");
         string? maxBodyRaw = args.Value("--max-body");
         string? protosetPath = args.Value("--protoset");
+        bool allowAny = args.Flag("--allow-any");
+        string? printConfig = args.Value("--print-config");
         var overrides = TransportFlags.Parse(args, out _, environment: null, services.Profile);
         // Resolve the certificate before Positionals() rejects its options (store or a file).
         var cert = CliCert.Resolve(args, store, services, stderr);
@@ -118,10 +130,24 @@ public static class McpCommand
         foreach (var entry in allowHosts)
             if (HostAllowlist.EntryProblem(entry) is { } problem)
                 throw new CliUsageException($"--allow '{entry}': {problem}");
+        if (allowAny && allowHosts.Count > 0)
+            throw new CliUsageException("--allow-any and --allow contradict each other: give one or the other.");
         var allow = new HostAllowlist(allowHosts);
+
+        if (printConfig is not null)
+        {
+            stdout.Write(McpHostConfig.Render(printConfig, args.Original, Environment.ProcessPath));
+            stderr.WriteLine($"note: merge this into {McpHostConfig.FileFor(printConfig)}; nothing was started.");
+            if (allow.Count == 0 && !allowAny)
+                stderr.WriteLine("warning: this configuration allows any host; add --allow <host> (or --allow-any to mean it).");
+            return ExitCodes.Ok;
+        }
+
         // Decided from the parsed list, so the warning cannot be skipped by a value that parses to nothing.
         stderr.WriteLine($"certapi mcp ready · cert: {cert?.Subject ?? "none"} · " +
-            (allow.Count == 0 ? "allow: ANY HOST (no --allow given)" : "allow: " + string.Join(", ", allow.Entries)));
+            (allow.Count > 0 ? "allow: " + string.Join(", ", allow.Entries)
+             : allowAny ? "allow: any host (--allow-any)"
+             : "allow: ANY HOST (no --allow given; pass --allow <host>, or --allow-any to mean it)"));
         if (services.ProfileSource is { } source && services.Profile is { } profile)
             stderr.WriteLine($"certapi mcp config · {source.Path} ({source.Rule}) · " + DescribeProfile(profile));
         if (insecure) stderr.WriteLine("certapi mcp warning · server-certificate checks are OFF (--insecure)");
@@ -527,6 +553,39 @@ public static class McpCommand
             a => GrpcCallTool(a, cert, protoset, predicates, Gate, McpTransport, CallCt(), timeout))
         { Annotations = new ToolAnnotations(ReadOnlyHint: false, DestructiveHint: true, IdempotentHint: false, OpenWorldHint: true) };
 
+        // ---- ws_exchange / sse_read ----
+        // A stream is bounded twice — by a count and by a time — so a tool call always returns,
+        // and its total text by --max-body, so a chatty socket cannot flood the agent's context.
+        // The allowlist judges the stream's http(s) form: ws:// is not a scheme it would pass.
+        string? StreamGate(string url) => Gate(McpStreamTools.HttpForm(url));
+        var wsExchange = new ToolDef("ws_exchange",
+            "Open a WebSocket to an allowed host with the pinned client certificate, send the given text messages, and return what the server sends back until `maxMessages` arrive, `seconds` pass, or it closes.",
+            JsonNode.Parse("""
+                {"type":"object","additionalProperties":false,"required":["url"],"properties":{
+                  "url":{"type":"string","description":"ws:// or wss:// URL on an allowed host"},
+                  "messages":{"type":"array","items":{"type":"string"},"description":"Text messages to send, in order, once connected"},
+                  "headers":{"type":"object","additionalProperties":{"type":"string"}},
+                  "maxMessages":{"type":"integer","description":"Stop after this many messages arrive (default 20; 0 sends only)"},
+                  "seconds":{"type":"number","description":"Stop listening after this long (default 10, at most the --timeout)"}}}
+                """)!,
+            a => McpStreamTools.WebSocket(a, cert, StreamGate, McpTransport(new TransportOptions()), predicates, state,
+                                       noAutoToken, timeout, maxBody, CallCt()))
+        { Annotations = new ToolAnnotations(ReadOnlyHint: false, DestructiveHint: true, IdempotentHint: false, OpenWorldHint: true) };
+
+        var sseRead = new ToolDef("sse_read",
+            "Subscribe to a Server-Sent Events stream on an allowed host with the pinned client certificate and return the events that arrive until `maxEvents` arrive, `seconds` pass, or the stream ends.",
+            JsonNode.Parse("""
+                {"type":"object","additionalProperties":false,"required":["url"],"properties":{
+                  "url":{"type":"string","description":"http(s):// event-stream URL on an allowed host"},
+                  "headers":{"type":"object","additionalProperties":{"type":"string"}},
+                  "lastEventId":{"type":"string","description":"Resume after this event id (sent as Last-Event-ID)"},
+                  "maxEvents":{"type":"integer","description":"Stop after this many events (default 20)"},
+                  "seconds":{"type":"number","description":"Stop listening after this long (default 10, at most the --timeout)"}}}
+                """)!,
+            a => McpStreamTools.EventStream(a, cert, StreamGate, McpTransport(new TransportOptions()), predicates, state,
+                                         noAutoToken, timeout, maxBody, CallCt()))
+        { Annotations = new ToolAnnotations(ReadOnlyHint: false, DestructiveHint: false, IdempotentHint: false, OpenWorldHint: true) };
+
         // ---- self_test ----
         var selfTest = new ToolDef("self_test",
             "Prove the mutual-TLS path end to end against a built-in loopback server.",
@@ -546,7 +605,7 @@ public static class McpCommand
         var tools = new[]
         {
             sendRequest, runSaved, runChain, listSaved, listEnvironments, listCerts,
-            grpcList, grpcCall, selfTest
+            grpcList, grpcCall, wsExchange, sseRead, selfTest
         };
         return (tools, BuildResources(state));
     }

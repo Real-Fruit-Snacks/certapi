@@ -17,6 +17,7 @@ public sealed class RequestModel : INotifyPropertyChanged
     private string _authType = "Auto";
     private string? _authUser;
     private string? _authSecret;
+    private string? _authScope;
     private string? _certThumbprint;
     private bool _ignoreServerCert;
     private int _timeoutSeconds = 100;
@@ -30,6 +31,8 @@ public sealed class RequestModel : INotifyPropertyChanged
     public string AuthType { get => _authType; set { _authType = value; Raise(nameof(AuthType)); } }
     public string? AuthUser { get => _authUser; set { _authUser = value; Raise(nameof(AuthUser)); } }
     public string? AuthSecret { get => _authSecret; set { _authSecret = value; Raise(nameof(AuthSecret)); } }
+    /// <summary>For <c>AwsSigV4</c>: "region/service", or empty to read both from the host.</summary>
+    public string? AuthScope { get => _authScope; set { _authScope = value; Raise(nameof(AuthScope)); } }
     public string? CertThumbprint { get => _certThumbprint; set { _certThumbprint = value; Raise(nameof(CertThumbprint)); } }
     public bool IgnoreServerCert { get => _ignoreServerCert; set { _ignoreServerCert = value; Raise(nameof(IgnoreServerCert)); } }
     public int TimeoutSeconds { get => _timeoutSeconds; set { _timeoutSeconds = value; Raise(nameof(TimeoutSeconds)); } }
@@ -118,6 +121,7 @@ public sealed class RequestModel : INotifyPropertyChanged
             AuthType = AuthType,
             AuthUser = AuthUser,
             AuthSecret = AuthSecret,
+            AuthScope = AuthScope,
             CertThumbprint = CertThumbprint,
             IgnoreServerCert = IgnoreServerCert,
             TimeoutSeconds = TimeoutSeconds,
@@ -149,6 +153,7 @@ public sealed class RequestModel : INotifyPropertyChanged
             m.IsMultipart = true;
             foreach (var f in p.FormParts) m.FormParts.Add(new FormPart { Name = f.Name, Value = f.Value, IsFile = f.IsFile });
         }
+        foreach (var a in p.Assertions) m.Assertions.Add(a);
         return m;
     }
 
@@ -169,9 +174,10 @@ public sealed class RequestModel : INotifyPropertyChanged
         Path = e.Url;
         Body = e.Body ?? "";
         ContentType = e.ContentType;
-        AuthType = e.AuthType switch { "Bearer" => "Bearer", "Basic" => "Basic", "Windows" => "Windows", "None" => "None", _ => "Auto" };
+        AuthType = SavedAuth.Normalize(e.AuthType);
         AuthUser = e.AuthUser;
         AuthSecret = e.AuthSecret;
+        AuthScope = e.AuthScope;
         CertThumbprint = e.CertThumbprint;
         IgnoreServerCert = e.IgnoreServerCert;
         TimeoutSeconds = e.TimeoutSeconds;

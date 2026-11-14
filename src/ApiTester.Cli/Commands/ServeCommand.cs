@@ -172,6 +172,12 @@ public static class ServeCommand
           --strip-csp             Drop Content-Security-Policy from responses: a policy written for
                                   the upstream's own origin blocks every fetch a page makes through
                                   the gateway. Loopback only; the browser's other protections stay
+          --allow-framing [<origins>]  Let pages be embedded in a frame: X-Frame-Options and CSP
+                                  frame-ancestors are replaced by frame-ancestors 'self' and pages
+                                  on this machine, or exactly the origins listed (comma-separated,
+                                  repeatable). Not part of --browser
+          --open [<path>]         Open the browser at the first site (or at this path on the
+                                  gateway) once it is listening
           --rewrite-body          Upstream URLs written into HTML, CSS, JavaScript, JSON and XML
                                   bodies (links, script sources, a meta refresh, an API base in a
                                   config file) point back through the gateway, the same way a
@@ -193,7 +199,13 @@ public static class ServeCommand
                                   (certapi send --capture, the app's Capture tab, a session capture)
                                   when the request carries no Authorization of its own
 
-          Without these the gateway stays a byte-faithful relay: nothing is added or rewritten.
+          Without these the gateway stays a faithful relay: nothing is added or rewritten. A few
+          headers that would leave state on the gateway's own origin are always dropped —
+          Strict-Transport-Security, Alt-Svc, NEL, Report-To, Reporting-Endpoints, Public-Key-Pins,
+          Expect-CT — and, while every site shares one origin (no --vhost),
+          Service-Worker-Allowed and Clear-Site-Data. Over plaintext, a CSP's
+          upgrade-insecure-requests is removed. --rewrite-location also rewrites Link and
+          Content-Location.
           A cookie named __Host-… or __Secure-… needs the Secure attribute, which a plaintext
           http://127.0.0.1 origin cannot carry, so run with --tls and it works; without --tls
           such cookies are relayed and logged as a warning.
@@ -345,6 +357,22 @@ public static class ServeCommand
         bool allowUpgrade = args.Flag("--allow-upgrade") || browserBundle;
         bool rewriteOrigin = args.Flag("--rewrite-origin") || browserBundle;
         bool stripCsp = args.Flag("--strip-csp") || browserBundle;
+        // --allow-framing [<origins>]: not in --browser, since it lowers a page's clickjacking guard.
+        bool framingTyped = false;
+        var frameOrigins = new List<string>();
+        while (args.OptionalValue(out var oneFrame, "--allow-framing"))
+        {
+            framingTyped = true;
+            if (oneFrame is null) continue;
+            foreach (var o in oneFrame.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            {
+                // Written into a CSP header, so nothing but an origin pattern may get through.
+                if (!System.Text.RegularExpressions.Regex.IsMatch(o, @"^https?://(\*\.)?[A-Za-z0-9.\-]+(:(\d{1,5}|\*))?$|^https?://\[[0-9A-Fa-f:]+\](:(\d{1,5}|\*))?$"))
+                    throw new CliUsageException($"--allow-framing '{o}': give an origin such as http://localhost:3000 (a * port or *. subdomain is allowed).");
+                frameOrigins.Add(o);
+            }
+        }
+        bool openTyped = args.OptionalValue(out var openPath, "--open");
         // Not part of --browser: it buffers and decompresses page bodies, which the relay never does
         // unless asked by name.
         bool rewriteBody = args.Switch("--rewrite-body", sp?.RewriteBody);
@@ -572,6 +600,11 @@ public static class ServeCommand
             try { vhosts = new VirtualHosts(routes, vhostSuffix ?? VirtualHosts.DefaultSuffix, scheme, port); }
             catch (ArgumentException ex) { throw new CliUsageException("--vhost: " + ex.Message.Split(" (Parameter")[0]); }
         }
+        browser = browser with
+        {
+            SharedOrigin = vhosts is null,
+            FrameAncestors = framingTyped ? (frameOrigins.Count == 0 ? BrowserOptions.LocalFrameAncestors : frameOrigins) : null
+        };
         var policy = new ServePolicy(token, forwarded, maxBody, $"127.0.0.1:{port}", scheme)
         {
             VirtualHosts = vhosts,
@@ -768,6 +801,16 @@ public static class ServeCommand
 
         Log($"listening on {scheme}://127.0.0.1:{port}/" + (vhosts is null ? "" : $" and {scheme}://*.{vhosts.Suffix}:{port}/"));
         foreach (var line in summary) Log(line);
+        if (openTyped)
+        {
+            // The first site's own address unless a path was given; only ever a URL on this gateway.
+            string first = vhosts is not null && routes.All.Count > 0
+                ? $"{scheme}://{vhosts.HostFor(routes.All[0])}:{port}/"
+                : $"{scheme}://127.0.0.1:{port}" + (routes.All.Count > 0 ? routes.All[0].PathPrefix.TrimEnd('/') + "/" : "/");
+            string url = openPath is null ? first : $"{scheme}://127.0.0.1:{port}/" + openPath.TrimStart('/');
+            try { services.OpenFile(url); Log($"opened {url} in your browser"); }
+            catch (Exception ex) { Log($"warning: could not open a browser ({ex.Message}); go to {url}"); }
+        }
         if (extraPrefix is not null && extraPrefix != $"{scheme}://127.0.0.1:{port}/" && listen is not null)
             Log($"also listening on {extraPrefix} — token required; every caller that reaches it uses your client certificate.");
         if (tls)

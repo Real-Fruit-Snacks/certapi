@@ -262,6 +262,8 @@ public sealed class HistoryEntry
     public string AuthType { get; set; } = "None";
     public string? AuthUser { get; set; }
     public string? AuthSecret { get; set; }
+    /// <summary>AWS Signature v4's "region/service" (empty: read from the host). Not a secret.</summary>
+    public string? AuthScope { get; set; }
     public string? CertThumbprint { get; set; }
     public bool IgnoreServerCert { get; set; }
     public int TimeoutSeconds { get; set; } = 100;

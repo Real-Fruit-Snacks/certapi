@@ -20,6 +20,24 @@ public sealed record BrowserOptions(
     /// False — today's plaintext loopback behavior — unless the caller asks for it.</summary>
     public bool SecureOrigin { get; init; }
 
+    /// <summary>Every site shares the gateway's one origin (path mounts, no --vhost). Then an
+    /// upstream's <c>Service-Worker-Allowed</c> could let one site's service worker control every
+    /// mount, and its <c>Clear-Site-Data</c> would wipe every site's cookies and storage, so both
+    /// are dropped. With --vhost each site has an origin of its own and both are relayed.</summary>
+    public bool SharedOrigin { get; init; } = true;
+
+    /// <summary>--allow-framing: who may embed a page the gateway serves. Null (the default)
+    /// leaves the upstream's X-Frame-Options and CSP frame-ancestors alone; a list replaces them
+    /// with exactly <c>frame-ancestors 'self'</c> plus these sources.</summary>
+    public IReadOnlyList<string>? FrameAncestors { get; init; }
+
+    /// <summary>The frame-ancestors sources --allow-framing uses with no list: pages on this machine.</summary>
+    public static readonly IReadOnlyList<string> LocalFrameAncestors = new[]
+    {
+        "http://localhost:*", "https://localhost:*", "http://127.0.0.1:*", "https://127.0.0.1:*",
+        "http://[::1]:*", "https://[::1]:*", "http://*.localhost:*", "https://*.localhost:*"
+    };
+
     /// <summary>What Access-Control-Max-Age has always been, so a gateway nobody has configured
     /// answers exactly as it did before. Stated once, here, because the `serve` command needs the
     /// same number to describe its own default.</summary>
@@ -121,6 +139,34 @@ public static class BrowserRewriter
         var result = new List<KeyValuePair<string, string>>(headers.Count);
         foreach (var h in headers)
         {
+            // Headers that leave state in the browser for the gateway's own origin, which is not
+            // the upstream's: HSTS ignores ports, so an upstream's includeSubDomains under --tls
+            // would force every local http service to https; Alt-Svc points the browser at
+            // 127.0.0.1:443 for HTTP/3; NEL and the reporting headers send reports about local pages
+            // straight to the upstream's collector. Dropped whatever the options say.
+            if (StickyHeaders.Contains(h.Key)) continue;
+            if (options.SharedOrigin && SharedOriginHeaders.Contains(h.Key))
+            {
+                if (h.Key.Equals("Clear-Site-Data", StringComparison.OrdinalIgnoreCase))
+                    notes.Add($"Clear-Site-Data from {route.Upstream.Host} was dropped: every site shares this gateway's " +
+                              "origin, so it would clear the others too (--vhost gives each site its own).");
+                continue;
+            }
+            if (options.FrameAncestors is not null && h.Key.Equals("X-Frame-Options", StringComparison.OrdinalIgnoreCase))
+                continue;
+            bool isCsp = h.Key.Equals("Content-Security-Policy", StringComparison.OrdinalIgnoreCase) ||
+                         h.Key.Equals("Content-Security-Policy-Report-Only", StringComparison.OrdinalIgnoreCase);
+            if (isCsp && !options.StripCsp)
+            {
+                // Over a plaintext gateway upgrade-insecure-requests sends every fetch to
+                // https://127.0.0.1:port, where nothing listens; --allow-framing owns frame-ancestors.
+                var drop = new List<string>();
+                if (!options.SecureOrigin) { drop.Add("upgrade-insecure-requests"); drop.Add("block-all-mixed-content"); }
+                if (options.FrameAncestors is not null) drop.Add("frame-ancestors");
+                string policy = drop.Count == 0 ? h.Value : WithoutDirectives(h.Value, drop);
+                if (policy.Length > 0) result.Add(new(h.Key, policy));
+                continue;
+            }
             // Every upstream Access-Control-* header goes, whatever it said: an upstream that
             // already answers CORS for its own origin would otherwise leave the browser holding two
             // Access-Control-Allow-Origin values, which it rejects outright.
@@ -146,8 +192,25 @@ public static class BrowserRewriter
                 result.Add(new(h.Key, RewriteRefresh(h.Value, route, options, notes)));
                 continue;
             }
+            if (options.RewriteLocation && h.Key.Equals("Content-Location", StringComparison.OrdinalIgnoreCase))
+            {
+                result.Add(new(h.Key, RewriteUrlQuietly(h.Value, route, options)));
+                continue;
+            }
+            if (options.RewriteLocation && h.Key.Equals("Link", StringComparison.OrdinalIgnoreCase))
+            {
+                // rel=next pagination, preload and preconnect: every <URL> on the upstream (or on
+                // another host the gateway reaches) comes back through the gateway.
+                result.Add(new(h.Key, System.Text.RegularExpressions.Regex.Replace(h.Value, "<([^>]*)>",
+                    m => "<" + RewriteUrlQuietly(m.Groups[1].Value, route, options) + ">",
+                    System.Text.RegularExpressions.RegexOptions.None, TimeSpan.FromSeconds(1))));
+                continue;
+            }
             result.Add(h);
         }
+
+        if (options.FrameAncestors is { } ancestors)
+            result.Add(new("Content-Security-Policy", "frame-ancestors " + string.Join(" ", new[] { "'self'" }.Concat(ancestors))));
 
         if (options.Cors && requestOrigin is not null)
         {
@@ -238,6 +301,41 @@ public static class BrowserRewriter
         return location;
     }
 
+    /// <summary>Headers that leave per-origin state in the browser, or send reports about local
+    /// pages to the upstream: never relayed to the gateway's origin.</summary>
+    private static readonly HashSet<string> StickyHeaders = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "Strict-Transport-Security", "Alt-Svc", "NEL", "Report-To", "Reporting-Endpoints",
+        "Public-Key-Pins", "Public-Key-Pins-Report-Only", "Expect-CT"
+    };
+
+    /// <summary>Headers whose reach is the whole origin: dropped while every site shares one.</summary>
+    private static readonly HashSet<string> SharedOriginHeaders = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "Service-Worker-Allowed", "Clear-Site-Data"
+    };
+
+    /// <summary>A CSP with the named directives taken out; the rest, in order, as written.</summary>
+    internal static string WithoutDirectives(string policy, IReadOnlyCollection<string> names)
+    {
+        // A header can hold several policies separated by commas; each is a list of directives.
+        var policies = policy.Split(',').Select(p => string.Join("; ",
+            p.Split(';').Select(d => d.Trim()).Where(d => d.Length > 0 &&
+                !names.Contains(d.Split(' ', 2)[0], StringComparer.OrdinalIgnoreCase))))
+            .Where(p => p.Length > 0);
+        return string.Join(", ", policies);
+    }
+
+    /// <summary>A URL header rewritten like Location, but with no warning when it stays put:
+    /// Link and Content-Location name resources, not departures.</summary>
+    private static string RewriteUrlQuietly(string value, GatewayRoute route, BrowserOptions options)
+    {
+        string absolute = value.StartsWith("//", StringComparison.Ordinal) ? route.Upstream.Scheme + ":" + value : value;
+        if (!absolute.Contains("://", StringComparison.Ordinal) || !Uri.TryCreate(absolute, UriKind.Absolute, out var target))
+            return value;
+        return GatewayUrlFor(target, route, options) ?? value;
+    }
+
     /// <summary>The URL a browser should use for <paramref name="target"/>: this route's own
     /// upstream back through its mount, another host the gateway can reach — a second mount, or a
     /// host on the --allow list — through the gateway too, and null for anywhere else. Shared by
@@ -312,6 +410,13 @@ public static class BrowserRewriter
                 if (mount.Length == 0) { kept.Add(attribute); continue; }
                 string path = attributeValue.StartsWith('/') ? attributeValue : "/" + attributeValue;
                 kept.Add("Path=" + mount + (path == "/" ? "" : path));
+                continue;
+            }
+            // Partitioned (CHIPS) is only valid alongside Secure, so over a plaintext origin, where
+            // Secure goes, it goes too: the browser would otherwise reject the whole cookie.
+            if (attributeName.Equals("Partitioned", StringComparison.OrdinalIgnoreCase))
+            {
+                if (options.SecureOrigin) kept.Add(attribute);
                 continue;
             }
             if (attributeName.Equals("Secure", StringComparison.OrdinalIgnoreCase))

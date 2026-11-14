@@ -16,6 +16,9 @@ public sealed class ParsedRequest
     public string? BasicPassword { get; set; }
     public string? BearerToken { get; set; }
     public bool InsecureSkipVerify { get; set; }
+    /// <summary>Assertions the source already implies — an OpenAPI operation's documented success
+    /// response becomes a status check and a schema check.</summary>
+    public List<AssertionRule> Assertions { get; set; } = new();
     /// <summary>multipart/form-data fields (cURL <c>-F</c>); a file part's value is its path.</summary>
     public List<ParsedFormPart> FormParts { get; set; } = new();
 }

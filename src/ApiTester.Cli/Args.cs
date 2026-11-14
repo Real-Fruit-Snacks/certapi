@@ -13,6 +13,7 @@ public sealed class Args
     /// positional that starts with a dash.</summary>
     public Args(IReadOnlyList<string> tokens)
     {
+        Original = tokens.ToArray();
         var split = new List<string?>(tokens.Count);
         var attached = new HashSet<int>();
         int literalFrom = int.MaxValue;
@@ -35,6 +36,10 @@ public sealed class Args
         _literalFrom = literalFrom;   // tokens from here on are never option-shaped
         _attached = attached;
     }
+
+    /// <summary>The tokens exactly as given, before any were consumed — for a command that writes
+    /// its own invocation back out (`mcp --print-config`).</summary>
+    public IReadOnlyList<string> Original { get; }
 
     private readonly int _literalFrom;
     private readonly HashSet<int> _attached;

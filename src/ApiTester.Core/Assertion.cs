@@ -8,8 +8,11 @@ namespace ApiTester.Core;
 /// <summary>What part of the response an assertion checks.</summary>
 public enum AssertTarget { Status, Time, Header, Body, BodyText }
 
-/// <summary>How an assertion compares the actual value against its expected value.</summary>
-public enum AssertOp { Equals, NotEquals, Contains, Matches, Exists, NotExists, LessThan, GreaterThan }
+/// <summary>How an assertion compares the actual value against its expected value.
+/// <c>MatchesSchema</c> validates the JSON at a body path (<c>$</c> for the whole body) against the
+/// JSON Schema in the value; see <see cref="JsonSchemaCheck"/> for the keywords it checks.
+/// New members go at the end: workspaces store the number.</summary>
+public enum AssertOp { Equals, NotEquals, Contains, Matches, Exists, NotExists, LessThan, GreaterThan, MatchesSchema }
 
 /// <summary>One assertion on a response: e.g. Status == 200, Body <c>data.id</c> exists,
 /// Time &lt; 500, Header Content-Type contains json. Edited in the GUI and checked by <c>run</c>.</summary>
@@ -65,6 +68,7 @@ public static class AssertionEvaluator
 
     private static AssertionResult EvaluateOne(AssertionRule rule, ApiResponse response)
     {
+        if (rule.Op == AssertOp.MatchesSchema) return EvaluateSchema(rule, response);
         string? actual = ActualValue(rule, response);
         bool passed = Apply(rule.Op, actual, rule.Value.Trim());
         return new AssertionResult(passed, Describe(rule), actual);
@@ -115,6 +119,26 @@ public static class AssertionEvaluator
         _ => false
     };
 
+    /// <summary>The JSON at the rule's path (<c>$</c>, <c>.</c> or empty: the whole body, for any
+    /// target) checked against the schema in its value. The actual value reported is the first
+    /// mismatch, or "matches".</summary>
+    private static AssertionResult EvaluateSchema(AssertionRule rule, ApiResponse response)
+    {
+        string describe = Describe(rule);
+        if (response.Body.Length == 0) return new AssertionResult(false, describe, "(empty body)");
+        JsonDocument doc;
+        try { doc = JsonDocument.Parse(Utf8Json.Body(response.Body)); }
+        catch (JsonException) { return new AssertionResult(false, describe, "(the body is not JSON)"); }
+        using (doc)
+        {
+            string path = rule.Target == AssertTarget.Body ? rule.Path.Trim() : "";
+            JsonElement? at = path is "" or "$" or "." ? doc.RootElement : JsonPath.Evaluate(doc.RootElement, path.TrimStart('$', '.'));
+            if (at is not { } value) return new AssertionResult(false, describe, $"(nothing at {path})");
+            string? error = JsonSchemaCheck.FirstError(rule.Value, value);
+            return new AssertionResult(error is null, describe, error ?? "matches");
+        }
+    }
+
     private static bool TryRegex(string pattern, string input)
     {
         // The pattern is user-supplied and runs against a whole response body, so bound the match
@@ -129,6 +153,20 @@ public static class AssertionEvaluator
     private static bool TryNum(string? s, out double n) =>
         double.TryParse(s?.Trim(), System.Globalization.NumberStyles.Float,
             System.Globalization.CultureInfo.InvariantCulture, out n);
+
+    private static string SchemaTitle(string schema)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(schema);
+            if (doc.RootElement.ValueKind == JsonValueKind.Object && doc.RootElement.TryGetProperty("title", out var t) && t.ValueKind == JsonValueKind.String)
+                return $" '{t.GetString()}'";
+            if (doc.RootElement.ValueKind == JsonValueKind.Object && doc.RootElement.TryGetProperty("$ref", out var r) && r.ValueKind == JsonValueKind.String)
+                return $" {r.GetString()}";
+        }
+        catch (JsonException) { }
+        return "";
+    }
 
     private static string Describe(AssertionRule rule)
     {
@@ -147,8 +185,11 @@ public static class AssertionEvaluator
             AssertOp.Contains => "contains", AssertOp.Matches => "matches",
             AssertOp.Exists => "exists", AssertOp.NotExists => "is absent",
             AssertOp.LessThan => "<", AssertOp.GreaterThan => ">",
+            AssertOp.MatchesSchema => "matches schema",
             _ => rule.Op.ToString()
         };
+        // A schema is long; the description names it by its title when it has one.
+        if (rule.Op == AssertOp.MatchesSchema) return $"{target} {op}{SchemaTitle(rule.Value)}";
         return rule.Op is AssertOp.Exists or AssertOp.NotExists
             ? $"{target} {op}"
             : $"{target} {op} {rule.Value.Trim()}";

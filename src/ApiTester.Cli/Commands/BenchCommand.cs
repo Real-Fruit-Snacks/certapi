@@ -257,6 +257,8 @@ public static class BenchCommand
 
             string? savedBody = dataSource is not null ? (dataSource.Text is { } text ? R(text) : null)
                 : string.IsNullOrEmpty(model.Body) ? null : R(model.Body!);
+            var (savedWindows, savedAws) = SavedAuth.For(model, R, model.EffectiveUrl(R), out var authProblem);
+            if (authProblem is not null) throw new CliDataException($"'{path}': {authProblem}");
             request = new ApiRequest
             {
                 Method = new HttpMethod((methodOpt ?? model.Method).ToUpperInvariant()),
@@ -267,9 +269,8 @@ public static class BenchCommand
                 ContentType = dataSource?.Bytes is not null ? (contentType ?? "application/octet-stream")
                     : savedBody is null ? null
                     : contentType ?? (model.ContentType == "(none)" ? null : model.ContentType),
-                WindowsAuth = model.AuthType == "Windows"
-                    ? WindowsAuthOptions.FromCredentials(R(model.AuthUser ?? ""), R(model.AuthSecret ?? ""))
-                    : null,
+                WindowsAuth = savedWindows,
+                AwsSigV4 = savedAws,
                 Timeout = TimeSpan.FromSeconds(timeoutRaw is null ? model.TimeoutSeconds : timeout)
             };
             // A saved request keeps its own transport settings as the baseline — the same rule `run`

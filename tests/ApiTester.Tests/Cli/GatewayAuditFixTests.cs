@@ -270,3 +270,94 @@ public class GatewayAuditFixTests
             Assert.Equal("netsh", LoopbackTlsBinding.NetshPath);
     }
 }
+
+/// <summary>Response headers an upstream sends that would act on the gateway's own origin rather
+/// than the upstream's.</summary>
+public class GatewayBrowserHeaderTests
+{
+    private static BrowserOptions Options(bool shared = true, bool secure = false, bool location = false, IReadOnlyList<string>? frames = null) =>
+        new(false, null, true, location, false, new Uri(secure ? "https://127.0.0.1:8819" : "http://127.0.0.1:8819"))
+        { SharedOrigin = shared, SecureOrigin = secure, FrameAncestors = frames };
+
+    private static readonly GatewayRoute Api = new("/api", new Uri("https://api.corp"));
+
+    private static IReadOnlyList<KeyValuePair<string, string>> Rewrite(BrowserOptions o, params (string, string)[] h) =>
+        BrowserRewriter.RewriteResponseHeaders(h.Select(p => new KeyValuePair<string, string>(p.Item1, p.Item2)).ToList(), null, Api, o, out _);
+
+    private static string? Get(IReadOnlyList<KeyValuePair<string, string>> h, string name) =>
+        h.FirstOrDefault(x => x.Key.Equals(name, StringComparison.OrdinalIgnoreCase)).Value;
+
+    [Theory]
+    [InlineData("Strict-Transport-Security", "max-age=31536000; includeSubDomains")]
+    [InlineData("Alt-Svc", "h3=\":443\"; ma=86400")]
+    [InlineData("NEL", "{\"report_to\":\"default\",\"max_age\":2592000}")]
+    [InlineData("Report-To", "{\"group\":\"default\"}")]
+    [InlineData("Reporting-Endpoints", "default=\"https://reports.corp\"")]
+    [InlineData("Public-Key-Pins", "pin-sha256=\"x\"; max-age=1")]
+    [InlineData("Expect-CT", "max-age=1")]
+    public void Headers_that_stick_to_the_gateway_origin_are_always_dropped(string name, string value)
+    {
+        Assert.Null(Get(Rewrite(Options(), (name, value)), name));
+        Assert.Null(Get(Rewrite(Options(shared: false, secure: true)), name));
+    }
+
+    [Theory]
+    [InlineData("Service-Worker-Allowed", "/")]
+    [InlineData("Clear-Site-Data", "\"cookies\", \"storage\"")]
+    public void Origin_wide_headers_are_dropped_only_while_sites_share_an_origin(string name, string value)
+    {
+        Assert.Null(Get(Rewrite(Options(shared: true), (name, value)), name));
+        Assert.Equal(value, Get(Rewrite(Options(shared: false), (name, value)), name));
+    }
+
+    [Fact]
+    public void Upgrade_insecure_requests_is_removed_over_plaintext_and_kept_over_tls()
+    {
+        const string csp = "default-src 'self'; upgrade-insecure-requests; img-src *";
+        Assert.Equal("default-src 'self'; img-src *", Get(Rewrite(Options(), ("Content-Security-Policy", csp)), "Content-Security-Policy"));
+        Assert.Equal(csp, Get(Rewrite(Options(secure: true), ("Content-Security-Policy", csp)), "Content-Security-Policy"));
+    }
+
+    [Fact]
+    public void Allow_framing_replaces_x_frame_options_and_frame_ancestors()
+    {
+        var h = Rewrite(Options(secure: true, frames: new[] { "http://localhost:3000" }),
+            ("X-Frame-Options", "DENY"), ("Content-Security-Policy", "default-src 'self'; frame-ancestors 'none'"));
+        Assert.Null(Get(h, "X-Frame-Options"));
+        var policies = h.Where(x => x.Key == "Content-Security-Policy").Select(x => x.Value).ToList();
+        Assert.Contains("default-src 'self'", policies);
+        Assert.Contains("frame-ancestors 'self' http://localhost:3000", policies);
+    }
+
+    [Fact]
+    public void Without_allow_framing_x_frame_options_is_relayed() =>
+        Assert.Equal("DENY", Get(Rewrite(Options(), ("X-Frame-Options", "DENY")), "X-Frame-Options"));
+
+    [Fact]
+    public void Link_and_content_location_come_back_through_the_gateway()
+    {
+        var h = Rewrite(Options(location: true),
+            ("Link", "<https://api.corp/items?page=2>; rel=\"next\", <https://cdn.other/x.css>; rel=preload, </relative>; rel=prev"),
+            ("Content-Location", "https://api.corp/items/7"));
+        Assert.Equal("<http://127.0.0.1:8819/api/items?page=2>; rel=\"next\", <https://cdn.other/x.css>; rel=preload, </relative>; rel=prev", Get(h, "Link"));
+        Assert.Equal("http://127.0.0.1:8819/api/items/7", Get(h, "Content-Location"));
+    }
+
+    [Fact]
+    public void Partitioned_goes_with_secure_over_plaintext()
+    {
+        Assert.DoesNotContain("Partitioned", Get(Rewrite(Options(), ("Set-Cookie", "a=1; Secure; SameSite=None; Partitioned")), "Set-Cookie"));
+        Assert.Contains("Partitioned", Get(Rewrite(Options(secure: true), ("Set-Cookie", "a=1; Secure; SameSite=None; Partitioned")), "Set-Cookie"));
+    }
+
+    [Theory]
+    [InlineData("http://evil; script-src *")]
+    [InlineData("javascript:alert(1)")]
+    [InlineData("localhost:3000")]
+    public void A_bad_allow_framing_origin_is_a_usage_error(string origin)
+    {
+        var err = new StringWriter();
+        int exit = CliApp.Run(new[] { "--no-config", "serve", "http://127.0.0.1:9", "--port", "8899", "--allow-framing", origin, "--check" }, new StringWriter(), err);
+        Assert.Equal(2, exit);
+    }
+}

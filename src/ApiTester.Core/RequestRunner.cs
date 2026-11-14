@@ -153,10 +153,10 @@ public static class RequestRunner
                     Convert.ToBase64String(Encoding.UTF8.GetBytes($"{R(m.AuthUser ?? "")}:{R(m.AuthSecret ?? "")}"))));
                 break;
         }
-        var winAuth = m.AuthType == "Windows"
-            ? WindowsAuthOptions.FromCredentials(R(m.AuthUser ?? ""), R(m.AuthSecret ?? ""))
-            : null;
         string url = m.EffectiveUrl(R);
+        var (winAuth, awsAuth) = SavedAuth.For(m, R, url, out var authProblem);
+        if (authProblem is not null)
+            return (new ApiResponse { Error = new ApiError(ApiErrorKind.Unknown, authProblem) }, url);
         string host = TokenService.HostOf(url);
         string? body = string.IsNullOrEmpty(m.Body) ? null : R(m.Body!);
 
@@ -226,6 +226,7 @@ public static class RequestRunner
                 : null,
             ContentType = !m.IsMultipart && body is not null && m.ContentType != "(none)" ? m.ContentType : null,
             WindowsAuth = winAuth,
+            AwsSigV4 = awsAuth,
             Timeout = TimeSpan.FromSeconds(m.TimeoutSeconds)
         };
         // Attach any browser-captured session cookies for this origin, on top of the optional

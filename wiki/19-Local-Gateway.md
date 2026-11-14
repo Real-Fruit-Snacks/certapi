@@ -205,6 +205,7 @@ secret masked.
 | `--max-requests <n>` | Requests the gateway handles at once, WebSockets included (default 256); one more is answered 503 at once. `/_certapi/` and CORS preflights do not count and are always answered ([limits](#limits-and-health)) |
 | `--forwarded` | Add `X-Forwarded-For/Proto/Host` and `Via: 1.1 certapi` to forwarded requests |
 | `--workspace <file>` | Resolve a saved-website `<upstream>` from a workspace file |
+| `--open [<path>]` | Open the browser at the first site once listening |
 | `-q, --quiet` | No startup table, per-request log or notes; warnings and the health line still print ([the log](#the-request-log)) |
 | `--tls` | Serve the gateway itself over HTTPS on 127.0.0.1 with a generated gateway certificate, so `Secure` and `__Host-`/`__Secure-` cookies work. The certificate is cached in `%LocalAppData%\CertApiTester\gateway-tls` (out of the roaming profile, with the key file encrypted for your Windows account) and reused. `--tls-untrust` also removes the copy `--tls` installed in `LocalMachine\My`, from an elevated prompt. Binding the port needs an elevated prompt the first time; the exact `netsh` command is printed if it isn't available. With `--vhost` the certificate also names the suffix, every site under it and each `--allow` host on its default https port. It is regenerated within 7 days of expiry, or when it lacks a name the run needs; that run moves the `127.0.0.1:<port>` binding to the new certificate (from an elevated prompt; otherwise it prints the `netsh` commands and stops). With `--tls-trust` the new root is installed and then the old one removed; without it, a note says to add `--tls-trust` once |
 | `--tls-trust` | Also install that certificate into `CurrentUser\Root` so the browser accepts it silently — explicit, logged, and reversible. Only with `--tls` |
@@ -219,6 +220,7 @@ secret masked.
 | `--rewrite-body` | Upstream URLs written into HTML, CSS, JavaScript, JSON and XML bodies — links, script sources, a meta refresh, an API base in a config file — point back through the gateway, mapped exactly as a `Location` is. JSON's escaped `https:\/\/` form is kept escaped. JSON and XML are rewritten only when the response has a `Content-Length`; streamed JSON or XML is relayed as it arrives. Only `gzip`, `deflate` and `br` are decoded, and a body with a rewritten URL is sent decompressed. A body that is unchanged, over 32 MB, not UTF-8, corrupt, or in another or stacked encoding passes untouched. Not part of `--browser`: it buffers bodies the relay otherwise streams |
 | `--referer-fallback` | A path no site owns, from a page the gateway served, is sent (307) to the same path under that page's site |
 | `--allow-upgrade` | Relay WebSocket connections through your certificate |
+| `--allow-framing [<origins>]` | Let pages be framed by this machine's pages or the origins listed |
 | `--cookie-jar [<file>]` | Keep upstream cookies on the gateway and send them to matching hosts; with a file, kept across restarts encrypted (DPAPI) |
 | `--auto-token` | Attach a bearer token captured earlier for the upstream's origin |
 | `--request-header "Name: value"` | Set a header on the request before it reaches the upstream. Repeatable |
@@ -360,8 +362,9 @@ error pages, or a relayed WebSocket upgrade.
 
 A plain relay hands a browser exactly the headers that make it refuse the response — a tab checks
 things curl and a script never do, like origin policy, cookie attributes, and where a redirect
-actually leads. Without the flags below nothing changes: the gateway stays a byte-faithful relay,
-which is exactly what protects every existing non-browser caller. `--browser` is the bundle that turns
+actually leads. Without the flags below the gateway stays a faithful relay — apart from a few
+headers that would leave state on its own origin, which are always dropped (below) — and that is
+exactly what protects every existing non-browser caller. `--browser` is the bundle that turns
 on seven accommodations at once — `--cors`, `--rewrite-cookies`, `--rewrite-location`,
 `--allow-upgrade`, `--rewrite-origin`, `--strip-csp` and `--referer-fallback` — and each one is also
 usable on its own. `--cookie-jar` and `--auto-token` stay opt-in, because they make the gateway hold
@@ -408,6 +411,24 @@ upstream's origin. `--windows-auth` answers an upstream's Negotiate/NTLM challen
 
 `--allow-upgrade` relays WebSocket connections to the upstream through your certificate, the same way
 every other forwarded request is.
+
+`--allow-framing` lets a page be shown inside a frame — a developer portal, a dashboard shell,
+Storybook. The upstream's `X-Frame-Options` and any CSP `frame-ancestors` are replaced with
+`frame-ancestors 'self'` plus pages on this machine, or exactly the origins you list
+(`--allow-framing http://localhost:3000,https://*.dev.localhost:*`). It is not in `--browser`,
+because it lowers the page's clickjacking guard. `--open` opens your browser at the first site once
+the gateway is listening (or at the path you give).
+
+**Always dropped.** Some headers would leave lasting state on the gateway's own origin, which every
+site and every later session shares, so they are removed whatever the flags:
+`Strict-Transport-Security` (HSTS ignores ports — it would pin `localhost` to https for every other
+local tool), `Alt-Svc`, `NEL`, `Report-To`, `Reporting-Endpoints`, `Public-Key-Pins` and `Expect-CT`.
+While all sites share one origin (no `--vhost`), so are `Service-Worker-Allowed` and
+`Clear-Site-Data`: one site must not claim a service worker over, or wipe the cookies of, the others.
+Over plaintext, a policy's `upgrade-insecure-requests` and `block-all-mixed-content` are removed
+(they would send the page to an https port nothing answers) and a cookie's `Partitioned` attribute
+is dropped, since it requires `Secure`. With `--rewrite-location`, `Link` and `Content-Location`
+URLs are rewritten as a `Location` is.
 
 Over the default plaintext loopback origin, a cookie named `__Host-…` or `__Secure-…` cannot work at
 all: it requires the `Secure` attribute, which no browser accepts over plaintext `http://127.0.0.1`.

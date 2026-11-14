@@ -503,6 +503,9 @@ public partial class MainWindow : Window
             WindowsDefaultCheck.IsChecked = s.WindowsDefault;
             WindowsUserBox.Text = s.WindowsUserText;
             WindowsPassBox.Text = s.WindowsPassText;
+            AwsKeyBox.Text = s.AwsKeyText;
+            AwsSecretBox.Text = s.AwsSecretText;
+            AwsScopeBox.Text = s.AwsScopeText;
             IgnoreServerCertCheck.IsChecked = s.IgnoreServerCert;
             TimeoutBox.Text = s.TimeoutText;
             SelectCertByThumbprint(s.CertThumbprint);
@@ -544,6 +547,9 @@ public partial class MainWindow : Window
         WindowsDefault = WindowsDefaultCheck.IsChecked == true,
         WindowsUserText = WindowsUserBox.Text,
         WindowsPassText = WindowsPassBox.Text,
+        AwsKeyText = AwsKeyBox.Text,
+        AwsSecretText = AwsSecretBox.Text,
+        AwsScopeText = AwsScopeBox.Text,
         IgnoreServerCert = IgnoreServerCertCheck.IsChecked == true,
         TimeoutText = TimeoutBox.Text,
         ProxyIndex = TransportProxyCombo.SelectedIndex,
@@ -2346,8 +2352,10 @@ public partial class MainWindow : Window
         if (BearerPanel is null) return; // during init
         AutoAuthHint.Visibility = AuthTypeCombo.SelectedIndex == 0 ? Visibility.Visible : Visibility.Collapsed;
         BearerPanel.Visibility = AuthTypeCombo.SelectedIndex == 2 ? Visibility.Visible : Visibility.Collapsed;
-        BasicPanel.Visibility = AuthTypeCombo.SelectedIndex == 3 ? Visibility.Visible : Visibility.Collapsed;
+        BasicPanel.Visibility = AuthTypeCombo.SelectedIndex is 3 or 5 ? Visibility.Visible : Visibility.Collapsed;
+        DigestHint.Visibility = AuthTypeCombo.SelectedIndex == 5 ? Visibility.Visible : Visibility.Collapsed;
         WindowsPanel.Visibility = AuthTypeCombo.SelectedIndex == 4 ? Visibility.Visible : Visibility.Collapsed;
+        AwsPanel.Visibility = AuthTypeCombo.SelectedIndex == 6 ? Visibility.Visible : Visibility.Collapsed;
     }
 
     private void WindowsDefaultCheck_Changed(object sender, RoutedEventArgs e)
@@ -2396,6 +2404,9 @@ public partial class MainWindow : Window
             ? m.EnabledParts().Select(p => p with { Name = R(p.Name), Value = p.Value is null ? null : R(p.Value) }).ToList()
             : null;
 
+        // A problem (AWS with no region it can read) is sent as configured and fails at the server,
+        // where the response says why; the editor shows the fields that need filling.
+        var (savedWindows, savedAws) = SavedAuth.For(m, R, url, out _);
         return new ApiRequest
         {
             Method = new HttpMethod(m.Method),
@@ -2404,9 +2415,8 @@ public partial class MainWindow : Window
             Body = m.IsMultipart ? null : body,
             Parts = parts,
             ContentType = contentType,
-            WindowsAuth = m.AuthType == "Windows"
-                ? WindowsAuthOptions.FromCredentials(R(m.AuthUser ?? ""), R(m.AuthSecret ?? ""))
-                : null,
+            WindowsAuth = savedWindows,
+            AwsSigV4 = savedAws,
             Timeout = TimeSpan.FromSeconds(m.TimeoutSeconds)
         };
     }

@@ -359,6 +359,7 @@ public static class MarkdownExport
             AssertOp.NotExists => "does not exist",
             AssertOp.LessThan => "<",
             AssertOp.GreaterThan => ">",
+            AssertOp.MatchesSchema => "matches schema",
             _ => rule.Op.ToString()
         };
         return rule.Op is AssertOp.Exists or AssertOp.NotExists

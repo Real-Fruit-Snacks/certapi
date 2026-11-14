@@ -331,6 +331,8 @@ A body file that is text — UTF-8, or UTF-16/32 with a byte-order mark — is s
 |---|---|---|
 | `--bearer <token>` | none | Send `Authorization: Bearer <token>` |
 | `-u, --basic <user:password>` | none | Send `Authorization: Basic …`, encoded for you |
+| `--digest` | off | Answer the server's HTTP Digest challenge (RFC 7616, MD5 or SHA-256) with the `--basic` user and password, instead of sending them as Basic. The password never travels, only the origin you named is answered, and a Basic challenge is never answered with it. curl's spelling |
+| `--aws-sigv4 <aws:amz[:region[:service]]>` | none | Sign the request with AWS Signature Version 4, curl's spelling. The access key id and secret come from `-u key-id:secret`, or from `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` (with `AWS_SESSION_TOKEN` for temporary credentials); a typed `X-Amz-Security-Token` header is signed too. A region or service left out is read from an `*.amazonaws.com` host. Only the origin you named is signed: a redirect elsewhere goes unsigned |
 | `--windows-auth` | off | Windows Integrated Authentication (Negotiate/NTLM) as your signed-in account. Aliases: `--ntlm`, `--negotiate` |
 | `--windows-user <DOMAIN\user>` | signed-in | Use explicit Windows credentials instead of single sign-on |
 | `--windows-password <password>` | none | The password to go with `--windows-user` |
@@ -543,7 +545,7 @@ only to a `<file.har>` or `--diff-har` replay: a saved request presents its own 
 | `--diff-har <file.har>` | none | Replay a captured session and compare each response against the one it recorded, which turns a capture into a regression test. An entry passes only when its diff is identical — the status is part of the diff — and any difference exits 1. There is deliberately no `--diff-fail` here, because diffing the capture *is* the flag |
 
 A replay (a `<file.har>` positional or `--diff-har`) sends the archive's own requests as recorded,
-so it refuses `--har`, `--md`, `--md-vault`, `--cookies`, `--cookie-jar`, `--data`, `--env`,
+so it refuses `--har`, `--junit`, `--md`, `--md-vault`, `--cookies`, `--cookie-jar`, `--data`, `--env`,
 `--var`, `--strict-vars`, `--no-auto-token`, `--record` and `--no-record` (exit 2).
 
 ### Behaviour
@@ -564,6 +566,7 @@ so it refuses `--har`, `--md`, `--md-vault`, `--cookies`, `--cookie-jar`, `--dat
 | `--json` | off | A JSON envelope of results instead of the table |
 | `--har <file>` | none | Capture the whole suite — every request and every redirect hop — as one HTTP Archive |
 | `--har-include-secrets` | off | Keep credential header values in that archive (the same credential headers [`send --har`](#capturing-the-exchange) redacts) |
+| `--junit <file>` | none | Also write the results as JUnit XML for a CI test report (Azure DevOps, GitLab, Jenkins, GitHub test reporters): one `<testcase>` per request, named by its label and classed by its folder; failed assertions are `<failure>`s with what arrived instead, a request that never got an answer is an `<error>`, and skipped chain steps are `<skipped>`. URLs are redacted as in `--md` |
 | `--md <file>` | none | Write the run as a markdown note: a pass/fail table with per-request timings, each failed assertion **and what arrived instead**, and `total`/`passed`/`failed` in frontmatter so a vault can chart a suite's health over time. A chain's report is numbered in step order, shows skipped steps, and links each step back to its request note from [`export markdown`](#export). Captured variables are listed **by name only** — a captured value is usually the credential the next step authenticates with |
 | `--md-vault <folder>` | none | File that report as `certapi/runs/<name>-<timestamp>.md` instead: a new note per run, so the history a trend needs is never overwritten. A second run in the same second gets `-2`, `-3`, … |
 | `--md-include-secrets` | off | Keep credential-looking query values in the report |
@@ -994,6 +997,7 @@ Accepts the [certificate](#certificate-options) and [transport](#transport-optio
 | `--vhost [<suffix>]` | off | **One origin per site** instead of one path each. Site `api` answers at `http://api.gw.localhost:<port>/`, the site at `/` at `http://gw.localhost:<port>/`, and an allowed dynamic host at `http://<host>.gw.localhost:<port>/` (`hr.corp--8443` for a port, `http--pub.corp` for plain http). Paths, cookies and origins reach the browser as the upstream wrote them; a cross-site redirect lands on the other host. Browsers resolve `*.localhost` to loopback by themselves; another suffix needs a hosts-file entry. Binds every interface (Windows needs a one-time URL reservation; the `netsh` command is printed) but answers **only loopback callers** unless `--listen` is also given. `127.0.0.1` keeps working in path form beside it. With `--tls` the gateway certificate also names the suffix, every site under it, and each `--allow` host on its default https port; an allowed host on another port or over http (or under `--allow *`) warns once in the browser |
 | `--listen <address>` | loopback | Also answer on this address — an IP address, `0.0.0.0`, `::`, `+`, `*` or `localhost` — so a VM, a container or a teammate can use the gateway. A loopback address (`127.0.0.1`, `::1`, `localhost`) needs no token and stays loopback-only, even under `--vhost`. Any other address **requires `--token`**, because anything that reaches the port then reaches your client certificate. With `--tls` only `127.0.0.1` or `::1` is accepted. On Windows a non-loopback prefix needs a one-time URL reservation; the exact `netsh http add urlacl` command is printed when it is missing |
 | `--workspace <file>` | live state | Resolve a saved-website upstream from a workspace file |
+| `--open [<path>]` | off | Once the gateway is listening, open the default browser at the first site (its `--vhost` host, or its mount), or at this path on the gateway |
 | `-q, --quiet` | off | No startup table, per-request log or notes; warnings and the once-a-minute health line still print |
 
 The gateway answers two paths itself, never forwarding them: `/_certapi/health` (state as JSON)
@@ -1060,7 +1064,20 @@ So a page on another origin can call the upstream through the gateway.
 | `--referer-fallback` | off | A path nothing owns, from a page the gateway served (`/static/app.js` requested by a page under `/app`), is sent with a 307 to the same path under that page's mount, read from the `Referer`. For the application that writes absolute paths; `--vhost` makes it unnecessary. In the bundle |
 | `--cookie-jar [<file>]` | off | Keep upstream cookies **on the gateway**, stored against the real upstream URL with `Domain` intact, and send them on every forwarded request (HTTP and WebSocket) to a matching host, alongside what the browser sent (the browser's value wins for a name both have). A browser stores every cookie against the gateway's one origin, so a `Domain=.corp` session set by `login.corp` never reaches `app.corp` on its own; this is how a multi-step login across hosts completes. Memory only unless a file is named: then the jar is loaded at start and written at shutdown, **encrypted for your Windows user (DPAPI)** and never in the clear, so a session survives a restart without sitting readable on disk. Where the machine cannot encrypt, the file form is refused up front. Not in the bundle |
 | `--auto-token` | off | Attach `Authorization: Bearer …` from a token captured earlier for the upstream's origin (`send --capture`, the app's Capture tab, a session capture) when the request carries none of its own. Not in the bundle |
+| `--allow-framing [<origins>]` | off | Let a page be embedded in a frame (a dev shell, a portal, Storybook): `X-Frame-Options` and any CSP `frame-ancestors` are dropped and replaced with `frame-ancestors 'self'` plus pages on this machine (`localhost`, `127.0.0.1`, `[::1]`, `*.localhost`, any port) — or exactly the origins listed (comma-separated, repeatable; `*` ports and `*.` subdomains allowed). Not in the bundle, since it lowers a page's clickjacking guard |
 | `--allow-upgrade` | off | Relay WebSocket connections to the upstream as well. An upgrade reaches the upstream the way a request does — same proxy, bypass list, pins, `--ca-file` and certificate — and carries the browser's upgrade headers (Cookie, Authorization, Origin, custom) and every offered subprotocol |
+
+**Always, whatever the flags.** Headers that would leave lasting state on the gateway's own origin
+— where every site and every later session lives — are dropped from responses:
+`Strict-Transport-Security` (HSTS ignores ports, so it would pin `localhost` to https for every
+other tool on the machine), `Alt-Svc`, `NEL`, `Report-To`, `Reporting-Endpoints`,
+`Public-Key-Pins` (and `-Report-Only`) and `Expect-CT`. While every site shares one origin (no
+`--vhost`), `Service-Worker-Allowed` and `Clear-Site-Data` are dropped too: one site must not
+claim a service worker scope over, or wipe the storage of, the others. Over plaintext a CSP keeps
+everything but `upgrade-insecure-requests` and `block-all-mixed-content`, which would send the
+page's own requests to an https port nothing answers, and a cookie's `Partitioned` attribute is
+dropped (it requires `Secure`). `--rewrite-location` also rewrites the URLs in `Link` and
+`Content-Location`.
 
 ### Header rewriting
 
@@ -1131,12 +1148,14 @@ Accepts the [certificate](#certificate-options) and [transport](#transport-optio
 |---|---|---|
 | `--cert <thumbprint or subject>` | none | The certificate every tool uses. **Pinned at startup — the agent cannot change it**, which is the security model: the agent chooses requests, you choose the identity |
 | `--allow <host>` | any host, with a warning | An allowed upstream host. **Repeatable, and the allowlist is the boundary**: a URL must match one of these or be a subdomain of it, so an agent cannot be talked into calling somewhere else. Without `--allow` every host is allowed and the startup line says so |
-| `--timeout <seconds>` | `100` | Upstream timeout for `send_request`; a saved request may carry its own |
+| `--allow-any` | off | Allow every host on purpose: the start-up warning becomes a plain note. Refused beside `--allow` |
+| `--timeout <seconds>` | `100` | Upstream timeout for `send_request`, and the longest `ws_exchange` or `sse_read` listens; a saved request may carry its own |
 | `--max-body <size>` | `1m` | The most of a response body a tool result carries; the rest is not read, and the result says `"truncated": true`. `k`/`m`/`g` suffixes |
 | `--workspace <file>` | live state | Load saved requests, environments and chains from a workspace file, so the agent can run things you prepared |
 | `--no-auto-token` | off | Do not capture or reuse bearer tokens across the session's calls |
 | `--protoset <file>` | reflection | Compiled descriptor set for `grpc_list`/`grpc_call` against a service without reflection |
 | `--insecure` | off | Ignore upstream certificate errors (internal certificate authorities) |
+| `--print-config <host>` | none | Print the block that launches this server, with the other options given, for `claude` (Claude Desktop's `claude_desktop_config.json`, Claude Code's `.mcp.json`), `vscode` (`.vscode/mcp.json`) or `cursor` (`.cursor/mcp.json`), then exit without starting. File paths are made absolute, since the host picks the working directory. `--cert-password`, `--cert-pin` and `--proxy-user` are refused rather than written into a file in the clear |
 
 The retry options `--retry`, `--retry-on` and `--retry-delay` work here with the same rules as
 [`send`](#send).

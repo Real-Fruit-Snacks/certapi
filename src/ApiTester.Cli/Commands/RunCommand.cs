@@ -45,6 +45,10 @@ public static class RunCommand
           --har-include-secrets   Keep credential header values in the captured HAR (Authorization,
                                   Cookie, Set-Cookie, token, secret and API-key headers;
                                   redacted by default)
+          --junit <file>          Also write the results as JUnit XML, which CI systems (Azure
+                                  DevOps, GitLab, Jenkins, GitHub test reporters) show as a test
+                                  report: one case per request, failed assertions as failures,
+                                  skipped chain steps as skipped. URLs are redacted
           --md <file>             Also write the run as a markdown note: a pass/fail table, each
                                   failed assertion with what arrived instead, per-request timing,
                                   and totals in frontmatter so a vault can chart a suite's health
@@ -159,6 +163,7 @@ public static class RunCommand
         string? harPath = args.Value("--har");
         string? mdFile = args.Value("--md");
         string? mdVault = args.Value("--md-vault");
+        string? junitFile = args.Value("--junit");
         bool mdIncludeSecrets = args.Flag("--md-include-secrets");
         if (mdFile is not null && mdVault is not null)
             throw new CliUsageException("--md and --md-vault both name where the report goes; pick one.");
@@ -216,6 +221,7 @@ public static class RunCommand
             if (harPath is not null) unused.Add("--har");
             if (mdFile is not null) unused.Add("--md");
             if (mdVault is not null) unused.Add("--md-vault");
+            if (junitFile is not null) unused.Add("--junit");
             if (useCookies) unused.Add(cookieJarPath is not null ? "--cookie-jar" : "--cookies");
             if (dataFile is not null) unused.Add("--data");
             if (envName is not null) unused.Add("--env");
@@ -469,19 +475,26 @@ public static class RunCommand
         if (mdFile is not null || mdVault is not null)
             WriteReport(outcomes, skippedSteps, chainName, clock.Elapsed,
                         mdFile, mdVault, mdIncludeSecrets, stderr);
+        if (junitFile is not null)
+        {
+            // As with --md, a failure to write is reported but never changes the run's verdict.
+            try
+            {
+                if (Path.GetDirectoryName(Path.GetFullPath(junitFile)) is { Length: > 0 } folder) Directory.CreateDirectory(folder);
+                File.WriteAllText(junitFile, RunReportJunit.Render(BuildReport(outcomes, skippedSteps, chainName, clock.Elapsed), DateTimeOffset.UtcNow));
+                stderr.WriteLine($"wrote JUnit results to {junitFile}");
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                stderr.WriteLine($"warning: could not write --junit {junitFile}: {ex.Message}");
+            }
+        }
 
         return failed == 0 ? ExitCodes.Ok : ExitCodes.Failure;
     }
 
-    /// <summary>Write the run as a markdown note. As with `doctor --md`, a failure to write is
-    /// reported but never changes the run's own verdict: the results are what the caller asked for,
-    /// and a CI job must not turn green or red because of a folder permission.</summary>
-    private static void WriteReport(List<RequestOutcome> outcomes, List<string> skipped, string? chainName,
-                                    TimeSpan elapsed, string? file, string? vault, bool includeSecrets,
-                                    TextWriter stderr)
-    {
-        var when = DateTimeOffset.UtcNow;
-        var report = new RunReport(chainName,
+    private static RunReport BuildReport(List<RequestOutcome> outcomes, List<string> skipped, string? chainName, TimeSpan elapsed) =>
+        new(chainName,
             outcomes.Select(o => new RunReportRow(
                 o.Label, o.Request.Method, o.Url, o.Response.StatusCode, o.Response.Elapsed,
                 o.Response.Body.LongLength, o.Passed,
@@ -491,6 +504,16 @@ public static class RunCommand
                 o.Response.Error?.Message,
                 o.Captures)).ToList(),
             skipped, elapsed);
+
+    /// <summary>Write the run as a markdown note. As with `doctor --md`, a failure to write is
+    /// reported but never changes the run's own verdict: the results are what the caller asked for,
+    /// and a CI job must not turn green or red because of a folder permission.</summary>
+    private static void WriteReport(List<RequestOutcome> outcomes, List<string> skipped, string? chainName,
+                                    TimeSpan elapsed, string? file, string? vault, bool includeSecrets,
+                                    TextWriter stderr)
+    {
+        var when = DateTimeOffset.UtcNow;
+        var report = BuildReport(outcomes, skipped, chainName, elapsed);
 
         string path = file ?? Path.Combine(vault!,
             RunReportMarkdown.VaultPath(report, when).Replace('/', Path.DirectorySeparatorChar));

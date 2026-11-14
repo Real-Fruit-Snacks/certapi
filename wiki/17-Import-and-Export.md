@@ -27,6 +27,11 @@ certapi import openapi .\petstore.json --workspace .\suite.json
 ```
 
 Paths, methods, base servers, and operation names come across so you can start sending immediately.
+Each operation also gets the checks its documented answer implies: a **status assertion** for its
+first 2xx response and, when that response has a JSON schema, a **schema assertion**
+(`body $ schema …`) carrying the schema with only the `components.schemas` (or Swagger 2
+`definitions`) it reaches. A `certapi run` of the imported collection is a contract test from the
+first run; edit or delete either assertion like any other.
 
 ## Import a HAR file
 
@@ -58,7 +63,7 @@ certapi import postman .\orders.postman_collection.json --into "orders" --worksp
 
 Folders, methods, both of Postman's URL forms, query rows, and headers come across, with disabled
 rows staying disabled. Bodies map by mode — raw (with the language deciding the content type),
-urlencoded, and formdata — and auth maps for bearer, basic, and apikey, with request-level auth
+urlencoded, and formdata — and auth maps for bearer, basic, digest, awsv4 and apikey, with request-level auth
 beating folder- and collection-level, exactly as Postman resolves it. `{{variables}}` share their
 syntax between the two products, so request text imports unchanged, and collection-level variables
 become an environment named after the collection — a variable Postman marked `secret` is stored
@@ -76,7 +81,7 @@ certapi import insomnia .\export.json --into "orders" --workspace .\suite.json
 
 Use Insomnia's **Export Data → Insomnia v4 (JSON)**. Folders, methods, URLs, query and header rows
 come across with disabled rows staying disabled; text and form bodies map by their media type; and
-bearer and basic authentication map directly (a block Insomnia has switched off is ignored rather
+bearer, basic, digest and IAM (AWS Signature v4) authentication map directly (a block Insomnia has switched off is ignored rather
 than applied). Insomnia's environments become environments here.
 
 Two things about templates are worth knowing, because the two products spell variables differently:
@@ -86,6 +91,29 @@ Two things about templates are worth knowing, because the two products spell var
 - **A tag template — `{% uuid 'v4' %}`, `{% response … %}` — is a small program, not a value**, and
   has no equivalent here. It is left in the text exactly as written and named in a warning at
   import time, which is more useful than dropping it silently and discovering the gap at send time.
+
+## Import a Bruno collection
+
+```powershell
+certapi import bruno .\people-api                 # the collection folder Bruno keeps on disk
+certapi import bruno .\people-api\users\get-user.bru
+certapi import bruno .\people-api.json --into "people" --workspace .\suite.json   # Export Collection JSON
+```
+
+Bruno keeps a collection as a folder of `.bru` files, so point at the folder (the one with
+`bruno.json`). Folders come across with their names from `folder.bru`, requests in their `seq`
+order, and query rows, path parameters, headers (disabled rows stay disabled) and bodies — JSON,
+text, XML, GraphQL (rebuilt as the `{"query", "variables"}` it sends), form and multipart. Auth maps
+for bearer, basic, digest, NTLM (as Windows auth), AWS Signature v4 and API key, and **`inherit`**
+is resolved the way Bruno resolves it: the nearest `folder.bru`, then `collection.bru`.
+`{{variables}}` share their syntax and import unchanged; `environments/*.bru` become environments.
+
+Two of Bruno's blocks have a counterpart here and come across as one: an **`assert`** line such as
+`res.status: eq 200` or `res.body.id: isDefined` becomes an assertion, and a
+**`vars:post-response`** entry that reads a body path or header (`token: res.body.access_token`)
+becomes a capture. Scripts and tests are JavaScript and are named in a warning, as is an assert
+operator with no equivalent (`length`, `isJson`, …). Bruno keeps **secret** environment values out of
+its files, so they arrive empty — the warning says how many to fill in.
 
 ## Import a WSDL (SOAP)
 

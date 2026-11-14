@@ -11,6 +11,7 @@ public static class ImportCommand
                certapi import postman <file>         [--into <folder>] [--workspace <file>]
                certapi import insomnia <file>        [--into <folder>] [--workspace <file>]
                certapi import wsdl <file>            [--into <folder>] [--workspace <file>]
+               certapi import bruno <folder|file>    [--into <folder>] [--workspace <file>]
 
         Adds requests to your collections — the live GUI state by default, or a workspace
         file. --into names a root-level folder (created if needed).
@@ -29,6 +30,16 @@ public static class ImportCommand
         this product's {{name}} -- and its environments come across as environments. A tag
         template ({% ... %}) is a small program rather than a value and has no equivalent here, so
         it is left in the text and named in a warning.
+
+        bruno: reads a Bruno collection: its folder of .bru files (folders, requests in their seq
+        order, query/path params, headers, json/text/xml/graphql/form/multipart bodies, and
+        bearer/basic/digest/ntlm/awsv4/apikey auth, with "inherit" resolved through folder.bru and
+        collection.bru), a single .bru file, or the JSON Bruno's Export Collection writes. Its
+        environments/*.bru come across as environments; secret variables, which Bruno keeps out of
+        its files, arrive empty. An assert line with an equivalent here (res.status: eq 200,
+        res.body.id: isDefined, …) becomes an assertion, and a post-response variable that reads a
+        body path or header becomes a capture. Scripts and tests are JavaScript and are named in a
+        warning, as is anything else that cannot carry across.
 
         wsdl: reads a WSDL 1.1 document (and the SOAP 1.2 binding variant), turning each operation
         into a POST at the port's address with the right content type, the SOAPAction header for
@@ -146,6 +157,24 @@ public static class ImportCommand
                 added = CountRequests(result.Root); what = result.Root.Name;
                 break;
             }
+            case "bruno":
+            {
+                BrunoImportResult result;
+                try { result = ReadBruno(positionals[1]); }
+                catch (FormatException ex) { throw new CliDataException($"Could not parse '{positionals[1]}': {ex.Message}"); }
+                add(result.Root);
+                foreach (var env in result.Environments)
+                {
+                    var existing = state.Environments.FirstOrDefault(
+                        e => e.Name.Equals(env.Name, StringComparison.OrdinalIgnoreCase));
+                    if (existing is not null) state.Environments.Remove(existing);
+                    state.Environments.Add(env);
+                    stderr.WriteLine($"Imported environment '{env.Name}' ({env.Variables.Count} variable{(env.Variables.Count == 1 ? "" : "s")}).");
+                }
+                foreach (var warning in result.Warnings) stderr.WriteLine("warning: " + warning);
+                added = CountRequests(result.Root); what = result.Root.Name;
+                break;
+            }
             case "wsdl":
             {
                 if (!File.Exists(positionals[1])) throw new CliDataException($"File not found: {positionals[1]}");
@@ -163,6 +192,32 @@ public static class ImportCommand
         CliWorkspace.ReportSaveResult(state.SaveTo(targetPath), targetPath, stderr);
         stderr.WriteLine($"Imported {added} request{(added == 1 ? "" : "s")} ({what}) into {(workspace is null ? "the live workspace" : workspace)}.");
         return ExitCodes.Ok;
+    }
+
+    /// <summary>A Bruno collection folder, one .bru file, or Bruno's JSON export.</summary>
+    private static BrunoImportResult ReadBruno(string path)
+    {
+        if (Directory.Exists(path))
+        {
+            string full = Path.GetFullPath(path);
+            var files = new List<(string, string)>();
+            foreach (var file in Directory.EnumerateFiles(full, "*", SearchOption.AllDirectories))
+            {
+                string relative = Path.GetRelativePath(full, file).Replace('\\', '/');
+                // A collection folder is often a git checkout, sometimes with packages for scripts.
+                if (relative.Split('/').Any(part => part is "node_modules" or ".git")) continue;
+                if (relative.EndsWith(".bru", StringComparison.OrdinalIgnoreCase) || relative.Equals("bruno.json", StringComparison.OrdinalIgnoreCase))
+                    files.Add((relative, File.ReadAllText(file)));
+            }
+            if (!files.Any(f => f.Item1.EndsWith(".bru", StringComparison.OrdinalIgnoreCase)))
+                throw new CliDataException($"'{path}' has no .bru files: give a Bruno collection folder.");
+            return BrunoImport.ParseFolder(files, Path.GetFileName(full.TrimEnd(Path.DirectorySeparatorChar)));
+        }
+        if (!File.Exists(path)) throw new CliDataException($"File not found: {path}");
+        string text = File.ReadAllText(path);
+        return path.EndsWith(".bru", StringComparison.OrdinalIgnoreCase)
+            ? BrunoImport.ParseFile(text, Path.GetFileNameWithoutExtension(path))
+            : BrunoImport.ParseJson(text);
     }
 
     /// <summary>Where new nodes go: the collections root, or a root folder found/created by name.</summary>

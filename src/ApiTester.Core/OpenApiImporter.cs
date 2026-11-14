@@ -57,11 +57,96 @@ public static class OpenApiImporter
                     Description = op.TryGetProperty("description", out var desc) &&
                                   desc.ValueKind == JsonValueKind.String ? desc.GetString() : null
                 };
+                AddResponseAssertions(req, op, root);
                 FolderFor(Tag(op)).Requests.Add(req);
             }
         }
 
         return collection;
+    }
+
+    /// <summary>The operation's first documented 2xx response becomes "status == N" and, when it
+    /// declares a JSON body schema, "body $ matches schema" — so an imported suite checks the API
+    /// against its own spec from its first run. The schema carries the document's
+    /// components/definitions so its $refs resolve. Nothing is added when the spec documents no
+    /// success response.</summary>
+    private static void AddResponseAssertions(ParsedRequest req, JsonElement op, JsonElement root)
+    {
+        if (!op.TryGetProperty("responses", out var responses) || responses.ValueKind != JsonValueKind.Object) return;
+        var success = responses.EnumerateObject()
+            .Where(r => r.Name.Length == 3 && r.Name[0] == '2' && int.TryParse(r.Name, out _))
+            .OrderBy(r => r.Name, StringComparer.Ordinal).FirstOrDefault();
+        if (success.Value.ValueKind != JsonValueKind.Object) return;
+        req.Assertions.Add(new AssertionRule { Target = AssertTarget.Status, Op = AssertOp.Equals, Value = success.Name });
+
+        JsonElement? schema = null;
+        if (success.Value.TryGetProperty("content", out var content) && content.ValueKind == JsonValueKind.Object)
+        {
+            // OpenAPI 3: the JSON media type's schema.
+            var json = content.EnumerateObject().FirstOrDefault(c =>
+                c.Name.StartsWith("application/json", StringComparison.OrdinalIgnoreCase) ||
+                c.Name.EndsWith("+json", StringComparison.OrdinalIgnoreCase));
+            if (json.Value.ValueKind == JsonValueKind.Object && json.Value.TryGetProperty("schema", out var s3)) schema = s3;
+        }
+        else if (success.Value.TryGetProperty("schema", out var s2)) schema = s2;   // Swagger 2
+        if (schema is not { } found || found.ValueKind != JsonValueKind.Object) return;
+
+        var node = System.Text.Json.Nodes.JsonNode.Parse(found.GetRawText())!.AsObject();
+        // Only the schemas this response reaches, so a large spec does not put its whole
+        // components section into every saved request.
+        if (root.TryGetProperty("components", out var components) && components.ValueKind == JsonValueKind.Object &&
+            components.TryGetProperty("schemas", out var schemas) && schemas.ValueKind == JsonValueKind.Object &&
+            Reachable(found, schemas, "#/components/schemas/") is { Count: > 0 } used3)
+            node["components"] = new System.Text.Json.Nodes.JsonObject { ["schemas"] = Subset(schemas, used3) };
+        if (root.TryGetProperty("definitions", out var definitions) && definitions.ValueKind == JsonValueKind.Object &&
+            Reachable(found, definitions, "#/definitions/") is { Count: > 0 } used2)
+            node["definitions"] = Subset(definitions, used2);
+        req.Assertions.Add(new AssertionRule
+        {
+            Target = AssertTarget.Body, Path = "$", Op = AssertOp.MatchesSchema, Value = node.ToJsonString()
+        });
+    }
+
+    /// <summary>Every schema name under <paramref name="prefix"/> reachable by $ref from
+    /// <paramref name="start"/>, following refs inside the referenced schemas too.</summary>
+    private static HashSet<string> Reachable(JsonElement start, JsonElement pool, string prefix)
+    {
+        var found = new HashSet<string>(StringComparer.Ordinal);
+        var queue = new Queue<JsonElement>();
+        queue.Enqueue(start);
+        while (queue.Count > 0)
+        {
+            foreach (var reference in Refs(queue.Dequeue()))
+            {
+                if (!reference.StartsWith(prefix, StringComparison.Ordinal)) continue;
+                string name = Uri.UnescapeDataString(reference[prefix.Length..].Split('/')[0]).Replace("~1", "/").Replace("~0", "~");
+                if (found.Add(name) && pool.TryGetProperty(name, out var next)) queue.Enqueue(next);
+            }
+        }
+        return found;
+    }
+
+    private static IEnumerable<string> Refs(JsonElement e)
+    {
+        if (e.ValueKind == JsonValueKind.Object)
+        {
+            foreach (var p in e.EnumerateObject())
+            {
+                if (p.Name == "$ref" && p.Value.ValueKind == JsonValueKind.String) yield return p.Value.GetString()!;
+                else foreach (var r in Refs(p.Value)) yield return r;
+            }
+        }
+        else if (e.ValueKind == JsonValueKind.Array)
+            foreach (var item in e.EnumerateArray())
+                foreach (var r in Refs(item)) yield return r;
+    }
+
+    private static System.Text.Json.Nodes.JsonObject Subset(JsonElement pool, HashSet<string> names)
+    {
+        var o = new System.Text.Json.Nodes.JsonObject();
+        foreach (var p in pool.EnumerateObject())
+            if (names.Contains(p.Name)) o[p.Name] = System.Text.Json.Nodes.JsonNode.Parse(p.Value.GetRawText());
+        return o;
     }
 
     private static string Title(JsonElement root) =>

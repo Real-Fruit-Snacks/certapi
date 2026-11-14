@@ -122,6 +122,7 @@ internal sealed record HandlerKey(
     private static string FormatWindowsAuth(WindowsAuthOptions? auth)
     {
         if (auth is null) return "none";
+        if (auth.Digest) return "digest\u0001" + auth.Username + '\u0001' + auth.Password;
         if (auth.UseDefaultCredentials) return "default";
         // A control character rather than a printable delimiter: domain/username/password
         // are free-form text that could otherwise collide across the join (e.g. a literal "|"

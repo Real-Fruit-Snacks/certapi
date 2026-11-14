@@ -33,6 +33,9 @@ public sealed record RequestEditorState
     public bool WindowsDefault { get; init; } = true;
     public string WindowsUserText { get; init; } = "";
     public string WindowsPassText { get; init; } = "";
+    public string AwsKeyText { get; init; } = "";
+    public string AwsSecretText { get; init; } = "";
+    public string AwsScopeText { get; init; } = "";
     public bool IgnoreServerCert { get; init; }
     public string TimeoutText { get; init; } = "100";
     public int ProxyIndex { get; init; }
@@ -63,10 +66,14 @@ public sealed record RequestEditorState
         BodyText = m.Body ?? "",
         ContentType = m.ContentType,
         BodyModeForm = m.IsMultipart,
-        AuthTypeIndex = m.AuthType switch { "Bearer" => 2, "Basic" => 3, "Windows" => 4, "None" => 1, _ => 0 },
+        AuthTypeIndex = m.AuthType switch { "Bearer" => 2, "Basic" => 3, "Windows" => 4, "Digest" => 5, "AwsSigV4" => 6, "None" => 1, _ => 0 },
         BearerTokenText = m.AuthType == "Bearer" ? m.AuthSecret ?? "" : "",
-        BasicUserText = m.AuthType == "Basic" ? m.AuthUser ?? "" : "",
-        BasicPassText = m.AuthType == "Basic" ? m.AuthSecret ?? "" : "",
+        // Digest takes a user name and password exactly as Basic does, in the same two boxes.
+        BasicUserText = m.AuthType is "Basic" or "Digest" ? m.AuthUser ?? "" : "",
+        BasicPassText = m.AuthType is "Basic" or "Digest" ? m.AuthSecret ?? "" : "",
+        AwsKeyText = m.AuthType == "AwsSigV4" ? m.AuthUser ?? "" : "",
+        AwsSecretText = m.AuthType == "AwsSigV4" ? m.AuthSecret ?? "" : "",
+        AwsScopeText = m.AuthType == "AwsSigV4" ? m.AuthScope ?? "" : "",
         // Windows auth: an empty user means single sign-on; a value means explicit credentials.
         WindowsDefault = m.AuthType != "Windows" || string.IsNullOrEmpty(m.AuthUser),
         WindowsUserText = m.AuthType == "Windows" ? m.AuthUser ?? "" : "",
@@ -114,15 +121,17 @@ public sealed record RequestEditorState
         m.Body = BodyText;
         m.ContentType = ContentType;
         m.IsMultipart = BodyModeForm;
-        m.AuthType = AuthTypeIndex switch { 2 => "Bearer", 3 => "Basic", 4 => "Windows", 1 => "None", _ => "Auto" };
+        m.AuthType = AuthTypeIndex switch { 2 => "Bearer", 3 => "Basic", 4 => "Windows", 5 => "Digest", 6 => "AwsSigV4", 1 => "None", _ => "Auto" };
         bool winSso = WindowsDefault;
-        m.AuthUser = AuthTypeIndex == 4 ? (winSso ? "" : WindowsUserText) : BasicUserText;
+        m.AuthUser = AuthTypeIndex switch { 4 => winSso ? "" : WindowsUserText, 6 => AwsKeyText, _ => BasicUserText };
         m.AuthSecret = AuthTypeIndex switch
         {
             2 => BearerTokenText,
             4 => winSso ? "" : WindowsPassText,
+            6 => AwsSecretText,
             _ => BasicPassText
         };
+        m.AuthScope = AuthTypeIndex == 6 ? AwsScopeText : null;
         m.CertThumbprint = CertThumbprint;
         m.IgnoreServerCert = IgnoreServerCert;
         m.TimeoutSeconds = ParseTimeoutSeconds(TimeoutText);

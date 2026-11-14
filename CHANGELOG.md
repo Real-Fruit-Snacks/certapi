@@ -6,6 +6,48 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- `run --junit <file>`: the results as JUnit XML for a CI test report (Azure DevOps, GitLab,
+  Jenkins, GitHub reporters). One test case per request, grouped by folder; failed assertions are
+  failures with what arrived instead, a request with no answer is an error, and skipped chain steps
+  are skipped. URLs are redacted.
+- JSON Schema assertions: `body <path> schema <schema>` (or `@file`), and a `schema` operator on
+  the app's Tests tab. A built-in, offline checker covers the common keywords, local `$ref` and
+  OpenAPI 3.0's `nullable`; a failure names where and why.
+- `import openapi` writes a status assertion and, where the response has a JSON schema, a schema
+  assertion for each operation, so an imported collection is a contract test.
+- `import bruno`: a Bruno collection folder, a single `.bru` file, or Bruno's JSON export. Folders,
+  seq order, params, headers, bodies, auth (with `inherit` resolved) and environments come across;
+  `assert` lines become assertions and post-response variables become captures where they map.
+- Digest authentication: the **Digest** auth type, `send --digest -u user:pass`, and Digest from
+  Postman, Insomnia and Bruno imports. Only the request's own origin is answered, and never a Basic
+  challenge.
+- AWS Signature v4: the **AWS Signature v4** auth type, `send --aws-sigv4 aws:amz[:region[:service]]`
+  (curl's spelling) with the key from `-u` or the `AWS_*` environment variables, and AWS auth from
+  Postman (`awsv4`), Insomnia (`iam`) and Bruno imports. Region and service are read from an AWS host
+  when left out; only the origin named is signed.
+- `mcp`: `ws_exchange` and `sse_read` tools. Each opens a WebSocket or event stream on an allowed
+  host with the pinned certificate, gathers what arrives until a count, a time (never past
+  `--timeout`) or the end, and returns it; `--max-body` bounds the total.
+- `mcp --print-config <claude|vscode|cursor>`: prints the host configuration block for the options
+  given, with file paths made absolute, and exits. Secrets are refused rather than written out.
+- `mcp --allow-any`: allow every host on purpose. Without `--allow` or `--allow-any`, the start-up
+  line still warns.
+- `serve --allow-framing [<origins>]`: let pages be framed by this machine's pages or the origins
+  listed. `X-Frame-Options` and CSP `frame-ancestors` are replaced. Not part of `--browser`.
+- `serve --open [<path>]`: open the browser at the first site once the gateway is listening.
+
+### Changed
+- `serve` always drops response headers that would leave lasting state on the gateway's own
+  origin: `Strict-Transport-Security` (it ignores ports, so it pinned `localhost` to https for every
+  local tool), `Alt-Svc`, `NEL`, `Report-To`, `Reporting-Endpoints`, `Public-Key-Pins` and
+  `Expect-CT`. Without `--vhost`, where every site shares one origin, `Service-Worker-Allowed` and
+  `Clear-Site-Data` are dropped too.
+- `serve` over plaintext removes a CSP's `upgrade-insecure-requests` and `block-all-mixed-content`,
+  which sent the page's own requests to an https port nothing answers, and drops a cookie's
+  `Partitioned` attribute, which needs `Secure`.
+- `serve --rewrite-location` also rewrites the URLs in `Link` and `Content-Location`.
+
 ## [1.97.0] - 2026-11-13
 
 Fixes from a security audit of `certapi mcp` and `certapi serve`, and a move to .NET 10: .NET 9
@@ -60,6 +102,9 @@ the **Changed** list says what a working setup may notice.
 - `mcp`: an unknown tool is JSON-RPC error `-32602`; a request with an `id` and a `notifications/`
   method gets `-32601`; an `id` that is not a string or an integer, or a missing `"jsonrpc":"2.0"`,
   is `-32600`; a byte-order mark before the first line is ignored.
+- `serve`: a WebSocket upgrade the upstream (or its proxy) refuses now reaches the browser as a
+  close with code 1011 and the reason on Windows too; http.sys could drop the frame and reset the
+  connection instead.
 
 ### Added
 - `mcp` speaks MCP revision 2026-07-28 alongside the handshake revisions (now through 2025-11-25):

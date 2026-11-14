@@ -30,6 +30,13 @@ public static class SendCommand
           --content-type <ct>     Body content type (default application/json)
           --bearer <token>        Authorization: Bearer …
           -u, --basic <user:pass> Authorization: Basic …
+          --digest                Answer the server's Digest challenge with the --basic user and
+                                  password instead (MD5 or SHA-256; the password is never sent)
+          --aws-sigv4 <aws:amz[:region[:service]]>
+                                  Sign with AWS Signature Version 4, curl's spelling. The key id
+                                  and secret come from --basic <key:secret> or AWS_ACCESS_KEY_ID /
+                                  AWS_SECRET_ACCESS_KEY (and AWS_SESSION_TOKEN); region and service
+                                  left out are read from an *.amazonaws.com host
           --windows-auth          Windows Integrated Auth (Negotiate/NTLM) with your signed-in
                                   account (aliases: --ntlm, --negotiate)
           --windows-user <u>      Explicit Windows creds instead of SSO (DOMAIN\user); pair with
@@ -198,6 +205,8 @@ public static class SendCommand
         string? contentType = args.Value("--content-type");
         string? bearer = args.Value("--bearer");
         string? basic = args.Value("--basic");
+        bool digest = args.Flag("--digest");
+        string? sigv4 = args.Value("--aws-sigv4");
         string store = args.Value("--store") ?? services.Profile?.Store ?? "CurrentUser";
         // A switch rather than a plain flag: a profile's `insecure: true` applies when nothing is
         // typed, and --no-insecure undoes it for one run.
@@ -281,6 +290,14 @@ public static class SendCommand
             throw new CliUsageException("--graphql cannot be combined with -d/--data or -F/--form.");
         if (bearer is not null && basic is not null)
             throw new CliUsageException("--bearer and --basic are mutually exclusive.");
+        if (digest && basic is null)
+            throw new CliUsageException("--digest answers with the --basic user:password; give -u/--basic too.");
+        if (digest && sigv4 is not null)
+            throw new CliUsageException("--digest and --aws-sigv4 are different schemes: give one.");
+        if ((digest || sigv4 is not null) && bearer is not null)
+            throw new CliUsageException((digest ? "--digest" : "--aws-sigv4") + " and --bearer are mutually exclusive.");
+        if ((digest || sigv4 is not null) && (windowsAuth || winUser is not null))
+            throw new CliUsageException((digest ? "--digest" : "--aws-sigv4") + " and Windows auth both answer for the request: give one.");
         // --all-ips produces one response per address; every option below describes a single one,
         // and there is no honest way to pick which response it should apply to.
         if (allIps && timing)
@@ -376,7 +393,17 @@ public static class SendCommand
             headerPairs.Add(new(R(raw[..colon].Trim()), R(raw[(colon + 1)..].Trim())));
         }
         if (bearer is not null) headerPairs.Add(new("Authorization", "Bearer " + R(bearer)));
-        if (basic is not null) headerPairs.Add(new("Authorization",
+        WindowsAuthOptions? digestAuth = null;
+        AwsSigV4Options? awsAuth = null;
+        if (digest)
+        {
+            string pair = R(basic!);
+            int colon = pair.IndexOf(':');
+            digestAuth = WindowsAuthOptions.ForDigest(colon < 0 ? pair : pair[..colon], colon < 0 ? "" : pair[(colon + 1)..]);
+        }
+        else if (sigv4 is not null)
+            awsAuth = SigV4Options(sigv4, basic is null ? null : R(basic), url, services.Environment);
+        else if (basic is not null) headerPairs.Add(new("Authorization",
             "Basic " + Convert.ToBase64String(Encoding.UTF8.GetBytes(R(basic)))));
         // The profile's standing headers fill in behind whatever was typed: a name set here wins.
         if (services.Profile is { } sendProfile)
@@ -457,7 +484,8 @@ public static class SendCommand
                         : bodyBytes is not null ? (contentType ?? "application/octet-stream") : null,
             WindowsAuth = winUser is not null ? WindowsAuthOptions.FromCredentials(winUser, winPass)
                        : windowsAuth ? new WindowsAuthOptions(true)
-                       : null,
+                       : digestAuth,
+            AwsSigV4 = awsAuth,
             Timeout = TimeSpan.FromSeconds(timeout)
         };
         services.Log.Debug($"{request.Method} {MarkdownSecrets.RedactUrl(request.Url)}");
@@ -695,6 +723,38 @@ public static class SendCommand
 
     /// <summary>The transport configuration in one --debug line, so a support log says how the
     /// request was actually routed rather than only where it was pointed.</summary>
+    /// <summary>curl's <c>--aws-sigv4 "aws:amz[:region[:service]]"</c>. Only the AWS provider
+    /// pair is accepted: the other providers curl knows sign with their own names and dates.</summary>
+    internal static AwsSigV4Options SigV4Options(string spec, string? keyPair, string url, Func<string, string?> environment)
+    {
+        var parts = spec.Split(':');
+        if (parts.Length < 2 || !parts[0].Equals("aws", StringComparison.OrdinalIgnoreCase) ||
+            !parts[1].Equals("amz", StringComparison.OrdinalIgnoreCase) || parts.Length > 4)
+            throw new CliUsageException($"--aws-sigv4 expects aws:amz[:region[:service]], got '{spec}'.");
+        string keyId, secret;
+        if (keyPair is not null)
+        {
+            int colon = keyPair.IndexOf(':');
+            if (colon <= 0) throw new CliUsageException("--aws-sigv4 reads the key from -u/--basic <key-id:secret>.");
+            keyId = keyPair[..colon];
+            secret = keyPair[(colon + 1)..];
+        }
+        else
+        {
+            keyId = environment("AWS_ACCESS_KEY_ID") ?? "";
+            secret = environment("AWS_SECRET_ACCESS_KEY") ?? "";
+            if (keyId.Length == 0 || secret.Length == 0)
+                throw new CliUsageException("--aws-sigv4 needs -u/--basic <key-id:secret>, or AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY.");
+        }
+        string scope = (parts.Length > 2 ? parts[2] : "") + "/" + (parts.Length > 3 ? parts[3] : "");
+        var options = SavedAuth.Aws(keyId, secret, scope, url, out var problem)
+            ?? throw new CliUsageException("--aws-sigv4: " + problem + " Write it as aws:amz:<region>:<service>.");
+        // Like the AWS CLI: temporary credentials from the environment bring their session token.
+        if (keyPair is null && environment("AWS_SESSION_TOKEN") is { Length: > 0 } token)
+            options = options with { SessionToken = token };
+        return options;
+    }
+
     private static string DescribeTransport(TransportOptions t) =>
         $"proxy {(t.Proxy switch { ProxyMode.None => "off", ProxyMode.Explicit => t.ProxyUrl is null ? "explicit" : MarkdownSecrets.RedactUrl(t.ProxyUrl), _ => "system" })}"
         + $" · redirects {(t.FollowRedirects ? $"follow (max {t.MaxRedirects})" : "off")}"

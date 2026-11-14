@@ -174,15 +174,15 @@ public class PostmanImportTests
             {
               "info": { "name": "Edge" },
               "item": [
-                { "name": "aws", "request": { "method": "GET", "url": "https://a/x",
-                    "auth": { "type": "awsv4" } } },
+                { "name": "oauth", "request": { "method": "GET", "url": "https://a/x",
+                    "auth": { "type": "oauth2" } } },
                 { "name": "gql", "request": { "method": "POST", "url": "https://a/g",
                     "body": { "mode": "graphql" } } }
               ]
             }
             """);
 
-        Assert.Contains(result.Warnings, w => w.Contains("aws") && w.Contains("awsv4"));
+        Assert.Contains(result.Warnings, w => w.Contains("oauth") && w.Contains("oauth2"));
         Assert.Contains(result.Warnings, w => w.Contains("gql") && w.Contains("graphql"));
         Assert.Equal("None", result.Root.Children[0].Request!.AuthType);
     }

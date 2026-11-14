@@ -14,7 +14,7 @@ On the **Tests** tab, add one or more assertion rows. Each has:
   - **Body** — a value in the JSON (JavaScript Object Notation) body at a **Path** (e.g. `data.id`)
   - **Body-text** — the raw body as text
 - **Operator** — `Equals`, `NotEquals`, `Contains`, `Matches` (regex), `Exists`, `NotExists`,
-  `LessThan`, `GreaterThan`
+  `LessThan`, `GreaterThan`, and `schema` (the JSON at the Path matches a JSON Schema — see below)
 - **Value** — the expected value (not needed for `Exists`/`NotExists`)
 - **Enabled** — tick to include the rule
 
@@ -30,6 +30,32 @@ After a send, the Tests tab shows each rule's pass/fail and the actual value.
 | Header | Contains | `Content-Type` | `json` | JSON response |
 | Body | Equals | `data.ok` | `true` | a JSON field's value |
 | Body-text | Matches | | `"id":\s*\d+` | a regex over the whole body |
+
+## JSON Schema assertions
+
+A **Body** rule with the `schema` operator checks the JSON at its Path (`$` for the whole body)
+against a JSON Schema given as the Value. One rule catches what a dozen field checks would: a
+missing required field, a number where a string belongs, an extra property, an empty array.
+
+```powershell
+certapi send https://api.example.com/orders/7 --assert 'body $ schema {"type":"object","required":["id","total"],"properties":{"id":{"type":"integer"},"total":{"type":"number","minimum":0}}}'
+certapi send https://api.example.com/orders --assert "body data.items schema @order-list.schema.json"
+```
+
+`@file` reads the schema from a file. A failure names where and why — `at $.items[2].total:
+expected number, got string` — as the assertion's actual value, in the table, `--md` and `--junit`.
+
+The checker is built in and works offline. It covers the keywords APIs actually use: `type`,
+`enum`, `const`, `properties`, `required`, `additionalProperties`, `patternProperties`,
+`min/maxProperties`, `items` and `prefixItems`, `min/maxItems`, `uniqueItems`, `contains`,
+`min/maxLength`, `pattern`, `minimum`, `maximum`, `exclusiveMinimum/Maximum` (number and boolean
+forms), `multipleOf`, `allOf`, `anyOf`, `oneOf`, `not`, `if`/`then`/`else`, boolean schemas,
+local `$ref` (`#/…`, `$defs` and `definitions`), and OpenAPI 3.0's `nullable`. `format` is
+informational and not checked, and a `$ref` to another file is not followed.
+
+[Importing an OpenAPI document](17-Import-and-Export.md#import-openapi--swagger) writes a status
+and a schema assertion for each operation, so an imported collection is a contract test as soon as
+it runs.
 
 ## The rules never throw
 
@@ -64,6 +90,19 @@ Because a failing assertion exits non-zero, a saved suite is a ready-made smoke 
 certapi run --all --workspace .\suite.json --no-record --json
 if ($LASTEXITCODE -ne 0) { throw "API smoke tests failed" }
 ```
+
+## JUnit XML for CI test reports
+
+```powershell
+certapi run --all --workspace .\suite.json --no-record --junit results.xml
+```
+
+`--junit` writes the run as JUnit XML, which Azure DevOps (`PublishTestResults`), GitLab
+(`artifacts:reports:junit`), Jenkins and the GitHub test-report actions show as a test tab: one
+test case per request, named by its path and grouped by its folder, each failed assertion with what
+arrived instead, a request that got no answer as an error, and skipped chain steps as skipped. URLs
+are redacted as in `--md`. Like every report, a file that cannot be written warns and never changes
+the exit code.
 
 ## Keeping a run: `--md`
 

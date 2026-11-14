@@ -464,6 +464,8 @@
                                 <ComboBoxItem>Bearer token</ComboBoxItem>
                                 <ComboBoxItem>Basic</ComboBoxItem>
                                 <ComboBoxItem>Windows (integrated)</ComboBoxItem>
+                                <ComboBoxItem>Digest</ComboBoxItem>
+                                <ComboBoxItem>AWS Signature v4</ComboBoxItem>
                             </ComboBox>
                         </StackPanel>
                         <TextBlock x:Name="AutoAuthHint" FontSize="12" Foreground="{DynamicResource Text.Muted}"
@@ -475,6 +477,9 @@
                                      Tag="paste your bearer token"/>
                         </StackPanel>
                         <StackPanel x:Name="BasicPanel" Visibility="Collapsed">
+                            <TextBlock x:Name="DigestHint" FontSize="12" Foreground="{DynamicResource Text.Muted}" TextWrapping="Wrap"
+                                       Margin="60,0,0,8" Visibility="Collapsed"
+                                       Text="Answers the server's Digest challenge (MD5 or SHA-256). The password is never sent, and only this request's own host is answered."/>
                             <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
                                 <TextBlock Text="USER" Style="{StaticResource Caption}" VerticalAlignment="Center" Width="60"/>
                                 <TextBox x:Name="BasicUserBox" Width="260" VerticalContentAlignment="Center" Tag="username"/>
@@ -482,6 +487,23 @@
                             <StackPanel Orientation="Horizontal">
                                 <TextBlock Text="PASS" Style="{StaticResource Caption}" VerticalAlignment="Center" Width="60"/>
                                 <TextBox x:Name="BasicPassBox" Width="260" VerticalContentAlignment="Center" Tag="password"/>
+                            </StackPanel>
+                        </StackPanel>
+                        <StackPanel x:Name="AwsPanel" Visibility="Collapsed">
+                            <TextBlock FontSize="12" Foreground="{DynamicResource Text.Muted}" TextWrapping="Wrap" Margin="60,0,0,8"
+                                       Text="Signs each send with AWS Signature Version 4. For temporary credentials add an X-Amz-Security-Token header; it is signed too."/>
+                            <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                                <TextBlock Text="KEY ID" Style="{StaticResource Caption}" VerticalAlignment="Center" Width="60"/>
+                                <TextBox x:Name="AwsKeyBox" Width="260" VerticalContentAlignment="Center" Tag="access key id"/>
+                            </StackPanel>
+                            <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                                <TextBlock Text="SECRET" Style="{StaticResource Caption}" VerticalAlignment="Center" Width="60"/>
+                                <TextBox x:Name="AwsSecretBox" Width="260" VerticalContentAlignment="Center" Tag="secret access key"/>
+                            </StackPanel>
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="SCOPE" Style="{StaticResource Caption}" VerticalAlignment="Center" Width="60"/>
+                                <TextBox x:Name="AwsScopeBox" Width="260" VerticalContentAlignment="Center"
+                                         Tag="region/service — blank reads it from the host"/>
                             </StackPanel>
                         </StackPanel>
                         <StackPanel x:Name="WindowsPanel" Visibility="Collapsed">
@@ -717,6 +739,7 @@
                                                 <ComboBoxItem Content="absent"/>
                                                 <ComboBoxItem Content="&lt;"/>
                                                 <ComboBoxItem Content="&gt;"/>
+                                                <ComboBoxItem Content="schema" ToolTip="The value is a JSON Schema; the JSON at the path ($ for the whole body) must match it"/>
                                             </ComboBox>
                                             <TextBox Grid.Column="4" Text="{Binding Value, UpdateSourceTrigger=PropertyChanged}"
                                                      Tag="expected value" Margin="6,0,0,0" VerticalContentAlignment="Center"

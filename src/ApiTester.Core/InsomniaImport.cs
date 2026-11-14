@@ -201,6 +201,23 @@ public static class InsomniaImport
                 model.AuthUser = Translate(Str(auth, "username") ?? "", name, warnings);
                 model.AuthSecret = Translate(Str(auth, "password") ?? "", name, warnings);
                 break;
+            case "digest":
+                model.AuthType = "Digest";
+                model.AuthUser = Translate(Str(auth, "username") ?? "", name, warnings);
+                model.AuthSecret = Translate(Str(auth, "password") ?? "", name, warnings);
+                break;
+            case "iam":
+            {
+                model.AuthType = "AwsSigV4";
+                model.AuthUser = Translate(Str(auth, "accessKeyId") ?? "", name, warnings);
+                model.AuthSecret = Translate(Str(auth, "secretAccessKey") ?? "", name, warnings);
+                string region = Translate(Str(auth, "region") ?? "", name, warnings);
+                string service = Translate(Str(auth, "service") ?? "", name, warnings);
+                model.AuthScope = region.Length == 0 && service.Length == 0 ? null : $"{region}/{service}";
+                if (Str(auth, "sessionToken") is { Length: > 0 } token)
+                    model.Headers.Add(new HeaderRow { Name = "X-Amz-Security-Token", Value = Translate(token, name, warnings) });
+                break;
+            }
             case null or "none":
                 break;
             case var other:

@@ -71,6 +71,38 @@ certapi send https://intranet.corp/api/me --windows-user "CORP\me" --windows-pas
 Saved requests carry Windows auth through `certapi run`. You can try your setup against the mock
 server's [`/windows-auth` route](18-Mock-Server.md).
 
+## Digest
+
+For a server that challenges with `WWW-Authenticate: Digest` (RFC 7616 — MD5 or SHA-256,
+`qop=auth`). Pick **Digest** and give the user name and password: the app answers the challenge, so
+the password itself never travels. Only the request's own scheme, host and port are answered, and a
+Basic challenge is never answered with these credentials. CLI, in curl's spelling:
+
+```powershell
+certapi send https://camera.local/api/status --digest -u "admin:secret"
+```
+
+## AWS Signature v4
+
+Signs each send with **AWS Signature Version 4** — API Gateway with IAM auth, Lambda function URLs,
+OpenSearch, S3 or any AWS API. Pick **AWS Signature v4** and give the access key id and secret; the
+**scope** is `region/service` (`eu-west-1/execute-api`), and left blank it is read from an
+`*.amazonaws.com` host. For temporary credentials (STS, an assumed role, SSO) add the session token
+as an `X-Amz-Security-Token` header: it is signed with the rest. The signature covers the method,
+path, query, `Host`, `Content-Type`, every `X-Amz-*` header and the body exactly as sent, and only
+the origin you named is signed — a redirect elsewhere goes unsigned. CLI, in curl's spelling:
+
+```powershell
+# the key from the command line
+certapi send https://abc123.execute-api.eu-west-1.amazonaws.com/prod/items --aws-sigv4 "aws:amz" -u "AKIA…:secret"
+
+# from AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY / AWS_SESSION_TOKEN, with the scope spelled out
+certapi send https://api.internal.example/items --aws-sigv4 "aws:amz:us-east-1:execute-api"
+```
+
+Postman's `awsv4` and `digest` auth, Insomnia's `iam` and `digest`, and Bruno's `awsv4`, `digest`
+and `ntlm` import as these types.
+
 ## OAuth 2.0
 
 Fetch a real OAuth token without leaving the app. On the **Auth** tab, click **Get OAuth 2.0 token…**.

@@ -201,6 +201,23 @@ public static class PostmanImport
                 model.AuthUser = AuthValue(auth, "basic", "username");
                 model.AuthSecret = AuthValue(auth, "basic", "password");
                 break;
+            case "digest":
+                model.AuthType = "Digest";
+                model.AuthUser = AuthValue(auth, "digest", "username");
+                model.AuthSecret = AuthValue(auth, "digest", "password");
+                break;
+            case "awsv4":
+            {
+                model.AuthType = "AwsSigV4";
+                model.AuthUser = AuthValue(auth, "awsv4", "accessKey");
+                model.AuthSecret = AuthValue(auth, "awsv4", "secretKey");
+                string region = AuthValue(auth, "awsv4", "region") ?? "";
+                string service = AuthValue(auth, "awsv4", "service") ?? "";
+                model.AuthScope = region.Length == 0 && service.Length == 0 ? null : $"{region}/{service}";
+                if (AuthValue(auth, "awsv4", "sessionToken") is { Length: > 0 } token)
+                    model.Headers.Add(new HeaderRow { Name = "X-Amz-Security-Token", Value = token });
+                break;
+            }
             case "apikey":
             {
                 // An API key is a header or query row, whichever Postman said; there is no
