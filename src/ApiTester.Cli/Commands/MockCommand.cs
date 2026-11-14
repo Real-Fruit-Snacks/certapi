@@ -78,6 +78,8 @@ public static class MockCommand
         app, a test suite, or a teammate's client at the mock and it answers with the recorded
         responses instead of live traffic. The built-in echo routes are not served while replaying.
 
+        Global: --debug (verbose diagnostics) and --log-file <path> work here too.
+
         Examples:
           certapi mock
           curl http://127.0.0.1:8770/anything

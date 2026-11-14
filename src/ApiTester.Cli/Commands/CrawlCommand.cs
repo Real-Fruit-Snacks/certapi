@@ -36,8 +36,14 @@ public static class CrawlCommand
 
           -H, --header <h>        Send this header with every request (repeatable)
           --bearer <t> / -u, --basic <u:p> / -b, --cookie <c>
-          --cert <thumb|subject> and the other certificate options, --insecure, the transport
-          options (proxy, --resolve, --connect-to, …) — as on send
+
+        TLS / certificates:
+        """ + "\n" + CliCert.HelpLines + "\n" + """
+          --insecure              Ignore server certificate errors
+
+        """ + "\n" + TransportFlags.Help + "\n" + """
+
+        Global: --debug (verbose diagnostics) and --log-file <path> work here too.
 
         Examples:
           certapi crawl https://portal.corp/ --cert "CN=me"

@@ -6,6 +6,11 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- `--help` for `browse`, `call`, `cors`, `crawl`, `mock`, `mqtt`, `signalr` and `tls` now ends with
+  the global options line like every other command. `crawl --help` lists the certificate and
+  transport options in full instead of pointing at `send`, and `mqtt --help` lists `--workspace`.
+
 ## [1.99.0] - 2026-11-14
 
 CORS, checked the way a browser checks it. `cors` now follows redirects hop by hop, checks Private

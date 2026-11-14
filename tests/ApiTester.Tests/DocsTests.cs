@@ -236,6 +236,56 @@ public class DocsTests
     }
 
     [Fact]
+    public void Every_option_a_command_parses_is_in_its_own_help()
+    {
+        // `certapi <command> --help` is the first place anyone looks, and the reference test above
+        // does not read it. Ground truth is again the parser: the command's own options, plus the
+        // certificate and transport options when the command reads those through the shared parsers.
+        if (Root() is not { } root) return;
+        string commands = Path.Combine(root, "src", "ApiTester.Cli", "Commands");
+        if (!Directory.Exists(commands)) return;
+
+        static HashSet<string> Options(string text)
+        {
+            var found = new HashSet<string>(StringComparer.Ordinal);
+            foreach (Match call in Regex.Matches(text, @"args\.(?:Flag|FlagOrNull|Value|Values|Switch|Negated|OptionalValue|ListValue)\(([^)]*)\)"))
+                foreach (Match literal in Regex.Matches(call.Groups[1].Value, @"""(-{1,2}[A-Za-z][A-Za-z0-9.\-]*)"""))
+                    found.Add(literal.Groups[1].Value);
+            return found;
+        }
+        string transportText = File.ReadAllText(Path.Combine(root, "src", "ApiTester.Cli", "TransportFlags.cs"));
+        int full = transportText.IndexOf("public static TransportOverrides Parse(", StringComparison.Ordinal);
+        int streamHelp = transportText.IndexOf("public const string StreamHelp", StringComparison.Ordinal);
+        int stream = transportText.IndexOf("public static TransportOptions ParseStreamSubset(", StringComparison.Ordinal);
+        Assert.True(full >= 0 && streamHelp > full && stream > streamHelp, "TransportFlags.cs no longer has the layout this test reads");
+        var transport = Options(transportText[full..streamHelp]);
+        var streamSubset = Options(transportText[stream..]);
+        var certificate = Options(File.ReadAllText(Path.Combine(root, "src", "ApiTester.Cli", "CliCert.cs")));
+        // An alias kept for curl habits, documented under the name it stands for (--interface).
+        var aliases = new HashSet<string>(StringComparer.Ordinal) { "--local-address" };
+
+        var missing = new List<string>();
+        foreach (var (file, command) in CommandFiles)
+        {
+            string path = Path.Combine(commands, file);
+            if (!File.Exists(path)) continue;
+            string source = File.ReadAllText(path);
+            string help = ApiTester.Cli.CliApp.HelpFor(command) ?? "";
+            var expected = Options(source);
+            // tls is not HTTP: it lists the few transport options that apply to a bare handshake
+            // by hand, so the rest of the HTTP transport set is not expected there.
+            if (source.Contains("TransportFlags.Parse(", StringComparison.Ordinal) && command != "tls") expected.UnionWith(transport);
+            if (source.Contains("ParseStreamSubset(", StringComparison.Ordinal)) expected.UnionWith(streamSubset);
+            if (source.Contains("CliCert.", StringComparison.Ordinal)) expected.UnionWith(certificate);
+            foreach (var option in expected)
+                if (!aliases.Contains(option) && !Mentions(help, option)) missing.Add($"{command}: {option}");
+            if (!help.Contains("--debug", StringComparison.Ordinal)) missing.Add($"{command}: no global options line");
+        }
+        missing.Sort(StringComparer.Ordinal);
+        Assert.Empty(missing);
+    }
+
+    [Fact]
     public void Every_place_that_builds_an_archive_entry_redacts_the_url_it_records()
     {
         // Three separate places build HAR entries — a send, the gateway's recorder, and the desktop

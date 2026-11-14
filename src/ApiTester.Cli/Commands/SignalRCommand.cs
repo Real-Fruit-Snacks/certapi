@@ -48,6 +48,8 @@ public static class SignalRCommand
           --workspace <file>        Read trust pins and captured tokens from a workspace file
           --no-auto-token           Don't attach a captured bearer token
 
+        Global: --debug (verbose diagnostics) and --log-file <path> work here too.
+
         Examples:
           certapi signalr https://api.example.com/hubs/chat --cert "CN=My Client" --invoke 'SendMessage ["ann","hello"]' --on ReceiveMessage --count 1
           certapi signalr https://api.example.com/hubs/prices --on PriceChanged --seconds 30

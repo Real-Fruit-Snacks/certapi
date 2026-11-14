@@ -24,6 +24,8 @@ public static class CallCommand
         other certificate options, --bearer and the other auth options, -H, --json, -o, --fail,
         -w, --assert, the transport options. See `certapi help send`.
 
+        Global: --debug (verbose diagnostics) and --log-file <path> work here too.
+
         Examples:
           certapi call petstore.json getPetById --param petId=7 --cert "CN=svc"
           certapi call petstore.json addPet -d @pet.json --server https://staging.example.com/v1

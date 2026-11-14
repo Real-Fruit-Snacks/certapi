@@ -29,6 +29,8 @@ public static class TlsCommand
           --connect-to / --interface / --resolve / -4 / -6 / --tls-min / --ca-file
                                   As on send. A proxy is never used: this is not HTTP
 
+        Global: --debug (verbose diagnostics) and --log-file <path> work here too.
+
         Examples:
           certapi tls api.example.com
           certapi tls ldap.corp:636 --cert "CN=svc-ldap"

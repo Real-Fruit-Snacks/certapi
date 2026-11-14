@@ -41,12 +41,15 @@ public static class MqttCommand
           --keepalive <seconds>     Default 60
           --alpn <protocol>         TLS ALPN for mqtts:// (AWS IoT on port 443 needs x-amzn-mqtt-ca)
           -q, --quiet               No connect/subscribe notices on stderr
+          --workspace <file>        Read trust pins from a workspace file
 
         TLS / certificates:
         """ + "\n" + CliCert.HelpLines + "\n" + """
           --insecure                Ignore server certificate errors
 
         """ + "\n" + TransportFlags.StreamHelp + "\n" + """
+
+        Global: --debug (verbose diagnostics) and --log-file <path> work here too.
 
         Examples:
           certapi mqtt mqtts://a1b2c3-ats.iot.eu-west-1.amazonaws.com --cert-file device.pfx --client-id sensor-7 -t 'sensors/#' --count 5

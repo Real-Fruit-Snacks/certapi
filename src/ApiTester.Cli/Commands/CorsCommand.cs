@@ -73,6 +73,8 @@ public static class CorsCommand
         a new preflight is sent where the new address needs one, and after a redirect to another
         origin the request carries Origin: null. --max-redirs and --no-redirect apply.
 
+        Global: --debug (verbose diagnostics) and --log-file <path> work here too.
+
         Examples:
           certapi cors https://api.example.com/orders --origin https://app.example.com --cert "CN=svc"
           certapi cors https://api.example.com/orders --origin http://localhost:3000 -X PUT -H "X-Api-Key: k" --credentials

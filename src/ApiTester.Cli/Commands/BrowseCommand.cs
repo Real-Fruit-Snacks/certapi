@@ -53,6 +53,8 @@ public static class BrowseCommand
         Needs the WebView2 Runtime, which Windows 10 and 11 include. Exit 0 when the page loaded
         with a status below 400, 1 otherwise.
 
+        Global: --debug (verbose diagnostics) and --log-file <path> work here too.
+
         Examples:
           certapi browse https://portal.example.com/dashboard --cert "CN=My Client" --screenshot dash.png --full-page
           certapi browse https://portal.example.com/report --cert-file me.pfx --wait-for "#chart svg" --pdf report.pdf
