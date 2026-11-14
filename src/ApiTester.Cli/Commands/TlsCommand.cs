@@ -25,7 +25,7 @@ public static class TlsCommand
 
           --cert <thumb|subject>  Offer this client certificate (and the other certificate
                                   options: --cert-file, --cert-password, --key-file, --cert-issuer,
-                                  --cert-serial, --cert-pin, --store)
+                                  --cert-serial, --cert-pin, --store, and curl's -E <file[:password]>)
           --connect-to / --interface / --resolve / -4 / -6 / --tls-min / --ca-file
                                   As on send. A proxy is never used: this is not HTTP
 

@@ -279,8 +279,9 @@ certapi bench https://127.0.0.1:8770/ -n 500 --insecure    # the note says every
 - **`--http`** (default) — plain HTTP; hit it with anything (curl, a browser, the app), no
   certificates.
 - **`--tls`** — HTTPS with a generated server certificate for `localhost`, issued by the mock's own
-  certificate authority (`mock-ca.cer`), not self-signed. Use `https://localhost:<port>`: the
-  certificate does not name `127.0.0.1`.
+  certificate authority (`mock-ca.cer`), not self-signed. It names `127.0.0.1` and `::1` too, and
+  the mock listens on both, so `https://localhost:<port>` connects at once rather than after the
+  two seconds Windows spends on a refused `::1` first.
 - **`--mtls`** — HTTPS that **requires** a client certificate (any presented cert is accepted, and its
   subject is echoed back).
 
@@ -288,6 +289,18 @@ For the TLS modes the server writes its certificates to `--cert-dir` (default `.
 
 - `mock-server.cer`, `mock-ca.cer` — trust these, or use `--insecure`.
 - `mock-client.pfx` (mTLS only) — a ready-to-use client certificate to present.
+- `mock-ca.key`, `mock-server.key` — the private keys the next start signs and serves with,
+  encrypted to your Windows account (DPAPI). Another account, or another machine, cannot use them.
+
+**The certificates are kept.** The next start in the same `--cert-dir` uses them again while they
+are good, so `mock-ca.cer` stays the same: trust it once (`certutil -user -addstore Root
+mock-ca.cer`) and every later start is trusted too; a `certapi trust` pin of the server certificate
+and a `--cert-file mock-client.pfx` in a script keep working as well. Starting is quicker for it, since no keys are made.
+They are made again — with a new `mock-ca.cer`, which the start says — when a file is missing or
+unreadable, when the authority has less than about 400 days left or a certificate less than a day,
+and when `--new-certs` asks for it. A `--tls-mode` certificate is made new every time and not
+kept; the next ordinary start serves the kept good one again. Where the keys cannot be encrypted
+(not Windows), nothing is kept and every start makes new certificates.
 
 ## Dogfood the whole app
 

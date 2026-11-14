@@ -146,7 +146,7 @@ public class DocsTests
     /// silently skipped.</summary>
     private static readonly Dictionary<string, string> CommandFiles = new(StringComparer.Ordinal)
     {
-        ["SendCommand.cs"] = "send", ["RunCommand.cs"] = "run", ["FuzzCommand.cs"] = "fuzz",
+        ["SendCommand.cs"] = "send", ["CurlCommand.cs"] = "curl", ["RunCommand.cs"] = "run", ["FuzzCommand.cs"] = "fuzz",
         ["BenchCommand.cs"] = "bench", ["SseCommand.cs"] = "sse", ["WsCommand.cs"] = "ws",
         ["CertsCommand.cs"] = "certs", ["SelfTestCommand.cs"] = "selftest", ["MockCommand.cs"] = "mock",
         ["ImportCommand.cs"] = "import", ["ExportCommand.cs"] = "export", ["TrustCommand.cs"] = "trust",

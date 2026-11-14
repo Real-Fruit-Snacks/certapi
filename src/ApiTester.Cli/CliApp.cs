@@ -133,6 +133,7 @@ public static class CliApp
 
         Commands:
           send <url>        Send a one-off request (client cert from the Windows store)
+          curl <args…>      Run a pasted curl command with curl's meaning, through send
           call <spec> <op>  Call an OpenAPI operation by operationId, checked against the spec
           token             Fetch an OAuth 2.0 access token (and optionally save it)
           run <path>        Run saved requests from your collections (or --all)
@@ -332,6 +333,7 @@ public static class CliApp
                 "help" or "--help" or "-h" => Help(rest, stdout),
                 "certs" => Commands.CertsCommand.Run(new Args(rest), stdout, err, services),
                 "send" => Commands.SendCommand.Run(new Args(rest), stdout, err, bodyOut ?? new MemoryStream(), services),
+                "curl" => Commands.CurlCommand.Run(new Args(rest), stdout, err, bodyOut ?? new MemoryStream(), services),
                 "run" => Commands.RunCommand.Run(new Args(rest), stdout, err, services),
                 "token" => Commands.TokenCommand.Run(new Args(rest), stdout, err, services),
                 "fuzz" => Commands.FuzzCommand.Run(new Args(rest), TextReader.Null, stdout, err, services),
@@ -476,6 +478,7 @@ public static class CliApp
     internal static string? HelpFor(string? command) => command?.ToLowerInvariant() switch
     {
         "send" => Commands.SendCommand.Help,
+        "curl" => Commands.CurlCommand.Help,
         "certs" => Commands.CertsCommand.Help,
         "run" => Commands.RunCommand.Help,
         "token" => Commands.TokenCommand.Help,

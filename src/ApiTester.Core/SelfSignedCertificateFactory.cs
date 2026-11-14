@@ -49,12 +49,14 @@ public static class SelfSignedCertificateFactory
     /// expired or not-yet-valid certificate — the mock's TLS-misbehaviour modes, which make the
     /// client's own error paths reachable from a terminal rather than only from a test.</param>
     /// <param name="notAfter">When it stops; defaults to a year out.</param>
+    /// <param name="ipAddresses">Addresses added to the Subject Alternative Name beside the DNS names.</param>
     public static X509Certificate2 CreateSignedCertificate(
         string name, X509Certificate2 issuer, bool serverAuth, bool clientAuth,
         IEnumerable<string>? dnsNames = null,
         string? crlDistributionPoint = null,
         DateTimeOffset? notBefore = null,
-        DateTimeOffset? notAfter = null)
+        DateTimeOffset? notAfter = null,
+        IEnumerable<System.Net.IPAddress>? ipAddresses = null)
     {
         using var rsa = RSA.Create(2048);
         var req = new CertificateRequest($"CN={name}", rsa, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
@@ -70,10 +72,11 @@ public static class SelfSignedCertificateFactory
 
         req.CertificateExtensions.Add(new X509SubjectKeyIdentifierExtension(req.PublicKey, false));
 
-        if (dnsNames is not null)
+        if (dnsNames is not null || ipAddresses is not null)
         {
             var san = new SubjectAlternativeNameBuilder();
-            foreach (var d in dnsNames) san.AddDnsName(d);
+            foreach (var d in dnsNames ?? []) san.AddDnsName(d);
+            foreach (var ip in ipAddresses ?? []) san.AddIpAddress(ip);
             req.CertificateExtensions.Add(san.Build());
         }
 

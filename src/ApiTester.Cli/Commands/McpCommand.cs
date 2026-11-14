@@ -26,6 +26,7 @@ public static class McpCommand
                                   request that names its own certificate presents that one instead
           --store <location>      CurrentUser (default); LocalMachine searches both stores
           --cert-file <path>      Pin a certificate from a file (.pfx/.p12 or .pem/.crt) instead
+          -E <file[:password]>    curl's spelling of --cert-file (and --cert-password)
           --cert-password <pw>    Password for a .pfx/.p12 certificate file
           --key-file <path>       Private-key file for a PEM certificate whose key is separate
           --cert-issuer <substr>  Narrow --cert to certificates issued by a matching CA (or use alone)

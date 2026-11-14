@@ -15,6 +15,8 @@ public static class CliCert
           --cert-serial <hex>     Pick the certificate with this serial number (or use alone)
           --store <location>      CurrentUser (default); LocalMachine searches both stores
           --cert-file <path>      Client certificate from a file (.pfx/.p12 or .pem/.crt) instead
+          -E <file[:password]>    curl's spelling: a certificate file and its password, or
+                                  CurrentUser\MY\<thumbprint> / LocalMachine\MY\<thumbprint>
           --cert-password <pw>    Password for a .pfx/.p12 certificate file
           --key-file <path>       Private-key file for a PEM certificate whose key is separate
           --cert-pin <pin>        Smart-card / HSM PIN for the key, supplied ahead of time so a
@@ -40,6 +42,14 @@ public static class CliCert
         var profile = services.Profile;
         string? certQueryFlag = args.Value("--cert");
         string? certFileFlag = args.Value("--cert-file");
+        string? curlPassword = null;
+        if (args.Value("-E") is { } curlCert)
+        {
+            if (certQueryFlag is not null || certFileFlag is not null)
+                throw new CliUsageException("-E names the client certificate, so it cannot be combined with --cert or --cert-file.");
+            (certQueryFlag, certFileFlag, curlPassword, string? location) = FromCurlCert(curlCert);
+            if (location is not null) store = location;
+        }
         string? certIssuer = args.Value("--cert-issuer");
         string? certSerial = args.Value("--cert-serial");
         // A filter alone is a store selection too: "the one the corporate CA issued" needs no subject.
@@ -52,7 +62,7 @@ public static class CliCert
         // typed. Only when neither is typed does the profile decide which source is used.
         string? certQuery = certQueryFlag ?? (certFileFlag is null ? profile?.Cert : null);
         string? certFile = certFileFlag ?? (certQueryFlag is null ? profile?.CertFile : null);
-        string? certPassword = args.Value("--cert-password") ?? profile?.CertPassword;
+        string? certPassword = args.Value("--cert-password") ?? curlPassword ?? profile?.CertPassword;
         string? keyFile = args.Value("--key-file") ?? profile?.KeyFile;
         string? pin = args.Value("--cert-pin") ?? environment(SmartCardPin.EnvironmentVariable);
 
@@ -89,6 +99,21 @@ public static class CliCert
         // A PIN makes a copy bound to the unlocked key; it is this invocation's too.
         if (!ReferenceEquals(unlocked, cert)) services.Own(unlocked);
         return unlocked;
+    }
+
+    /// <summary>curl's -E: <c>file[:password]</c>, or — as curl's Windows build reads it — a store
+    /// certificate as <c>CurrentUser\MY\&lt;thumbprint&gt;</c> or <c>LocalMachine\MY\…</c>. A
+    /// drive letter's colon is not the password separator.</summary>
+    internal static (string? Query, string? File, string? Password, string? Store) FromCurlCert(string value)
+    {
+        var store = System.Text.RegularExpressions.Regex.Match(value,
+            @"^(CurrentUser|LocalMachine)\\My\\([0-9A-Fa-f]{40})$", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        if (store.Success)
+            return (store.Groups[2].Value, null, null, store.Groups[1].Value.Equals("LocalMachine", StringComparison.OrdinalIgnoreCase) ? "LocalMachine" : "CurrentUser");
+        int colon = value.LastIndexOf(':');
+        if (colon > 1 && !File.Exists(value) && !(colon == 1 || value.AsSpan(colon + 1).StartsWith("\\")))
+            return (null, value[..colon], value[(colon + 1)..], null);
+        return (null, value, null, null);
     }
 
     /// <summary>A PEM that ships its intermediates is a trap: the TLS stack builds the client chain

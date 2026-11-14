@@ -27,6 +27,7 @@ other.
 | Command | Purpose |
 |---|---|
 | [`send <url>`](#send) | Send a one-off request |
+| [`curl <args…>`](#curl) | Run a pasted curl command with curl's meaning, through `send` |
 | [`call <spec> <operation>`](#call) | Call an OpenAPI operation by its operationId, checked against the spec |
 | [`token`](#token) | Fetch an OAuth 2.0 access token (and optionally save it) |
 | [`run <path>`](#run) | Run saved requests as a pass/fail suite, or a chain |
@@ -116,15 +117,26 @@ curl options with the same meaning are accepted wherever the option they stand f
 | `-i` | `--include` |
 | `-I` / `--head` | `--head` on `send`: HEAD, headers printed |
 | `-s` / `--silent` | `-q, --quiet` |
+| `-S` / `--show-error`, `-#` / `--progress-bar` | accepted on `send`, and change nothing |
 | `-u` / `--user` | `--basic` |
 | `-x` | `--proxy` |
 | `-U` | `--proxy-user` |
 | `-A` / `--user-agent` | `--user-agent` on `send` |
-| `-f` | `--fail` |
-| `--max-time` | `--timeout` |
+| `-e` / `--referer` | `--referer` on `send` |
+| `-f` / `--fail-with-body` | `--fail` |
+| `--max-time`, `-m` | `--timeout` |
+| `--oauth2-bearer` | `--bearer` |
 | `--cacert` | `--ca-file` |
 | `--key` | `--key-file` |
+| `-E` / `--cert <file[:password]>` | `-E` among the [certificate options](#certificate-options); on `certapi curl`, `--cert` too |
+| `-L` / `--location`, `--compressed` | accepted wherever requests are sent; both are already the default |
+| `--tlsv1.2`, `--tlsv1.3` | `--tls-min` |
 | `-d @file` | on `send` and `bench`, reads the body from the file — byte for byte when it is not text (on `grpc`, one JSON message) |
+| `--data-binary`, `--data-raw` | on `send`: `--data-binary` is `--data`, `--data-raw` a literal body |
+| `-T` / `--upload-file` | `--upload-file` on `send`: `PUT` of the file |
+| `-G` / `--get` | `--get` on `send`: the data goes in the query |
+| `-O` / `--remote-name` | `--remote-name` on `send` |
+| `--url <url>` | the URL on `send` |
 | `-b` / `--cookie` | `--cookie` on `send`: a `name=value; …` string, or a Netscape cookie file (what `curl -c` writes) |
 | `--data-urlencode` | `--data-urlencode` on `send`, all five of curl's forms |
 | `-w` / `--write-out` | `--write-out` on `send`, with curl's variable names |
@@ -133,11 +145,19 @@ curl options with the same meaning are accepted wherever the option they stand f
 | `--max-filesize` | `--max-filesize` on `send` |
 | `--connect-to`, `--interface`, `--unix-socket`, `--pinnedpubkey`, `--proxy-header`, `--http2-prior-knowledge` | the same, among the [transport options](#transport-options) |
 
-The ones whose meaning differs are refused with what to use instead: `-L` and `--compressed` (both
-already the default), `-c` (`--cookie-jar`, which both reads and saves), `-G`/`--get`
-(`--query`), `-v`/`--verbose` (`--include`, `--debug`, `--trace`), `-O` (`-o <file>`), `-e`/`--referer`
-(`-H "Referer: …"`), `--data-binary` (`-d @file` or `--data-file`, which send a binary file byte for byte), `-E` (`--cert-file`), `--tlsv1.2`/`--tlsv1.3` (`--tls-min`), `-T` (`--data-file`
-with `-X PUT`) and `--data-raw` (`-d`).
+Single-letter options bundle as in curl: `-sSL` is `-s -S -L`, `-sk` is `-s -k`, and a letter that
+takes a value takes the rest of the word, so `-XPOST`, `-HAccept:text/plain` and `-sSXPUT` work.
+A word that follows an option needing a value is that value, even when it starts with `-`
+(`-H -kv`, `-d -1`).
+
+Two curl options keep a different meaning and are refused on `send` with what to use instead:
+`-c` (`--cookie-jar`, which both reads and saves) and `-v`/`--verbose` (`--include`, `--debug`,
+`--trace`). curl's `--json <data>` is refused too, because certapi's `--json` prints a result
+envelope and takes no value. A command that does not send requests says so for the request options
+above.
+
+To run a curl command exactly as curl would read it — redirects followed only with `-L`, `-d` a form
+body, `-c` and `-v` as curl has them, `--json <data>` — paste it into [`certapi curl`](#curl).
 
 ## Exit codes
 
@@ -173,6 +193,7 @@ only to `--from-url`.
 | `--cert <thumbprint or subject>` | none | Client certificate from the Windows certificate store. Matches a full thumbprint, or part of the subject (`"CN=My Client"`, or just `my client`) |
 | `--store <location>` | `CurrentUser` | Which store to search. `LocalMachine` searches **both** the machine store and your own, because a machine certificate is normally used alongside personal ones |
 | `--cert-file <path>` | none | Load the certificate from a file instead of the store: `.pfx`/`.p12`, or `.pem`/`.crt`. Mutually exclusive with `--cert` |
+| `-E <file[:password]>` | none | curl's spelling: a certificate file with its password after the last colon (a drive letter's colon is not taken for one), or `CurrentUser\MY\<thumbprint>` / `LocalMachine\MY\<thumbprint>` for a store certificate, as curl's Windows build reads it. Not with `--cert` or `--cert-file` |
 | `--cert-password <password>` | none | Password for a `.pfx`/`.p12`. Not used for PEM |
 | `--key-file <path>` | none | The private key for a PEM certificate whose key is in a separate file |
 | `--cert-issuer <name>` | none | Pick a store certificate by who issued it (a part of the issuer name, case-insensitive). Alone, or with `--cert` to narrow a subject two certificates share. Not with `--cert-file` |
@@ -235,6 +256,7 @@ header, the TLS server name and the certificate check.
 | Option | Default | What it does |
 |---|---|---|
 | `--no-redirect` | off | Do not follow 3xx responses; report the redirect itself |
+| `-L, --location` | on | Follow redirects — the default, accepted so a curl habit does not fail. Not with `--no-redirect` |
 | `--max-redirs <n>` | `20` | How many hops to follow before giving up |
 | `--show-redirects` | off | Print the hop chain to stderr, each hop with its own status and timing. A request that "takes two seconds" is often four hops of five hundred milliseconds, and the destination is innocent |
 
@@ -247,6 +269,7 @@ header, the TLS server name and the certificate check.
 | `--http2-prior-knowledge` | off | Speak HTTP/2 from the first byte, without TLS or an upgrade — `h2c` with prior knowledge, for a plaintext gRPC or HTTP/2 backend. The same pin as `--http2` on an `http://` URL |
 | `--http3` | negotiated | Pin the request to HTTP/3 (QUIC, over UDP). Needs Windows 11 or Server 2022 or later, and `msquic.dll` (part of each release) beside `certapi.exe`; without it the request is refused with a message saying where to put it. **Cannot** be combined with a proxy or `--resolve`, and the command refuses the combination rather than silently ignoring one of them |
 | `--no-decompress` | off | Relay compressed bytes exactly as received instead of decoding `gzip`/`deflate`/`br`. What you want when the *encoding* is the thing under test |
+| `--compressed` | on | Decompress responses — the default, accepted for curl habits. Not with `--no-decompress` |
 | `--resolve <host:port:ip>` | none | Pin a hostname to an address — test one node behind a load balancer, or an endpoint whose DNS is not updated yet. Repeatable. Not valid with a proxy, which does its own resolving |
 
 Each version pin is **exact**: a server that cannot speak it fails loudly rather than quietly
@@ -269,7 +292,7 @@ either way. `--insecure` overrides both, and says so when it does.
 |---|---|---|
 | `--ca-file <pem>` | none | Trust the root certificate(s) in this file for this run, on top of the Windows store. Repeatable; a PEM bundle with several certificates is fine; DER is accepted. For the network whose TLS-intercepting proxy re-signs every site with a private CA that is handed out as a file: narrower than `--insecure`, which trusts anything. A chain ending in one of these roots is accepted the way a store-trusted chain is; a name mismatch and an expired certificate are still refused, and a revoked one is when `--revocation` is on. Profile key `caFile` (a path or a list, relative to the config file) |
 | `--pinnedpubkey <sha256//base64;…>` | none | Accept the server only if its public key is one of these: the SHA-256 of the certificate's SubjectPublicKeyInfo, base64, in curl's `sha256//…` form, several separated by `;`. The pin is checked **as well as** the ordinary validation, never instead of it (with `--insecure`, the pin is the only check). [`tls`](#tls) prints the value for each certificate in a chain. A pin survives a certificate renewed with the same key, unlike a thumbprint |
-| `--tls-min <1.2\|1.3>` | OS default | Refuse to negotiate below this TLS version. `1.3` proves a server — or a middlebox in front of it — really speaks it. Profile key `tlsMin` |
+| `--tls-min <1.2\|1.3>` | OS default | Refuse to negotiate below this TLS version. `1.3` proves a server — or a middlebox in front of it — really speaks it. Profile key `tlsMin`. curl's `--tlsv1.2` / `--tlsv1.3` mean the same |
 | `--connect-timeout <s>` | none (`serve`: 15 s for the name lookup and for each address) | A separate budget for connecting: the TCP connect, a proxy tunnel and the TLS handshake. On a network that blackholes unknown hosts this turns a 100-second hang into "unreachable" in seconds. Profile key `connectTimeout` |
 | `--sni <name>` | the URL's host | Send a different server name in the TLS handshake. Direct connections only — a proxy tunnel's TLS is negotiated by the HTTP stack from the URL, so `--sni` with any proxy that applies (explicit, PAC, system or environment) is refused. The server's certificate is then checked against the name sent, so a certificate that names only the URL's host needs a pin or `--insecure` |
 | `--pac <url\|file>` | the machine's | Decide the proxy for each URL with this PAC script, through WinHTTP's own engine, when the machine's configured PAC is not the one the job needs. Windows only |
@@ -302,7 +325,7 @@ narrows whichever is in play. `certapi proxy <url>` shows the answer of each eng
 [`sse`](#sse), [`ws`](#ws), [`token`](#token), [`doctor`](#doctor) and `trust add --from-url` accept
 **only** the proxy, revocation and trust options: `--proxy`, `--no-proxy`, `--proxy-user`,
 `--noproxy`, `--no-env-proxy`, `--offline`, `--revocation`, `--revocation-strict`, `--ca-file`,
-`--tls-min`, `--connect-timeout`.
+`--tls-min` (and curl's `--tlsv1.2` / `--tlsv1.3`), `--connect-timeout`.
 
 Redirects, version pins and retries are deliberately **not** accepted there, and passing one is a
 usage error rather than a silent no-op: a stream re-subscribe has side effects a retry must not
@@ -329,6 +352,7 @@ a CI job is never written to disk, an export, or source control.
 
 ```
 certapi send <url> [options]
+certapi send --url <url> [options]
 ```
 
 One request. The body goes to stdout, everything else to stderr, so `certapi send … | jq` works.
@@ -343,13 +367,17 @@ Accepts the [certificate](#certificate-options), [transport](#transport-options)
 | `-X, --method <m>` | `GET` | HTTP method. Any method the server accepts, not a fixed list |
 | `-I, --head` | off | Send `HEAD` and print the status line and headers. Not with another `-X` |
 | `-H, --header "k: v"` | none | Add a header. Repeatable |
+| `-e, --referer <url>` | none | Set the `Referer` header |
 | `-A, --user-agent <ua>` | .NET's | Set the `User-Agent` header |
 | `--origin <origin>` | none | Send `Origin: <origin>`, as a page on that origin would (a path typed after it is dropped), and print on stderr whether a browser there could read this response — without credentials and with them — which headers a script could read, and whether a preflight would come first. The exit code is not affected; [`cors`](#cors) checks the preflight too and makes the verdict the exit code |
 | `--query name=value` | none | Add a query parameter to the URL, percent-encoded, after any query the URL already has. Repeatable; `name` alone sends `name=` |
 | `-d, --data <body>` | none | Request body; `-d @file` reads it from a file. Implies POST unless `-X` says otherwise (as in curl) |
 | `--data-urlencode <part>` | none | One form field, percent-encoded for you, as curl does: `content`, `=content` (both just the encoded content), `name=content` (the name as written, the content encoded), `@file` and `name@file` (the file's text, encoded). Repeatable, joined with `&` after any `-d`; implies POST and `application/x-www-form-urlencoded`. With `-X GET` and no body, use `--query` instead |
 | `-b, --cookie <cookies\|file>` | none | Send cookies: a `name=value; name2=value2` string, or the path of a **Netscape cookie file** (what `curl -c`, browser exporters and `yt-dlp` write), from which the cookies for this URL's host, path and scheme that have not expired are sent, `#HttpOnly_` lines included. Read-only: to save what the server sets as well, use `--cookie-jar` |
-| `--data-file <path>` | none | Read the body from a file instead, without interpreting a leading `@` — for a body too large or too awkward to quote on a command line. Implies POST unless `-X` says otherwise |
+| `--data-file <path>` | none | Read the body from a file instead, without interpreting a leading `@` — for a body too large or too awkward to quote on a command line. Implies POST unless `-X` says otherwise. curl's `--data-binary @file` is the same |
+| `--data-raw <body>` | none | A body taken as written: a leading `@` is part of it, not a file. Not with `-d` |
+| `-T, --upload-file <path>` | none | Send the file with `PUT` (another `-X` still wins), as curl does |
+| `-G, --get` | off | Put the `-d` and `--data-urlencode` data in the URL's query instead of the body, and send `GET`, as curl does |
 | `-F, --form name=value` | none | A `multipart/form-data` field. `name=@path` uploads a file; `name=@path;type=<ct>` sets that part's content type. Repeatable, implies POST, and mutually exclusive with `-d` |
 | `--graphql <query>` | none | Send a GraphQL query as a correctly formed `{query, variables}` POST |
 | `--gql-variables <json>` | none | A JSON object of GraphQL variables to go with it |
@@ -442,6 +470,7 @@ size and equality only.
 | Option | Default | What it does |
 |---|---|---|
 | `-o, --output <file>` | stdout | Write the body to a file. `-o -` writes all of it to stdout, even to a console window |
+| `-O, --remote-name` | off | Write the body to a file named as the URL's last path segment, in the current folder. Not with `-o` |
 | `-i, --include` | off | Print the status line and headers before the body |
 | `-w, --write-out <format>` | none | After the transfer, print `format` to stdout with curl's `%{variables}` filled in: `http_code` (`response_code`), `http_connect`, `method`, `scheme`, `url`, `url_effective`, `redirect_url`, `num_redirects`, `num_retries`, `content_type`, `size_download`, `size_header`, `size_request`, `speed_download`, `time_namelookup`, `time_connect`, `time_appconnect`, `time_pretransfer`, `time_starttransfer`, `time_total` (seconds, six decimals), `ssl_verify_result`, `tls_version`, `filename_effective`, `errormsg`, `exitcode`, `%{header{Name}}` for a response header, and `%{json}` for all of them as one object. `\n`, `\t` and `\r` are escapes; `@file` reads the format from a file. A variable it does not know is a usage error that lists the ones it does. `-w '%{http_code}\n' -o /dev/null`-style status checks work as in curl |
 | `--max-filesize <size>` | none | Refuse a response body larger than this — `500k`, `10m`, `1g` or bytes. Nothing is kept or written; the send fails (exit 1) with a message giving the cap. For the endpoint that sometimes answers with a gigabyte you did not want |
@@ -451,6 +480,7 @@ size and equality only.
 | `--json` | off | Print a JSON result envelope — status, headers, timing, body — instead of the raw body |
 | `-f, --fail` | off | Exit 1 when the HTTP status is 400 or higher |
 | `-q, -s, --quiet` | off | No metadata line on stderr |
+| `-S, --show-error`, `-#, --progress-bar` | — | Accepted for curl habits and change nothing: errors are always shown, and no progress meter is drawn |
 | `--timing` | off | Where the time went, on stderr: `timing: dns 2.1 ms · connect 1.4 ms · tls 14 ms · wait 31 ms · first byte 52 ms · download 1.0 ms · total 54 ms`. A phase that did not happen is left out (`tls` on plain HTTP, `dns` for an IP address, all three on a reused connection, which says `connection reused`). Through a proxy, `connect` is to the proxy and `tls` is the handshake with the site inside the tunnel. After redirects or retries the phases describe the last request. With `--json` the same numbers are a `timing` object in the envelope (`dnsMs`, `connectMs`, `tlsMs`, `waitMs`, `firstByteMs`, `downloadMs`, `totalMs`, `reused`, `requests`). Printed even with `--quiet`. Not with `--all-ips` |
 
 **To a console window**, `send` prints only what a console can draw. A binary body is not printed
@@ -508,6 +538,48 @@ signal, and the quickest way to see whether pooling is working. Two honest limit
 **process-wide**, so under `mock` or `serve` you will also see that server's own accepts; and it is
 not packet capture, which needs a driver and administrator rights this tool deliberately never
 requires.
+
+---
+
+## curl
+
+```
+certapi curl <curl arguments…>
+certapi curl "curl -sS -H 'Accept: application/json' https://api.example.com/v1/me"
+```
+
+Runs a curl command as curl would read it, through [`send`](#send). Paste it as it is, with or
+without the leading `curl` (or `curl.exe`), as one quoted argument or as separate ones. A single
+argument is split the way a shell would: bash quoting, `\` and cmd `^` line continuations, and the
+`^"` quoting of a browser's "Copy as cURL (cmd)". Options typed after the quoted command are
+added to it: `certapi curl "curl …" --timing`.
+
+Everything `send` does applies — the Windows certificate store, pinning, `--timing`, `--debug` —
+and certapi's own options can be added to the pasted command (`--assert`, `--pretty`, `--json`).
+Where curl and `send` differ, curl's meaning is kept:
+
+| curl | What `certapi curl` does |
+|---|---|
+| no `-L` | Redirects are not followed (`--no-redirect`); `-L` / `--location` follows them |
+| `-d`, `--data`, `--data-ascii`, `--data-urlencode` | A form body: `application/x-www-form-urlencoded` unless a `Content-Type` header (or `--content-type`) says otherwise. Several are joined with `&` |
+| `-d @file` | The file's text with its line breaks removed, as curl reads it |
+| `--data-binary @file` | The file byte for byte |
+| `--data-raw` | Literal: a leading `@` is part of the body |
+| `--json <data>` | The data, with `Content-Type: application/json` and, unless one was given, `Accept: application/json` |
+| `-G` / `--get` | The data in the query, `GET` |
+| `-E` / `--cert <value>` | A file (`.pfx`/`.p12`/`.pem`, `file:password`), `CurrentUser\MY\<thumbprint>` / `LocalMachine\MY\<thumbprint>` as curl's Windows build reads it, or — when it is not a file — a store lookup by thumbprint or subject. `--pass` is the password; `--cert-type` and `--key-type` are ignored (the file says what it is) |
+| `-c` / `--cookie-jar <file>` | Cookies saved to the file (read from it as well, as `send` does) |
+| `-v` / `--verbose` | certapi's diagnostics on stderr (`--debug`) |
+
+Anything else is `send`'s option of the same name, so a curl option certapi does not have is
+reported rather than ignored. `--debug` logs the `send` command the paste became. Exit codes are
+`send`'s.
+
+```powershell
+certapi curl "curl -fsSL https://api.example.com/health"
+certapi curl curl -X POST https://api.example.com/login -d user=me -d pass=secret
+certapi curl -sS -E "CurrentUser\MY\3f1c…" https://mtls.example.com/whoami --timing
+```
 
 ---
 
@@ -874,7 +946,8 @@ A local test server to fire requests at. Runs until Ctrl+C. See [Mock Server](18
 | `--http` | **default** | Plain HTTP — hit it with anything, no certificates involved |
 | `--tls` | off | HTTPS with a generated server certificate for `localhost`, issued by the mock's own certificate authority (`mock-ca.cer`) |
 | `--mtls` | off | HTTPS that **also requires** a client certificate. Any certificate is accepted; the point is to exercise the presenting side |
-| `--cert-dir <dir>` | `./certapi-mock-certs` | Where generated certificates are written |
+| `--cert-dir <dir>` | `./certapi-mock-certs` | Where generated certificates are written. They are kept and used again on the next start while they are good, so `mock-ca.cer` is trusted once; the private keys are kept encrypted to your Windows account ([details](18-Mock-Server.md#modes-and-certificates)) |
+| `--new-certs` | off | Make new certificates, with a new `mock-ca.cer`, instead of the kept ones |
 | `-q, --quiet` | off | Do not log each request |
 | `--no-keep-alive` | off | One request per connection: every response says `Connection: close`, as a server that does not keep connections would. By default a connection is kept for the next request whenever the response is framed by its length (not a stream, a WebSocket, a HEAD, a 204/304, or a route's deliberate fault), so a client or `bench` measures requests rather than handshakes |
 | `--cors [<origins>]` | off | Behave like a server with a CORS policy: answer preflights itself (204, or 403 for an origin it does not allow) and put `Access-Control-*` headers on every response to a page — the exact origin, credentials allowed, every header exposed, `Vary: Origin`. With no value any origin is allowed; a comma-separated list (repeatable) allows only those, and any other origin gets **no** CORS headers, so a browser blocks it — a front end can be tested against both answers. Applies to declared routes and replays too. Without `--cors` the built-in routes answer `Access-Control-Allow-Origin: *`, as before |

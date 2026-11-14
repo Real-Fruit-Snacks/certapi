@@ -8,6 +8,7 @@ public class HelpTextTests
     public static TheoryData<string, string> Helps => new()
     {
         { "send", SendCommand.Help },
+        { "curl", CurlCommand.Help },
         { "run", RunCommand.Help },
         { "certs", CertsCommand.Help },
         { "selftest", SelfTestCommand.Help },

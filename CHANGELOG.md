@@ -6,7 +6,32 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- `certapi curl`: paste a curl command and it runs with curl's meaning, through `send` — the
+  Windows certificate store, `--timing`, `--assert` and the rest still apply, and can be added to
+  the pasted line. Redirects are followed only with `-L`, `-d` is a form body and several are
+  joined with `&`, `-d @file` drops line breaks, `--json <data>` sends JSON, `-v` turns on
+  `--debug`, `-c` saves cookies, and `-E`/`--cert` takes a file, `file:password`, or curl's
+  Windows `CurrentUser\MY\<thumbprint>`. One quoted argument is split as a shell would, browser
+  "Copy as cURL" (bash or cmd) included.
+- `send` reads more of curl's own spellings: bundled switches (`-sSL`, `-sk`), values attached to
+  their letter (`-XPOST`, `-HAccept:x`, `-d{}`), `-L`/`--location`, `--compressed`, `-S`, `-#`,
+  `-e`/`--referer`, `--data-raw` (a literal body), `--data-binary`, `-T`/`--upload-file` (PUT),
+  `-G`/`--get` (data into the query), `-O`/`--remote-name`, `--url`, `-m`, `--fail-with-body`,
+  `--oauth2-bearer`, `--tlsv1.2`/`--tlsv1.3` and `-E <file[:password]>`. Most of these were refused
+  with a hint before. `-L`, `--compressed`, `--tlsv1.x` and `-E` work on every command that has
+  the option they stand for. curl's `--json <data>` is refused with what to use, since certapi's
+  `--json` prints an envelope.
+- `mock --tls` and `--mtls` keep their certificates in `--cert-dir` and use them again on the next
+  start, so `mock-ca.cer` is trusted once and `mock-client.pfx` stays the same. The private keys
+  are kept encrypted to the Windows account (DPAPI). New ones are made when the kept ones are
+  missing or near expiry, or with the new `--new-certs`; a `--tls-mode` certificate is still made
+  each time. Starting `mock --mtls` is quicker for it (on Windows, 270 ms → 165 ms).
+
 ### Changed
+- `send --json` writes its envelope directly instead of through the reflection serializer, about
+  50 ms sooner on Windows (201 ms → 147 ms against a local server). The text is the same, byte
+  for byte; `mcp`'s send tool gets the same saving.
 - `--debug` lines say when they happened: `debug: [+0.059s] …`, counted from the start of the
   process, so a slow step shows as a gap. The first line names the version and runtime, and new
   lines say how long the workspace and the certificate store took to read. `--log-file` lines carry
@@ -45,6 +70,10 @@ All notable changes to this project are documented here. The format follows
   others) are generated at build time instead of compiled at start-up.
 
 ### Fixed
+- `mock` listens on `::1` as well as `127.0.0.1`. `localhost` resolves to `::1` first on Windows,
+  and the refused connection there cost about two seconds before every new connection to
+  `https://localhost:<port>` — the name the mock's certificate is for. The certificate now names
+  `127.0.0.1` and `::1` too, so `https://127.0.0.1` passes a trust check against `mock-ca.cer`.
 - `bench` no longer claims connections were pooled and reused when the server answered
   `Connection: close`; it says how many responses closed their connection (`closedByServer` in
   `--json`).

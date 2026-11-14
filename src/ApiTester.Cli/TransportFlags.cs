@@ -24,10 +24,12 @@ public static class TransportFlags
                                   — test a script before IT rolls it out, or use one on a machine
                                   whose Internet Options name none. Windows only
           --proxy-user <u:pass>   Proxy credentials
-          --no-redirect           Do not follow 3xx redirects
+          --no-redirect           Do not follow 3xx redirects (-L, --location: follow them, the
+                                  default, accepted for curl habits)
           --max-redirs <n>        Redirect limit (default 20)
           --show-redirects        Print the redirect hop chain to stderr
-          --no-decompress         Relay compressed bytes exactly as received
+          --no-decompress         Relay compressed bytes exactly as received (--compressed:
+                                  decompress, the default, accepted for curl habits)
           --http1.1 / --http2 / --http3   Pin the HTTP version. --http3 is QUIC (UDP): it needs
                                   Windows 11 / Server 2022 or later, and cannot go through a
                                   proxy or a --resolve pin
@@ -70,7 +72,7 @@ public static class TransportFlags
                                   anything. Name and expiry problems are still refused, and a
                                   revoked certificate is when --revocation is on
           --tls-min <1.2|1.3>     Refuse to negotiate below this TLS version (default: whatever the
-                                  OS allows)
+                                  OS allows). --tlsv1.2 / --tlsv1.3 are curl's spelling of it
           --connect-timeout <s>   Give up on connecting (the TCP connect, a proxy tunnel and the
                                   TLS handshake) after this many seconds, separately from
                                   --timeout. On a network that blackholes unknown hosts this tells
@@ -157,8 +159,13 @@ public static class TransportFlags
         bool noProxy = noProxyFlag || (proxyFlag is null && profile?.NoProxy == true);
         string? proxyUser = args.Value("--proxy-user") ?? profile?.ProxyUser;
         bool noRedirect = args.Flag("--no-redirect");
+        // curl's spellings of what is already the default here: accepted, so a pasted command runs.
+        bool location = args.Flag("-L", "--location");
+        if (location && noRedirect) throw new CliUsageException("-L/--location follows redirects and --no-redirect does not; give one.");
         string? maxRedirsRaw = args.Value("--max-redirs");
         bool noDecompress = args.Flag("--no-decompress");
+        if (args.Flag("--compressed") && noDecompress)
+            throw new CliUsageException("--compressed decodes the response and --no-decompress does not; give one.");
         bool http11 = args.Flag("--http1.1");
         bool http2 = args.Flag("--http2");
         bool http3 = args.Flag("--http3");
@@ -183,7 +190,7 @@ public static class TransportFlags
         string? revocationRaw = args.Value("--revocation") ?? profile?.Revocation;
         bool revocationStrict = args.Switch("--revocation-strict", profile?.RevocationStrict);
         var caFileFlags = args.Values("--ca-file");
-        string? tlsMinRaw = args.Value("--tls-min") ?? profile?.TlsMin;
+        string? tlsMinRaw = args.Value("--tls-min") ?? CurlTlsFloor(args) ?? profile?.TlsMin;
         string? connectTimeoutRaw = args.Value("--connect-timeout") ?? profile?.ConnectTimeout?.ToString();
         string? sni = args.Value("--sni");
         bool offline = args.Flag("--offline");
@@ -402,7 +409,8 @@ public static class TransportFlags
           --revocation-strict     Make an undeterminable revocation status fatal (needs
                                   --revocation offline or online)
           --ca-file <pem>         Trust the root(s) in this file for this run (repeatable)
-          --tls-min <1.2|1.3>     Refuse to negotiate below this TLS version
+          --tls-min <1.2|1.3>     Refuse to negotiate below this TLS version (--tlsv1.2 /
+                                  --tlsv1.3, curl's spelling)
           --connect-timeout <s>   Separate budget for connecting: TCP, proxy tunnel, TLS (doctor
                                   gives its TLS stage at least 30 s)
           --no-env-proxy          Ignore HTTP(S)_PROXY / NO_PROXY from the environment
@@ -434,7 +442,7 @@ public static class TransportFlags
         string? revocationRaw = args.Value("--revocation") ?? profile?.Revocation;
         bool revocationStrict = args.Switch("--revocation-strict", profile?.RevocationStrict);
         var caFileFlags = args.Values("--ca-file");
-        string? tlsMinRaw = args.Value("--tls-min") ?? profile?.TlsMin;
+        string? tlsMinRaw = args.Value("--tls-min") ?? CurlTlsFloor(args) ?? profile?.TlsMin;
         string? connectTimeoutRaw = args.Value("--connect-timeout") ?? profile?.ConnectTimeout?.ToString();
         if (args.Flag("--no-env-proxy"))
         {
@@ -619,6 +627,14 @@ public static class TransportFlags
 
         return new ResolveOverride(hostPart, port, rest[(colon + 1)..]);
     }
+
+    /// <summary>curl's --tlsv1.2 / --tlsv1.3: the lowest TLS version to use, as --tls-min is.
+    /// Both given means the higher floor, as in curl.</summary>
+    private static string? CurlTlsFloor(Args args)
+    {
+        bool v13 = args.Flag("--tlsv1.3"), v12 = args.Flag("--tlsv1.2");
+        return v13 ? "1.3" : v12 ? "1.2" : null;
+    }
 }
 
 /// <summary>Only the settings the user actually named. Nulls mean "leave the baseline alone", which
@@ -711,4 +727,5 @@ public sealed record TransportOverrides
         if (AddressFamily is { } family) options = options with { AddressFamily = family };
         return options;
     }
+
 }

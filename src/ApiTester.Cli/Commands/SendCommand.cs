@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Linq;
 using System.Net.Http;
 using System.Reflection;
@@ -11,11 +12,13 @@ public static class SendCommand
 {
     public const string Help = """
         Usage: certapi send <url> [options]
+               (or --url <url>)
 
         Request:
           -X, --method <m>        HTTP method (default GET)
           -I, --head              Send HEAD and print the status line and headers
           -H, --header "k: v"     Add a header (repeatable)
+          -e, --referer <url>     Set the Referer header
           -A, --user-agent <ua>   Set the User-Agent header
           --origin <origin>       Send Origin: <origin>, as a page on that origin would, and say on
                                   stderr whether a browser there could read the response (with and
@@ -25,6 +28,11 @@ public static class SendCommand
                                   ( --data-file <file> reads a file without interpreting @ ).
                                   A file that is not UTF-8 text is sent byte for byte, with
                                   Content-Type application/octet-stream unless --content-type
+          --data-raw <body>       A body taken as written: a leading @ is not a file
+          --data-binary @file     The file's bytes (curl's spelling of --data-file)
+          -T, --upload-file <f>   PUT the file (another -X still wins)
+          -G, --get               Put the -d / --data-urlencode data in the URL's query and send
+                                  GET, as curl does
           -F, --form name=value   multipart/form-data field; name=@path uploads a file
                                   (name=@path;type=<ct> sets its content type). Repeatable;
                                   implies POST. Mutually exclusive with -d.
@@ -82,6 +90,7 @@ public static class SendCommand
           --cert <thumb|subject>  Client certificate from the Windows store
           --store <location>      CurrentUser (default); LocalMachine searches both stores
           --cert-file <path>      Client certificate from a file (.pfx/.p12 or .pem/.crt) instead
+          -E <file[:password]>    curl's spelling of --cert-file (and --cert-password)
           --cert-password <pw>    Password for a .pfx/.p12 certificate file
           --key-file <path>       Private-key file for a PEM cert whose key is in a separate file
           --cert-issuer <substr>  Narrow --cert to certificates issued by a matching CA (or use alone)
@@ -140,11 +149,15 @@ public static class SendCommand
         Output:
           -o, --output <file>     Write the body to a file instead of stdout (-o - writes all of
                                   it to stdout, even to a console)
+          -O, --remote-name       Write it to a file named as the URL's last path segment
           -i, --include           Print status line and headers before the body
           --pretty                Pretty-print the body (JSON/XML; hex for binary)
           --json                  Print a JSON result envelope instead of the raw body
           -f, --fail              Exit 1 when the HTTP status is 400 or higher
           -q, -s, --quiet         No metadata line on stderr
+          -S, --show-error, -#, --progress-bar
+                                  Accepted for curl habits; errors are always shown, and no
+                                  progress meter is drawn
           -w, --write-out <fmt>   Print this after the response, curl's way: %{http_code}
                                   %{time_total} %{size_download} %{url_effective}
                                   %{redirect_url} %{num_redirects} %{content_type}
@@ -238,6 +251,14 @@ public static class SendCommand
         Func<ApiResponse, IEnumerable<AssertionRule>>? responseChecks)
     {
         // ---- bind options ----
+        // curl's --json <data> sends JSON; certapi's --json prints a result envelope. A value that
+        // can only be JSON data means the curl one, and gets the curl answer rather than "usage".
+        for (int i = 0; i + 1 < args.Original.Count; i++)
+            if (args.Original[i].Equals("--json", StringComparison.OrdinalIgnoreCase) &&
+                args.Original[i + 1].TrimStart() is { Length: > 0 } next && next[0] is '{' or '[' or '@')
+                throw new CliUsageException(
+                    "--json here prints a JSON envelope of the result, and takes no value. curl's --json <data> is -d <data> " +
+                    "(sent as application/json, the default) — or run the whole command as `certapi curl …`, which reads it the curl way.");
         string? methodOpt = args.Value("-X", "--method");
         MethodOption.Require(methodOpt, "-X/--method");
         bool head = args.Flag("--head");
@@ -248,8 +269,37 @@ public static class SendCommand
         string? corsOrigin = args.Value("--origin");
         var querySpecs = args.Values("--query");
         var headers = args.Values("-H", "--header");
-        string? data = args.Value("-d", "--data");
+        string? referer = args.Value("-e", "--referer");
+        if (referer is not null) headers.Add("Referer: " + referer);
+        // curl's --data-binary is -d here (a file that is not text already goes byte for byte). Read
+        // by send alone rather than aliased: run's --data is an iteration file, not a body.
+        string? data = args.Value("-d", "--data", "--data-binary");
+        // curl's --data-raw: the body exactly as written, with no @file reading.
+        string? dataRaw = args.Value("--data-raw");
+        if (dataRaw is not null && data is not null) throw new CliUsageException("-d/--data and --data-raw are mutually exclusive.");
         string? dataFile = args.Value("--data-file");
+        // curl's -T/--upload-file: the file is the body, and the request a PUT unless -X says otherwise.
+        string? uploadFile = args.Value("-T", "--upload-file");
+        if (uploadFile is not null)
+        {
+            if (dataFile is not null || data is not null || dataRaw is not null)
+                throw new CliUsageException("-T/--upload-file sends a file as the body, so it cannot be combined with -d, --data-raw or --data-file.");
+            dataFile = uploadFile;
+            methodOpt ??= "PUT";
+        }
+        // curl's -G/--get: the -d data goes on the URL as a query string, and the request is a GET.
+        bool getWithData = args.Flag("-G", "--get");
+        string? getQuery = null;
+        if (getWithData)
+        {
+            if (methodOpt is not null && !methodOpt.Equals("GET", StringComparison.OrdinalIgnoreCase) && !methodOpt.Equals("HEAD", StringComparison.OrdinalIgnoreCase))
+                throw new CliUsageException($"-G/--get puts the data on the URL for a GET, so it cannot be combined with -X {methodOpt}.");
+            getQuery = data ?? dataRaw;
+            data = dataRaw = null;
+            methodOpt ??= "GET";
+        }
+        bool dataIsLiteral = dataRaw is not null;
+        if (dataRaw is not null) data = dataRaw;
         var urlencodeSpecs = args.Values("--data-urlencode");
         var cookieSpecs = args.Values("--cookie");
         string? maxFilesizeRaw = args.Value("--max-filesize");
@@ -295,6 +345,12 @@ public static class SendCommand
         bool json = args.Flag("--json");
         bool fail = args.Flag("--fail");
         bool quiet = args.Flag("-q", "--quiet");
+        // curl's -S/--show-error (errors are always shown here) and -#/--progress-bar (there is no
+        // progress meter): accepted so a pasted command runs, and change nothing.
+        args.Flag("-S", "--show-error");
+        args.Flag("-#", "--progress-bar");
+        bool remoteName = args.Flag("-O", "--remote-name");
+        string? urlOption = args.Value("--url");
         var captureSpecs = args.Values("--capture");
         var assertSpecs = args.Values("--assert");
         bool noAutoToken = args.Flag("--no-auto-token");
@@ -324,8 +380,33 @@ public static class SendCommand
         var cert = CliCert.Resolve(args, store, services, stderr);
 
         var positionals = args.Positionals();
+        if (urlOption is not null && positionals.Count == 0) positionals = new List<string> { urlOption };
+        else if (urlOption is not null) throw new CliUsageException("The URL was given twice: as --url and as an argument.");
         if (positionals.Count != 1) throw new CliUsageException(Help);
         string url = positionals[0];
+        if (getWithData && urlencodeSpecs.Count > 0)
+        {
+            // As curl: --data-urlencode parts join the -d data on the query string.
+            string encodedParts = string.Join("&", urlencodeSpecs.Select(UrlEncodedPart));
+            getQuery = getQuery is null ? encodedParts : getQuery + "&" + encodedParts;
+            urlencodeSpecs.Clear();
+        }
+        if (getQuery is not null)
+        {
+            int hash = url.IndexOf('#');
+            string fragment = hash >= 0 ? url[hash..] : "";
+            string bare = hash >= 0 ? url[..hash] : url;
+            url = bare + (bare.Contains('?') ? "&" : "?") + getQuery + fragment;
+        }
+        if (remoteName)
+        {
+            if (outFile is not null) throw new CliUsageException("-O names the file after the URL, so it cannot be combined with -o.");
+            string last = Uri.TryCreate(url, UriKind.Absolute, out var parsedUrl) ? Uri.UnescapeDataString(parsedUrl.AbsolutePath.TrimEnd('/')) : "";
+            last = last[(last.LastIndexOf('/') + 1)..];
+            if (last.Length == 0 || last.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0)
+                throw new CliUsageException($"-O needs a URL that ends in a file name; {url} does not. Use -o <file>.");
+            outFile = last;
+        }
 
         var captureRules = new List<CaptureRule>();
         foreach (var raw in captureSpecs)
@@ -444,7 +525,8 @@ public static class SendCommand
         // As in curl, -d @file reads the body from a file. A body that genuinely starts with '@'
         // goes in a file and is passed with --data-file, which never interprets its contents.
         // A file that is not UTF-8 text goes out as its exact bytes.
-        var bodySource = BodyFile.FromDataOption(data) ?? (dataFile is null ? null : BodyFile.Read(dataFile, "--data-file"));
+        var bodySource = (dataIsLiteral && data is not null ? new BodyFile(data, null) : BodyFile.FromDataOption(data))
+            ?? (dataFile is null ? null : BodyFile.Read(dataFile, "--data-file"));
         string? body = bodySource?.Text;
         byte[]? bodyBytes = bodySource?.Bytes;
         if (urlencodeSpecs.Count > 0)
@@ -1213,6 +1295,11 @@ public static class SendCommand
         return pairs;
     }
 
+    /// <summary>The --json result envelope. Written field by field with a <see cref="Utf8JsonWriter"/>
+    /// rather than serialized from dictionaries and anonymous objects: the reflection serializer cost
+    /// about 25 ms of every `send --json` before it wrote a byte. The output is the same text the
+    /// serializer produced — the same names, order, escaping and number forms (a test holds the two
+    /// side by side).</summary>
     internal static string BuildEnvelope(ApiResponse r, bool includeBody, IReadOnlyList<string>? notes = null,
                                          DiffResult? diff = null, PhaseTimings? timing = null)
     {
@@ -1222,89 +1309,162 @@ public static class SendCommand
         {
             // UTF8.GetString never throws — invalid bytes decode to U+FFFD, which marks the body binary.
             text = Encoding.UTF8.GetString(r.Body);
-            binary = text.Contains('�');
+            binary = text.Contains('\uFFFD');
         }
-        var obj = new Dictionary<string, object?>
+
+        var buffer = new ArrayBufferWriter<byte>(Math.Max(1024, (text?.Length ?? 0) + (binary ? r.Body.Length * 4 / 3 : 0) + 1024));
+        using (var w = new Utf8JsonWriter(buffer, new JsonWriterOptions { Indented = true }))
         {
-            ["status"] = r.StatusCode,
-            ["reasonPhrase"] = r.ReasonPhrase,
-            ["elapsedMs"] = Math.Round(r.Elapsed.TotalMilliseconds),
-            ["contentType"] = r.ContentType,
-            ["sizeBytes"] = r.Body.LongLength,
-            ["headers"] = r.Headers
-                .GroupBy(h => h.Key, StringComparer.OrdinalIgnoreCase)
-                .ToDictionary(
-                    g => g.Key,
-                    g => g.Count() == 1 ? (object)g.First().Value : g.Select(h => h.Value).ToArray()),
-            ["tlsProtocol"] = r.Connection?.TlsProtocol,
-            ["clientCertPresented"] = r.Connection?.ClientCertificateSent ?? false,
-            // Enum .ToString() here matches how error.kind is rendered above, so a consumer parses
-            // one consistent style rather than two.
-            ["revocationMode"] = r.Connection?.RevocationMode.ToString(),
-            ["revocationStatus"] = r.Connection?.RevocationStatus.ToString(),
+            static void Str(Utf8JsonWriter w, string name, string? value)
+            {
+                if (value is null) w.WriteNull(name); else w.WriteString(name, value);
+            }
+            static void Num(Utf8JsonWriter w, string name, double? value)
+            {
+                if (value is { } v) w.WriteNumber(name, v); else w.WriteNull(name);
+            }
+
+            w.WriteStartObject();
+            if (r.StatusCode is { } status) w.WriteNumber("status", status); else w.WriteNull("status");
+            Str(w, "reasonPhrase", r.ReasonPhrase);
+            w.WriteNumber("elapsedMs", Math.Round(r.Elapsed.TotalMilliseconds));
+            Str(w, "contentType", r.ContentType);
+            w.WriteNumber("sizeBytes", r.Body.LongLength);
+
+            // One entry per name, in order of first appearance, case-insensitively; a name sent
+            // more than once is an array of its values.
+            w.WriteStartObject("headers");
+            var seen = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+            var order = new List<string>();
+            foreach (var h in r.Headers)
+            {
+                if (!seen.TryGetValue(h.Key, out var values)) { seen[h.Key] = values = []; order.Add(h.Key); }
+                values.Add(h.Value);
+            }
+            foreach (var name in order)
+            {
+                var values = seen[name];
+                if (values.Count == 1) w.WriteString(name, values[0]);
+                else
+                {
+                    w.WriteStartArray(name);
+                    foreach (var v in values) w.WriteStringValue(v);
+                    w.WriteEndArray();
+                }
+            }
+            w.WriteEndObject();
+
+            Str(w, "tlsProtocol", r.Connection?.TlsProtocol);
+            w.WriteBoolean("clientCertPresented", r.Connection?.ClientCertificateSent ?? false);
+            // Enum .ToString() here matches how error.kind is rendered, so a consumer parses one
+            // consistent style rather than two.
+            Str(w, "revocationMode", r.Connection?.RevocationMode.ToString());
+            Str(w, "revocationStatus", r.Connection?.RevocationStatus.ToString());
             // kind/message keep the shape existing consumers already parse; socketError and the
             // flattened InnerException chain are additive, and null when the failure had neither.
-            ["error"] = r.Error is null ? null : new
+            if (r.Error is null) w.WriteNull("error");
+            else
             {
-                kind = r.Error.Kind.ToString(),
-                message = r.Error.Message,
-                socketError = r.Error.SocketErrorCode?.ToString(),
-                detail = r.Error.Detail?.Select(d => new
+                w.WriteStartObject("error");
+                w.WriteString("kind", r.Error.Kind.ToString());
+                w.WriteString("message", r.Error.Message);
+                Str(w, "socketError", r.Error.SocketErrorCode?.ToString());
+                if (r.Error.Detail is null) w.WriteNull("detail");
+                else
                 {
-                    exceptionType = d.ExceptionType,
-                    message = d.Message,
-                    nativeErrorCode = d.NativeErrorCode
-                })
+                    w.WriteStartArray("detail");
+                    foreach (var d in r.Error.Detail)
+                    {
+                        w.WriteStartObject();
+                        w.WriteString("exceptionType", d.ExceptionType);
+                        w.WriteString("message", d.Message);
+                        if (d.NativeErrorCode is { } code) w.WriteNumber("nativeErrorCode", code); else w.WriteNull("nativeErrorCode");
+                        w.WriteEndObject();
+                    }
+                    w.WriteEndArray();
+                }
+                w.WriteEndObject();
             }
-        };
-        // Only when something was actually followed: adding "redirects": [] to every envelope would
-        // churn the output of every existing user for nothing.
-        if (r.Redirects.Count > 0)
-            obj["redirects"] = r.Redirects.Select(h => new
+
+            // Only when something was actually followed: adding "redirects": [] to every envelope
+            // would churn the output of every existing user for nothing.
+            if (r.Redirects.Count > 0)
             {
-                status = h.StatusCode,
-                from = h.From,
-                to = h.To,
-                authorizationDropped = h.AuthorizationDropped,
-                schemeDowngrade = h.SchemeDowngrade
-            }).ToList();
-        // Only when a retry actually happened, for the same reason redirects is conditional: an
-        // "attempts": 1 on every envelope would churn every existing consumer's output for nothing.
-        if (r.Attempts > 1) obj["attempts"] = r.Attempts;
-        // Only with --timing: milliseconds per phase, null for a phase that did not happen.
-        if (timing is not null)
-        {
-            static double? Ms(TimeSpan? t) => t is { } v ? Math.Round(v.TotalMilliseconds, 1) : null;
-            obj["timing"] = new
-            {
-                dnsMs = Ms(timing.Dns), connectMs = Ms(timing.Connect), tlsMs = Ms(timing.Tls),
-                waitMs = Ms(timing.Wait), firstByteMs = Ms(timing.FirstByte), downloadMs = Ms(timing.Download),
-                totalMs = Ms(timing.Total), reused = timing.Reused, requests = timing.Requests
-            };
-        }
-        if (diff is not null)
-            obj["diff"] = new
-            {
-                identical = diff.Identical,
-                statusBefore = diff.StatusBefore,
-                statusAfter = diff.StatusAfter,
-                headers = diff.Headers.Select(h => new { name = h.Name, before = h.Before, after = h.After }).ToList(),
-                body = diff.Body.Select(b => new
+                w.WriteStartArray("redirects");
+                foreach (var h in r.Redirects)
                 {
-                    path = b.Path,
-                    kind = b.Kind.ToString(),
-                    before = b.Before,
-                    after = b.After
-                }).ToList()
-            };
-        if (notes is { Count: > 0 }) obj["notes"] = notes;
-        if (includeBody && r.Error is null)
-        {
-            if (binary) obj["bodyBase64"] = Convert.ToBase64String(r.Body);
-            else obj["body"] = text;
-            // Only when a cap cut the body, so every other envelope keeps its shape.
-            if (r.BodyTruncated) obj["truncated"] = true;
+                    w.WriteStartObject();
+                    w.WriteNumber("status", h.StatusCode);
+                    w.WriteString("from", h.From);
+                    w.WriteString("to", h.To);
+                    w.WriteBoolean("authorizationDropped", h.AuthorizationDropped);
+                    w.WriteBoolean("schemeDowngrade", h.SchemeDowngrade);
+                    w.WriteEndObject();
+                }
+                w.WriteEndArray();
+            }
+            // Only when a retry actually happened, for the same reason.
+            if (r.Attempts > 1) w.WriteNumber("attempts", r.Attempts);
+            // Only with --timing: milliseconds per phase, null for a phase that did not happen.
+            if (timing is not null)
+            {
+                static double? Ms(TimeSpan? t) => t is { } v ? Math.Round(v.TotalMilliseconds, 1) : null;
+                w.WriteStartObject("timing");
+                Num(w, "dnsMs", Ms(timing.Dns));
+                Num(w, "connectMs", Ms(timing.Connect));
+                Num(w, "tlsMs", Ms(timing.Tls));
+                Num(w, "waitMs", Ms(timing.Wait));
+                Num(w, "firstByteMs", Ms(timing.FirstByte));
+                Num(w, "downloadMs", Ms(timing.Download));
+                Num(w, "totalMs", Ms(timing.Total));
+                w.WriteBoolean("reused", timing.Reused);
+                w.WriteNumber("requests", timing.Requests);
+                w.WriteEndObject();
+            }
+            if (diff is not null)
+            {
+                w.WriteStartObject("diff");
+                w.WriteBoolean("identical", diff.Identical);
+                Num(w, "statusBefore", diff.StatusBefore);
+                Num(w, "statusAfter", diff.StatusAfter);
+                w.WriteStartArray("headers");
+                foreach (var h in diff.Headers)
+                {
+                    w.WriteStartObject();
+                    w.WriteString("name", h.Name);
+                    Str(w, "before", h.Before);
+                    Str(w, "after", h.After);
+                    w.WriteEndObject();
+                }
+                w.WriteEndArray();
+                w.WriteStartArray("body");
+                foreach (var b in diff.Body)
+                {
+                    w.WriteStartObject();
+                    w.WriteString("path", b.Path);
+                    w.WriteString("kind", b.Kind.ToString());
+                    Str(w, "before", b.Before);
+                    Str(w, "after", b.After);
+                    w.WriteEndObject();
+                }
+                w.WriteEndArray();
+                w.WriteEndObject();
+            }
+            if (notes is { Count: > 0 })
+            {
+                w.WriteStartArray("notes");
+                foreach (var n in notes) w.WriteStringValue(n);
+                w.WriteEndArray();
+            }
+            if (includeBody && r.Error is null)
+            {
+                if (binary) w.WriteString("bodyBase64", Convert.ToBase64String(r.Body));
+                else w.WriteString("body", text);
+                // Only when a cap cut the body, so every other envelope keeps its shape.
+                if (r.BodyTruncated) w.WriteBoolean("truncated", true);
+            }
+            w.WriteEndObject();
         }
-        return JsonSerializer.Serialize(obj, new JsonSerializerOptions { WriteIndented = true });
+        return Encoding.UTF8.GetString(buffer.WrittenSpan);
     }
 }

@@ -199,57 +199,176 @@ public enum MockTlsDefect
 
 public static class MockCertificates
 {
-    public sealed record Generated(X509Certificate2 ServerCertificate, IReadOnlyList<string> WrittenFiles);
+    /// <param name="Reused">True when the certificate authority (and so mock-ca.cer) is the one
+    /// a previous start wrote, rather than a new one a client has to be told to trust again.</param>
+    public sealed record Generated(X509Certificate2 ServerCertificate, IReadOnlyList<string> WrittenFiles, bool Reused = false);
 
-    public static Generated Generate(MockTlsMode mode, string certDir, MockTlsDefect defect = MockTlsDefect.None)
+    // The private keys a later start needs to sign with and to serve. They are kept encrypted
+    // to the current Windows user (DPAPI), never in the clear: anyone holding the authority's key
+    // could mint a certificate that a machine which trusts mock-ca.cer would accept. Where DPAPI
+    // is not available nothing is kept, and every start makes new certificates as it always did.
+    internal const string CaKeyFile = "mock-ca.key";
+    internal const string ServerKeyFile = "mock-server.key";
+
+    /// <summary>The mock's certificates, from <paramref name="certDir"/> when the ones a previous
+    /// start left there are still good, otherwise new. Reusing them keeps mock-ca.cer the same
+    /// from one start to the next, so a client trusts it once, and saves generating three RSA
+    /// keys on every start.</summary>
+    /// <param name="fresh">Make new certificates (a new authority) whatever is there.</param>
+    public static Generated Generate(MockTlsMode mode, string certDir, MockTlsDefect defect = MockTlsDefect.None, bool fresh = false)
     {
         Directory.CreateDirectory(certDir);
-        using var ca = SelfSignedCertificateFactory.CreateCertificateAuthority("certapi mock CA");
-        var serverCert = defect switch
-        {
-            // A certificate that WAS valid and has since lapsed — the realistic case, and a
-            // different client message than "not yet valid".
-            //
-            // The window has to sit inside the issuer's: X.509 refuses a leaf that begins before
-            // its certificate authority does, and this authority is minted one day ago. So the
-            // leaf runs from twelve hours ago to one hour ago — comfortably expired, comfortably
-            // inside the authority's own validity.
-            MockTlsDefect.Expired => SelfSignedCertificateFactory.CreateSignedCertificate(
-                "localhost", ca, serverAuth: true, clientAuth: false, dnsNames: new[] { "localhost" },
-                crlDistributionPoint: null,
-                notBefore: DateTimeOffset.UtcNow.AddHours(-12),
-                notAfter: DateTimeOffset.UtcNow.AddHours(-1)),
-
-            // Perfectly valid — for somewhere else. The client is connecting to localhost.
-            MockTlsDefect.WrongHost => SelfSignedCertificateFactory.CreateSignedCertificate(
-                "not-the-host.invalid", ca, serverAuth: true, clientAuth: false,
-                dnsNames: new[] { "not-the-host.invalid" }),
-
-            // Its own issuer: nothing chains to the mock's certificate authority at all.
-            MockTlsDefect.SelfSigned => SelfSignedCertificateFactory.CreateSelfSignedServerCertificate(
-                "localhost", new[] { "localhost" }),
-
-            _ => SelfSignedCertificateFactory.CreateSignedCertificate(
-                "localhost", ca, serverAuth: true, clientAuth: false, dnsNames: new[] { "localhost" })
-        };
-
+        var protector = SecretProtection.Default;
+        bool keep = protector.IsAvailable;
         var files = new List<string>();
         void Write(string name, byte[] bytes)
         {
             string path = Path.Combine(certDir, name);
-            File.WriteAllBytes(path, bytes);
+            if (!File.Exists(path) || !File.ReadAllBytes(path).AsSpan().SequenceEqual(bytes)) File.WriteAllBytes(path, bytes);
             files.Add(path);
         }
-
-        Write("mock-ca.cer", ca.Export(X509ContentType.Cert));
-        Write("mock-server.cer", serverCert.Export(X509ContentType.Cert));
-        if (mode == MockTlsMode.Mtls)
+        void WriteKey(string name, X509Certificate2 cert)
         {
-            using var client = SelfSignedCertificateFactory.CreateSignedCertificate(
-                "certapi mock client", ca, serverAuth: false, clientAuth: true);
-            Write("mock-client.pfx", client.Export(X509ContentType.Pfx));
+            if (!keep) return;
+            string? sealedPfx = protector.Protect(Convert.ToBase64String(cert.Export(X509ContentType.Pfx)));
+            if (sealedPfx is not null) File.WriteAllText(Path.Combine(certDir, name), sealedPfx);
         }
-        return new Generated(serverCert, files);
+
+        X509Certificate2? ca = keep && !fresh ? LoadKey(certDir, CaKeyFile, protector) : null;
+        if (ca is not null && !(ca.HasPrivateKey && IsAuthority(ca) && Lasts(ca, TimeSpan.FromDays(400))))
+        {
+            ca.Dispose();
+            ca = null;
+        }
+        bool reused = ca is not null;
+        if (ca is null)
+        {
+            ca = SelfSignedCertificateFactory.CreateCertificateAuthority("certapi mock CA");
+            WriteKey(CaKeyFile, ca);
+        }
+
+        try
+        {
+            X509Certificate2 serverCert;
+            if (defect == MockTlsDefect.None)
+            {
+                var kept = reused ? LoadKey(certDir, ServerKeyFile, protector) : null;
+                if (kept is not null && kept.HasPrivateKey && kept.Subject == "CN=localhost" && NamesLoopback(kept) &&
+                    Lasts(kept, TimeSpan.FromDays(1)) && IssuedBy(kept, ca))
+                    serverCert = kept;
+                else
+                {
+                    kept?.Dispose();
+                    serverCert = SelfSignedCertificateFactory.CreateSignedCertificate(
+                        "localhost", ca, serverAuth: true, clientAuth: false, dnsNames: new[] { "localhost" },
+                        ipAddresses: LoopbackAddresses);
+                    WriteKey(ServerKeyFile, serverCert);
+                }
+            }
+            else
+            {
+                // A deliberately broken certificate is made fresh every time and its key is not
+                // kept: the next ordinary start goes back to the kept good one.
+                serverCert = defect switch
+                {
+                    // A certificate that WAS valid and has since lapsed — the realistic case, and a
+                    // different client message than "not yet valid".
+                    //
+                    // The window has to sit inside the issuer's: X.509 refuses a leaf that begins
+                    // before its certificate authority does, and an authority is minted one day
+                    // before it is made. So the leaf runs from twelve hours ago to one hour ago —
+                    // comfortably expired, comfortably inside the authority's own validity.
+                    MockTlsDefect.Expired => SelfSignedCertificateFactory.CreateSignedCertificate(
+                        "localhost", ca, serverAuth: true, clientAuth: false, dnsNames: new[] { "localhost" },
+                        crlDistributionPoint: null,
+                        notBefore: DateTimeOffset.UtcNow.AddHours(-12),
+                        notAfter: DateTimeOffset.UtcNow.AddHours(-1)),
+
+                    // Perfectly valid — for somewhere else. The client is connecting to localhost.
+                    MockTlsDefect.WrongHost => SelfSignedCertificateFactory.CreateSignedCertificate(
+                        "not-the-host.invalid", ca, serverAuth: true, clientAuth: false,
+                        dnsNames: new[] { "not-the-host.invalid" }),
+
+                    // Its own issuer: nothing chains to the mock's certificate authority at all.
+                    MockTlsDefect.SelfSigned => SelfSignedCertificateFactory.CreateSelfSignedServerCertificate(
+                        "localhost", new[] { "localhost" }),
+
+                    _ => throw new ArgumentOutOfRangeException(nameof(defect)),
+                };
+            }
+
+            Write("mock-ca.cer", ca.Export(X509ContentType.Cert));
+            Write("mock-server.cer", serverCert.Export(X509ContentType.Cert));
+            if (mode == MockTlsMode.Mtls)
+            {
+                string clientPath = Path.Combine(certDir, "mock-client.pfx");
+                bool clientGood = false;
+                if (reused && File.Exists(clientPath))
+                {
+                    try
+                    {
+                        using var client = X509CertificateLoader.LoadPkcs12FromFile(clientPath, (string?)null, X509KeyStorageFlags.EphemeralKeySet);
+                        clientGood = client.HasPrivateKey && Lasts(client, TimeSpan.FromDays(1)) && IssuedBy(client, ca);
+                    }
+                    catch (CryptographicException) { }
+                }
+                if (clientGood) files.Add(clientPath);
+                else
+                {
+                    using var client = SelfSignedCertificateFactory.CreateSignedCertificate(
+                        "certapi mock client", ca, serverAuth: false, clientAuth: true);
+                    Write("mock-client.pfx", client.Export(X509ContentType.Pfx));
+                }
+            }
+            return new Generated(serverCert, files, reused);
+        }
+        finally
+        {
+            ca.Dispose();
+        }
+    }
+
+    private static X509Certificate2? LoadKey(string certDir, string name, ISecretProtector protector)
+    {
+        string path = Path.Combine(certDir, name);
+        try
+        {
+            if (!File.Exists(path)) return null;
+            string? base64 = protector.Unprotect(File.ReadAllText(path).Trim());
+            if (base64 is null) return null;
+            // Exportable, as the factory makes them: SChannel cannot use an ephemeral key, and a
+            // kept authority is exported again when its certificates are renewed.
+            return X509CertificateLoader.LoadPkcs12(Convert.FromBase64String(base64), (string?)null, X509KeyStorageFlags.Exportable);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or FormatException or CryptographicException)
+        {
+            return null;   // unreadable or from another user: make new ones
+        }
+    }
+
+    /// <summary>The addresses the mock listens on, named in its certificate as well as
+    /// localhost, so https://127.0.0.1 passes a trust check too.</summary>
+    private static readonly IPAddress[] LoopbackAddresses = [IPAddress.Loopback, IPAddress.IPv6Loopback];
+
+    private static bool NamesLoopback(X509Certificate2 cert) =>
+        cert.Extensions.OfType<X509SubjectAlternativeNameExtension>().FirstOrDefault() is { } san &&
+        LoopbackAddresses.All(a => san.EnumerateIPAddresses().Contains(a));
+
+    private static bool Lasts(X509Certificate2 cert, TimeSpan margin) =>
+        cert.NotBefore.ToUniversalTime() <= DateTime.UtcNow && cert.NotAfter.ToUniversalTime() > DateTime.UtcNow + margin;
+
+    private static bool IsAuthority(X509Certificate2 cert) =>
+        cert.Extensions.OfType<X509BasicConstraintsExtension>().Any(b => b.CertificateAuthority);
+
+    internal static bool IssuedBy(X509Certificate2 leaf, X509Certificate2 ca)
+    {
+        using var chain = new X509Chain();
+        chain.ChainPolicy.TrustMode = X509ChainTrustMode.CustomRootTrust;
+        chain.ChainPolicy.CustomTrustStore.Add(ca);
+        chain.ChainPolicy.RevocationMode = X509RevocationMode.NoCheck;
+        chain.ChainPolicy.DisableCertificateDownloads = true;
+        return chain.Build(leaf) && chain.ChainElements.Count == 2 &&
+               chain.ChainElements[1].Certificate.Thumbprint == ca.Thumbprint;
     }
 }
 
@@ -284,6 +403,11 @@ public sealed class MockServer : IAsyncDisposable
     private const string WebSocketGuid = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 
     private readonly TcpListener _listener;
+    // The same port on ::1. "localhost" resolves to ::1 first on Windows, and a connection refused
+    // there costs about two seconds before the client falls back to 127.0.0.1 — on every new
+    // connection to https://localhost, the one name the mock's certificate is for.
+    private readonly TcpListener? _listener6;
+    private readonly Task? _acceptLoop6;
     private readonly CancellationTokenSource _cts = new();
     private readonly Task _acceptLoop;
     // Live connections only: each removes itself when it ends, so a mock that serves a million
@@ -300,13 +424,14 @@ public sealed class MockServer : IAsyncDisposable
     public string BaseUrl { get; }
     public int Port { get; }
 
-    private MockServer(TcpListener listener, int port, MockTlsMode tls,
+    private MockServer(TcpListener listener, TcpListener? listener6, int port, MockTlsMode tls,
         X509Certificate2? serverCert, Action<MockRequestLog>? onRequest, HarReplaySource? replay,
         MockScenario? scenario, MockCors? cors, bool keepAlive)
     {
         _keepAlive = keepAlive;   // before the accept loop starts, so the first connection sees it
         _cors = cors;
         _listener = listener;
+        _listener6 = listener6;
         Port = port;
         _tls = tls;
         _serverCert = serverCert;
@@ -314,7 +439,8 @@ public sealed class MockServer : IAsyncDisposable
         _replay = replay;
         _scenario = scenario;
         BaseUrl = $"{(tls == MockTlsMode.Http ? "http" : "https")}://127.0.0.1:{port}/";
-        _acceptLoop = AcceptLoopAsync();
+        _acceptLoop = AcceptLoopAsync(listener);
+        if (listener6 is not null) _acceptLoop6 = AcceptLoopAsync(listener6);
     }
 
     /// <summary>Start listening. <paramref name="port"/> 0 picks a free port (see <see cref="Port"/>).
@@ -334,7 +460,22 @@ public sealed class MockServer : IAsyncDisposable
         var listener = new TcpListener(IPAddress.Loopback, port);
         listener.Start();
         int actualPort = ((IPEndPoint)listener.LocalEndpoint).Port;
-        return new MockServer(listener, actualPort, tls, serverCert, onRequest, replay, scenario, cors, keepAlive);
+        TcpListener? listener6 = null;
+        if (Socket.OSSupportsIPv6)
+        {
+            try
+            {
+                listener6 = new TcpListener(IPAddress.IPv6Loopback, actualPort);
+                listener6.Start();
+            }
+            catch (SocketException)
+            {
+                // ::1 unavailable, or that port taken there by something else: IPv4 alone, as before.
+                listener6?.Stop();
+                listener6 = null;
+            }
+        }
+        return new MockServer(listener, listener6, actualPort, tls, serverCert, onRequest, replay, scenario, cors, keepAlive);
     }
 
     /// <summary>The largest request body the mock reads; a larger one closes the connection.</summary>
@@ -357,7 +498,7 @@ public sealed class MockServer : IAsyncDisposable
     /// <c>Connection: close</c>, as a server that does not keep connections would answer.</summary>
     private readonly bool _keepAlive;
 
-    private async Task AcceptLoopAsync()
+    private async Task AcceptLoopAsync(TcpListener listener)
     {
         try
         {
@@ -367,7 +508,7 @@ public sealed class MockServer : IAsyncDisposable
                 // A connection reset while it waited in the backlog (a scanner, a client that gave
                 // up) is that connection's problem; the server keeps accepting. Any other accept
                 // error (out of file handles) is retried after a pause, not in a tight loop.
-                try { client = await _listener.AcceptTcpClientAsync(_cts.Token); }
+                try { client = await listener.AcceptTcpClientAsync(_cts.Token); }
                 catch (SocketException ex) when (!_cts.IsCancellationRequested)
                 {
                     if (ex.SocketErrorCode is not (SocketError.ConnectionReset or SocketError.ConnectionAborted))
@@ -1125,7 +1266,9 @@ public sealed class MockServer : IAsyncDisposable
         _disposed = true;
         _cts.Cancel();
         _listener.Stop();
+        _listener6?.Stop();
         try { await _acceptLoop; } catch { /* ignore */ }
+        if (_acceptLoop6 is not null) try { await _acceptLoop6; } catch { /* ignore */ }
         try { await Task.WhenAll(_handlers.Keys.ToArray()); } catch { /* ignore */ }
         _cts.Dispose();
     }

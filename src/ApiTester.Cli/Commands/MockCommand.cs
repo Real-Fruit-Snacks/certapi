@@ -25,7 +25,11 @@ public static class MockCommand
           --http            Plain HTTP (default) — hit it with anything, no certificates
           --tls             HTTPS with a generated self-signed server certificate
           --mtls            HTTPS that also requires a client certificate (any cert is accepted)
-          --cert-dir <dir>  Where to write generated certificates (default ./certapi-mock-certs)
+          --cert-dir <dir>  Where to write generated certificates (default ./certapi-mock-certs).
+                            They are kept there and used again on the next start while they are
+                            good, so mock-ca.cer is trusted once; the private keys are kept
+                            encrypted to your Windows account
+          --new-certs       Make new certificates (a new mock-ca.cer) instead of the kept ones
           -q, --quiet       Don't log each request
           --no-keep-alive   One request per connection, every response Connection: close, as a
                             server that does not keep connections answers (by default a
@@ -107,6 +111,7 @@ public static class MockCommand
             throw new CliUsageException("--http, --tls, and --mtls are mutually exclusive.");
         var mode = mtls ? MockTlsMode.Mtls : tls ? MockTlsMode.Https : MockTlsMode.Http;
         string certDir = args.Value("--cert-dir") ?? Path.Combine(Directory.GetCurrentDirectory(), "certapi-mock-certs");
+        bool newCerts = args.Flag("--new-certs");
         bool quiet = args.Flag("-q", "--quiet");
         bool noKeepAlive = args.Flag("--no-keep-alive");
 
@@ -200,8 +205,15 @@ public static class MockCommand
         }
 
         X509Certificate2? serverCert = null;
+        bool certsReused = false;
         if (mode != MockTlsMode.Http)
-            serverCert = MockCertificates.Generate(mode, certDir, tlsDefect).ServerCertificate;
+        {
+            var generated = MockCertificates.Generate(mode, certDir, tlsDefect, fresh: newCerts);
+            serverCert = generated.ServerCertificate;
+            certsReused = generated.Reused;
+            services.Log.Debug(certsReused ? $"certificates: the kept ones in {certDir}" : $"certificates: new ones in {certDir}");
+        }
+        else if (newCerts) throw new CliUsageException("--new-certs needs --tls or --mtls: plain HTTP has no certificates.");
 
         Action<MockRequestLog>? onRequest = quiet ? null : Log;
         MockServer server;
@@ -243,7 +255,9 @@ public static class MockCommand
         }
         if (mode != MockTlsMode.Http)
         {
-            stderr.WriteLine($"certificates in {certDir}");
+            stderr.WriteLine(certsReused
+                ? $"certificates in {certDir} (the same mock-ca.cer as last time; --new-certs makes new ones)"
+                : $"certificates in {certDir} (new: a client that trusted an earlier mock-ca.cer must trust this one)");
             stderr.WriteLine(mode == MockTlsMode.Mtls
                 ? "present mock-client.pfx as your client cert; use --insecure (or trust mock-ca.cer) for the server cert."
                 : "use --insecure (or trust mock-ca.cer) for the self-signed server certificate.");

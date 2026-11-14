@@ -21,6 +21,19 @@ public sealed class Args
         {
             if (literalFrom != int.MaxValue) { split.Add(t); continue; }
             if (t == "--") { literalFrom = split.Count; continue; }
+            // curl's bundles — -sS, -fsSL, -sk — and values written onto their option — -XPOST,
+            // -HAccept:x, -d{} — the way a pasted curl command spells them. Split only when every
+            // letter is a known single-letter option, and never when this token is the value of the
+            // option before it (-H "-kv" is a header, -d -1 a body).
+            if (ExpandBundle(t, split.Count > 0 && !attached.Contains(split.Count - 1) ? split[^1] : null) is { } expanded)
+            {
+                foreach (var (part, isValue) in expanded)
+                {
+                    if (isValue) attached.Add(split.Count);
+                    split.Add(part);
+                }
+                continue;
+            }
             int eq = t.IndexOf('=');
             if (eq > 2 && t.StartsWith("--", StringComparison.Ordinal) &&
                 t[2..eq].All(c => char.IsLetterOrDigit(c) || c == '-' || c == '.'))
@@ -35,6 +48,43 @@ public sealed class Args
         _tokens = split.ToArray();
         _literalFrom = literalFrom;   // tokens from here on are never option-shaped
         _attached = attached;
+    }
+
+    /// <summary>Single-letter options that take no value, and those that do, across every command.
+    /// One table for the whole command line is safe because no letter is a switch on one command
+    /// and takes a value on another; a bundle with a letter outside both is left as it was typed,
+    /// and reported as an unknown option as before.</summary>
+    internal const string BundleSwitches = "kiIsSfLqv46#GOZ";
+    internal const string BundleValued = "dHXouxUAbwCrFmntceET";
+
+    private static List<(string Part, bool IsValue)>? ExpandBundle(string token, string? previous)
+    {
+        if (token.Length <= 2 || token[0] != '-' || token[1] == '-') return null;
+        if (previous is { Length: 2 } && previous[0] == '-' && BundleValued.Contains(previous[1])) return null;
+        var parts = new List<(string, bool)>();
+        for (int k = 1; k < token.Length; k++)
+        {
+            char c = token[k];
+            if (BundleSwitches.Contains(c)) { parts.Add(("-" + c, false)); continue; }
+            if (!BundleValued.Contains(c)) return null;
+            parts.Add(("-" + c, false));
+            if (k + 1 < token.Length) parts.Add((token[(k + 1)..], true));
+            return parts;
+        }
+        return parts;
+    }
+
+    /// <summary>The tokens after bundles were split and --name=value pairs separated, with a bare
+    /// "--" where one was given: what the readers below see. For `certapi curl`, which reads a
+    /// curl command by the same rules before it translates it.</summary>
+    internal IReadOnlyList<string> ExpandedTokens
+    {
+        get
+        {
+            var all = _tokens.Select(t => t!).ToList();
+            if (_literalFrom != int.MaxValue) all.Insert(_literalFrom, "--");
+            return all;
+        }
     }
 
     /// <summary>The tokens exactly as given, before any were consumed — for a command that writes
@@ -64,8 +114,9 @@ public sealed class Args
             ["--proxy-user"] = ["-U"],
             ["--user-agent"] = ["-A"],
             ["--head"] = ["-I"],
-            ["--fail"] = ["-f"],
-            ["--timeout"] = ["--max-time"],
+            ["--fail"] = ["-f", "--fail-with-body"],
+            ["--timeout"] = ["--max-time", "-m"],
+            ["--bearer"] = ["--oauth2-bearer"],
             ["--ca-file"] = ["--cacert"],
             ["--key-file"] = ["--key"],
             ["--cookie"] = ["-b"],

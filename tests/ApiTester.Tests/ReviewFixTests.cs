@@ -73,7 +73,12 @@ public class ReviewFixTests
     [Fact]
     public void Data_binary_is_explained_not_aliased()
     {
+        // send reads it as -d (the missing file is a data error, not an unknown option)…
         var r = Run(null, "send", "http://127.0.0.1:9/", "--data-binary", "@x.bin", "--no-config");
+        Assert.Equal(3, r.Code);
+        Assert.Contains("x.bin", r.Err);
+        // …and a command that has no body explains where it works.
+        r = Run(null, "certs", "--data-binary", "@x.bin", "--no-config");
         Assert.Equal(2, r.Code);
         Assert.Contains("byte for byte", r.Err);
         // And run's --data (an iteration file) is no longer reachable through it.
@@ -85,7 +90,7 @@ public class ReviewFixTests
     {
         var r = Run(null, "send", "http://127.0.0.1:9/", "-o", "a.json", "-O", "--no-config");
         Assert.Equal(2, r.Code);
-        Assert.Contains("Use -o <file>", r.Err);
+        Assert.Contains("-O names the file after the URL", r.Err);
         Assert.DoesNotContain("more than once", r.Err);
     }
 

@@ -126,15 +126,15 @@ public class CurlHabitsTests
     // ---- explanations ----
 
     [Theory]
-    [InlineData("-L", "already followed")]
-    [InlineData("--compressed", "already decompressed")]
-    [InlineData("-G", "--query")]
-    [InlineData("-v", "--debug")]
-    [InlineData("--tlsv1.3", "--tls-min 1.3")]
-    [InlineData("-E", "--cert-file")]
-    public void A_curl_option_that_differs_says_what_to_use(string option, string advice)
+    [InlineData("send", "-v", "--debug")]
+    [InlineData("send", "-c", "--cookie-jar")]
+    [InlineData("certs", "-L", "send HTTP requests")]
+    [InlineData("certs", "-G", "certapi send")]
+    [InlineData("certs", "--tlsv1.3", "--tls-min 1.3")]
+    [InlineData("certs", "-E", "--cert-file")]
+    public void A_curl_option_that_differs_says_what_to_use(string command, string option, string advice)
     {
-        var r = Run("send", "http://127.0.0.1:9/", option);
+        var r = command == "send" ? Run("send", "http://127.0.0.1:9/", option) : Run(command, option);
         Assert.Equal(2, r.Code);
         Assert.Contains($"Option '{option}' does not exist.", r.Err);
         Assert.Contains(advice, r.Err);

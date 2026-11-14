@@ -238,7 +238,7 @@ public static class CurlParser
 
     /// <summary>Split a command line into arguments: bash rules, or cmd.exe's when the text is a
     /// "Copy as cURL (cmd)" command (its quotes are written <c>^"</c>).</summary>
-    internal static List<string> Tokenize(string input) =>
+    public static List<string> Tokenize(string input) =>
         LooksLikeCmd(input) ? TokenizeCmd(input) : TokenizeBash(input);
 
     /// <summary>"Copy as cURL (cmd)" quotes every argument as <c>^"…^"</c>, the URL first, and

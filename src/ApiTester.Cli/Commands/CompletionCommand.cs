@@ -98,7 +98,7 @@ public static class CompletionCommand
 
     internal static readonly string[] CommandNames =
     [
-        "send", "run", "token", "fuzz", "bench", "sse", "ws", "doctor", "proxy", "connections", "config",
+        "send", "curl", "run", "token", "fuzz", "bench", "sse", "ws", "doctor", "proxy", "connections", "config",
         "certs", "selftest", "mock", "import", "export", "trust", "serve", "grpc", "mcp", "completion",
         "update", "call", "tls", "crawl", "browse", "signalr", "mqtt", "cors", "help",
     ];

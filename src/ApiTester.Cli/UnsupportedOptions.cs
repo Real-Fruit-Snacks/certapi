@@ -24,29 +24,33 @@ public static class UnsupportedOptions
         ["--sslkeylogfile"] = KeyLog,
         ["--ssl-key-log-file"] = KeyLog,
 
-        // curl options people type out of habit. The ones with a direct equivalent are accepted
-        // as aliases (see Args.Aliases); these are the ones whose meaning differs enough that
-        // quietly accepting them would do something the user did not ask for.
-        ["-L"] = "Redirects are already followed (curl's -L is the default here). Drop it; --no-redirect turns following off.",
-        ["--location"] = "Redirects are already followed (curl's --location is the default here). Drop it; --no-redirect turns following off.",
-        ["--compressed"] = "Responses are already decompressed (gzip, deflate, br). Drop it; --no-decompress keeps the bytes as received.",
-        ["-c"] = "Use --cookie-jar <file>: it reads cookies before the request and saves new ones after. To send cookies only, -b/--cookie.",
-        ["-G"] = "Use --query name=value: it adds the pair to the URL, percent-encoded (repeatable).",
-        ["--get"] = "Use --query name=value: it adds the pair to the URL, percent-encoded (repeatable).",
-        ["-v"] = "Use --include to see the response status and headers, --debug for everything the tool did, or --trace for DNS/TCP/TLS.",
-        ["--verbose"] = "Use --include to see the response status and headers, --debug for everything the tool did, or --trace for DNS/TCP/TLS.",
-        ["-O"] = "Use -o <file> and name the file.",
-        ["--remote-name"] = "Use -o <file> and name the file.",
-        ["-e"] = "Use -H \"Referer: <url>\".",
-        ["--referer"] = "Use -H \"Referer: <url>\".",
-        ["-E"] = "certapi's --cert picks a certificate from the Windows store by thumbprint or subject. For a file, use --cert-file <path> (.pfx/.p12/.pem) with --cert-password or --key-file.",
-        ["--tlsv1.2"] = "Use --tls-min 1.2.",
-        ["--tlsv1.3"] = "Use --tls-min 1.3.",
-        ["-T"] = "Use --data-file <path> with -X PUT.",
-        ["--upload-file"] = "Use --data-file <path> with -X PUT.",
-        ["--data-binary"] = "Use -d @file or --data-file <path>: a file that is not UTF-8 text is sent byte for byte (application/octet-stream unless --content-type), and a text file as text (its {{variables}} resolved).",
-        ["--data-raw"] = "Use -d/--data. As in curl, -d @file reads the body from a file; a body that really starts with @ goes in a file passed to --data-file.",
+        // curl options people type out of habit. Most are accepted where they mean the same thing
+        // (see Args.Aliases, and send's own curl spellings); a command that reaches this table for
+        // one of these does not have it, so the message says where it does work. -c and -v keep
+        // their place on every command: their meaning differs enough that quietly accepting them
+        // would do something the user did not ask for. `certapi curl` reads both as curl does.
+        ["-L"] = "-L is accepted on commands that send HTTP requests, where redirects are followed by default. This command does not follow redirects.",
+        ["--location"] = "--location is accepted on commands that send HTTP requests, where redirects are followed by default. This command does not follow redirects.",
+        ["--compressed"] = "--compressed is accepted on commands that send HTTP requests, where responses are decompressed by default. This command has no response to decompress.",
+        ["-c"] = "Use --cookie-jar <file>: it reads cookies before the request and saves new ones after. To send cookies only, -b/--cookie. certapi curl reads -c as curl does.",
+        ["-G"] = SendOnly + " Elsewhere, --query name=value adds the pair to the URL, percent-encoded (repeatable).",
+        ["--get"] = SendOnly + " Elsewhere, --query name=value adds the pair to the URL, percent-encoded (repeatable).",
+        ["-v"] = "Use --include to see the response status and headers, --debug for everything the tool did, or --trace for DNS/TCP/TLS. certapi curl reads -v as curl does.",
+        ["--verbose"] = "Use --include to see the response status and headers, --debug for everything the tool did, or --trace for DNS/TCP/TLS. certapi curl reads --verbose as curl does.",
+        ["-O"] = SendOnly + " Elsewhere, -o <file> names the file.",
+        ["--remote-name"] = SendOnly + " Elsewhere, -o <file> names the file.",
+        ["-e"] = SendOnly + " Elsewhere, -H \"Referer: <url>\".",
+        ["--referer"] = SendOnly + " Elsewhere, -H \"Referer: <url>\".",
+        ["-E"] = "-E <file[:password]> is accepted where client certificates are: this command takes none. --cert picks one from the Windows store by thumbprint or subject, --cert-file reads a .pfx/.p12/.pem.",
+        ["--tlsv1.2"] = "--tlsv1.2 is accepted on commands that make TLS connections (it is --tls-min 1.2). This command makes none.",
+        ["--tlsv1.3"] = "--tlsv1.3 is accepted on commands that make TLS connections (it is --tls-min 1.3). This command makes none.",
+        ["-T"] = SendOnly + " Elsewhere, --data-file <path> with -X PUT.",
+        ["--upload-file"] = SendOnly + " Elsewhere, --data-file <path> with -X PUT.",
+        ["--data-binary"] = SendOnly + " Elsewhere, -d @file or --data-file <path>: a file that is not UTF-8 text is sent byte for byte.",
+        ["--data-raw"] = SendOnly + " Elsewhere, -d/--data; a body that really starts with @ goes in a file passed to --data-file.",
     };
+
+    private const string SendOnly = "certapi send (and certapi curl) accept this as curl does; this command does not.";
 
     private const string KeyLog =
         "TLS key logging is not available on Windows: .NET writes key logs only through OpenSSL, " +

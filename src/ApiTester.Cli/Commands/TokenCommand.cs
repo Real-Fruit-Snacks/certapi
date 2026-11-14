@@ -54,6 +54,7 @@ public static class TokenCommand
 
         TLS / certificates (the token endpoint itself may require mTLS):
           --cert <thumb|subject>  --cert-file <path>  --cert-password <pw>  --key-file <path>
+          -E <file[:password]>
           --cert-issuer <substr>  --cert-serial <hex>  --cert-pin <pin> (or CERTAPI_CERT_PIN)
           --store <location>      --insecure
         A token endpoint pinned with `certapi trust add` needs no --insecure.
