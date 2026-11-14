@@ -756,8 +756,8 @@ latency array, not an approximation**, so p99 means p99.
 
 **Connections are pooled and reused**, so only the first request to an origin pays the TCP connect
 and the TLS handshake; `--warmup` removes that cost from the figures, and `--pool` shows whether it
-happened. A request routed through a proxy opens its own connection every time — the proxied path
-cannot be pooled. The command prints this caveat under every summary and carries it in the `--json`
+happened. Through a proxy the same holds: the CONNECT tunnel and its handshake are made once and
+reused. The command prints this caveat under every summary and carries it in the `--json`
 envelope, because a latency figure without it is misleading. When the server answered
 `Connection: close`, the note says so instead — "the server answered 'Connection: close' on 8 of 8
 responses, so every request opened a new connection (and TLS handshake)" — and `--json` gives the

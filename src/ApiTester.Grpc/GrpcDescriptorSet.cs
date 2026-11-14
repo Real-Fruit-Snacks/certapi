@@ -14,7 +14,7 @@ namespace ApiTester.Grpc;
 /// path alongside it. This type deliberately exposes no Google.Protobuf type on its public surface,
 /// so ApiTester.Cli still never has to reference Protobuf directly — the same containment promise
 /// <see cref="GrpcCaller"/> already keeps for the reflection path.</summary>
-public sealed class GrpcDescriptorSet
+public sealed partial class GrpcDescriptorSet
 {
     /// <summary>The path the set was loaded from, as the user wrote it — used in messages.</summary>
     public string SourcePath { get; }
@@ -139,7 +139,7 @@ public sealed class GrpcDescriptorSet
     // .proto keywords. Deliberately loose — this only ever runs on a path that has already failed to
     // parse as a descriptor set, so a false positive cannot mislead a user whose file was fine; it
     // only sharpens the message for a user who is already looking at an error.
-    private static readonly Regex ProtoSourceLine = new(
-        @"^\s*(syntax\s*=|package\s|import\s|message\s|service\s|enum\s)",
-        RegexOptions.Multiline | RegexOptions.Compiled);
+    private static readonly Regex ProtoSourceLine = ProtoSourceLineRegex();
+    [GeneratedRegex(@"^\s*(syntax\s*=|package\s|import\s|message\s|service\s|enum\s)", RegexOptions.Multiline)]
+    private static partial Regex ProtoSourceLineRegex();
 }

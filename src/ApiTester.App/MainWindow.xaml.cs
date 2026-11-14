@@ -1043,8 +1043,7 @@ public partial class MainWindow : Window
         try
         {
             // Clone so the exported file carries no window geometry; SaveTo stamps the schema version.
-            var clone = System.Text.Json.JsonSerializer.Deserialize<AppState>(
-                System.Text.Json.JsonSerializer.Serialize(_state))!;
+            var clone = _state.DeepClone();
             clone.WindowWidth = clone.WindowHeight = clone.WindowLeft = clone.WindowTop = null;
             clone.WindowMaximized = false;
             clone.SaveTo(dialog.FileName);

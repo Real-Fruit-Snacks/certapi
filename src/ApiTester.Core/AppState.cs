@@ -6,6 +6,16 @@ using System.Text.Json.Serialization;
 
 namespace ApiTester.Core;
 
+/// <summary>The serializer for the workspace, generated at build time (see <see cref="AppState.FromJson"/>).
+/// Default options, so the JSON is exactly what the reflection serializer reads and writes.</summary>
+[JsonSerializable(typeof(AppState))]
+internal sealed partial class AppStateJson : JsonSerializerContext { }
+
+/// <summary>As <see cref="AppStateJson"/>, indented, for the file on disk.</summary>
+[JsonSourceGenerationOptions(WriteIndented = true)]
+[JsonSerializable(typeof(AppState))]
+internal sealed partial class AppStateJsonIndented : JsonSerializerContext { }
+
 /// <summary>Persisted window/request state, stored under %AppData%\CertApiTester\state.json.</summary>
 public sealed class AppState
 {
@@ -126,13 +136,24 @@ public sealed class AppState
     /// <summary>The file as stored, its secrets left encrypted: for a caller that needs only names
     /// or settings (the app's theme at start, tab completion), and never saves it. Decrypting is a
     /// call into lsass per secret, and a workspace can hold hundreds. Throws on missing/corrupt files.</summary>
-    public static AppState PeekFrom(string path) =>
-        JsonSerializer.Deserialize<AppState>(File.ReadAllText(path)) ?? new AppState();
+    public static AppState PeekFrom(string path) => FromJson(File.ReadAllText(path)) ?? new AppState();
+
+    /// <summary>The workspace read from its JSON, through the source-generated serializer: the same
+    /// result as reflection, without building the reflection metadata on every start — a cold load
+    /// of a large workspace is several times faster this way, and every CLI run is a cold load.</summary>
+    public static AppState? FromJson(string json) => JsonSerializer.Deserialize(json, AppStateJson.Default.AppState);
+
+    /// <summary>The workspace as JSON, as <see cref="FromJson"/> reads it.</summary>
+    public string ToJson(bool indented = false) =>
+        JsonSerializer.Serialize(this, indented ? AppStateJsonIndented.Default.AppState : AppStateJson.Default.AppState);
+
+    /// <summary>A deep copy, by a round trip through JSON: what an export or a save writes from.</summary>
+    public AppState DeepClone() => FromJson(ToJson())!;
 
     /// <summary>Load with an explicit protector — the seam the tests use to prove the degraded paths.</summary>
     public static AppState LoadFrom(string path, ISecretProtector protector)
     {
-        var state = JsonSerializer.Deserialize<AppState>(File.ReadAllText(path)) ?? new AppState();
+        var state = FromJson(File.ReadAllText(path)) ?? new AppState();
         // Remembered, so a save writes back what was read for every value that has not changed.
         var reusing = new ReusingProtector(protector);
         StateSecrets.Unprotect(state, reusing, state.SecretWarnings);   // before Migrate, so migrations see plaintext
@@ -194,7 +215,7 @@ public sealed class AppState
             File.Copy(path, backup, overwrite: true);
         }
 
-        var clone = JsonSerializer.Deserialize<AppState>(JsonSerializer.Serialize(this))!;
+        var clone = DeepClone();
         // The load's own protector when this is the protector it wraps, so unchanged values keep
         // their stored form; otherwise one that remembers from here on.
         if (_protector is null || !ReferenceEquals(_protector.Inner, protector)) _protector = new ReusingProtector(protector);
@@ -206,7 +227,7 @@ public sealed class AppState
             finally { _protector.EndPass(); }
         }
 
-        var json = JsonSerializer.Serialize(clone, new JsonSerializerOptions { WriteIndented = true });
+        var json = clone.ToJson(indented: true);
         if (Path.GetDirectoryName(path) is { Length: > 0 } dir) Directory.CreateDirectory(dir);
         var tmp = path + ".tmp";
         File.WriteAllText(tmp, json);

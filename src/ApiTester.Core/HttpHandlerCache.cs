@@ -84,6 +84,11 @@ internal sealed record HandlerKey(
     AddressFamilyPreference AddressFamily,
     string DialKey)
 {
+    /// <summary>Set for a handler that negotiates TLS itself (a proxy tunnel, QUIC): which of the
+    /// two it is, and the destination it was built for, since the proxy configuration can depend
+    /// on it. Null for the direct path's handlers, so the two kinds are never shared.</summary>
+    public string? HandlerDriven { get; init; }
+
     /// <summary>The one place this key is ever built, so every caller agrees on exactly what goes
     /// into it.</summary>
     public static HandlerKey For(
@@ -151,6 +156,11 @@ internal sealed record HandshakeInfo(
     public string? ServerCertificateSpkiSha256 { get; init; }
     public string? ServerCertificateIssuerThumbprint { get; init; }
 }
+
+/// <summary>Why a handler-driven handshake was refused: a pin that did not match an otherwise
+/// accepted certificate, revocation itself (the status it refused with), or an ordinary trust
+/// failure (neither), with what the revocation check observed.</summary>
+internal sealed record HandshakeRefusal(bool PinMismatch, RevocationStatus? RevocationRefusal, RevocationStatus Status);
 
 /// <summary>Carried by every server-certificate refusal so the classification in ApiClient's catch
 /// block can report what the revocation check found even though the handshake never completed and
@@ -251,6 +261,22 @@ internal sealed class HandlerEntry : IDisposable
 
     public HandshakeInfo? Lookup(string origin) =>
         _handshakesByOrigin.TryGetValue(origin, out var info) ? info : null;
+
+    private readonly ConcurrentDictionary<string, HandshakeRefusal> _refusalsByHost = new();
+
+    /// <summary>A handshake this entry's certificate callback refused, kept for the send that
+    /// fails because of it to say why (the handler-driven path's callback cannot throw a typed
+    /// exception the way the direct path's connect callback does).</summary>
+    public void RecordRefusal(string host, HandshakeRefusal refusal)
+    {
+        if (_refusalsByHost.Count > MaxTrackedOrigins) _refusalsByHost.Clear();
+        _refusalsByHost[host] = refusal;
+    }
+
+    public void ClearRefusal(string host) => _refusalsByHost.TryRemove(host, out _);
+
+    public HandshakeRefusal? LookupRefusal(string host) =>
+        _refusalsByHost.TryGetValue(host, out var refusal) ? refusal : null;
 
     /// <summary>Called by <see cref="HttpHandlerCache.Rent"/>: a send that is about to use this
     /// entry's handler holds one lease until it finishes, so an eviction racing with it can mark

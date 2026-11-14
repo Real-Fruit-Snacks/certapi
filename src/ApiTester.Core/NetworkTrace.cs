@@ -32,7 +32,7 @@ public sealed record TraceLine(TimeSpan At, string Source, string Event, string 
 /// one sees below TCP; the documentation says so rather than implying otherwise.
 /// <para>The source and event names here were observed from a running .NET 9 process rather than
 /// taken from documentation — see the program's plan for the recorded list.</para></summary>
-public sealed class NetworkTrace : EventListener
+public sealed partial class NetworkTrace : EventListener
 {
     // Observed on .NET 9: the sources whose event NAMES are stable enough to key behaviour off.
     private static readonly string[] StableSources =
@@ -156,14 +156,15 @@ public sealed class NetworkTrace : EventListener
     /// <summary>Headers whose value is a credential wherever they appear in a payload. Challenges
     /// (<c>WWW-Authenticate</c>, <c>Proxy-Authenticate</c>) are deliberately not here: they are what
     /// a trace of a failing proxy or SSO handshake is read for, and they carry no secret.</summary>
-    private static readonly Regex CredentialHeader = new(
-        @"(?<=^|[\r\n])(?<name>Authorization|Proxy-Authorization|Cookie|Set-Cookie|X-Api-Key|X-Auth-Token|X-Csrf-Token|X-XSRF-Token|[A-Za-z0-9-]*(?:token|secret|password|api-?key)[A-Za-z0-9-]*):[^\r\n]*",
-        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+    private static readonly Regex CredentialHeader = CredentialHeaderRegex();
+    [GeneratedRegex(@"(?<=^|[\r\n])(?<name>Authorization|Proxy-Authorization|Cookie|Set-Cookie|X-Api-Key|X-Auth-Token|X-Csrf-Token|X-XSRF-Token|[A-Za-z0-9-]*(?:token|secret|password|api-?key)[A-Za-z0-9-]*):[^\r\n]*", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex CredentialHeaderRegex();
 
     /// <summary>Anything shaped like a URL inside a payload: the runtime's events carry request
     /// and proxy addresses, and those can hold <c>user:pass@</c> or an <c>access_token=</c>.</summary>
-    private static readonly Regex UrlInPayload = new(
-        @"[A-Za-z][A-Za-z0-9+.-]*://[^\s""'<>]+", RegexOptions.CultureInvariant);
+    private static readonly Regex UrlInPayload = UrlInPayloadRegex();
+    [GeneratedRegex(@"[A-Za-z][A-Za-z0-9+.-]*://[^\s""'<>]+", RegexOptions.CultureInvariant)]
+    private static partial Regex UrlInPayloadRegex();
 
     internal static string Redact(string name, string value)
     {

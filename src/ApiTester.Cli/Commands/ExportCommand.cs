@@ -109,7 +109,7 @@ public static class ExportCommand
             case "workspace":
             {
                 if (positionals.Count != 1) throw new CliUsageException(Help);
-                var clone = JsonSerializer.Deserialize<AppState>(JsonSerializer.Serialize(state))!;
+                var clone = state.DeepClone();
                 clone.WindowWidth = clone.WindowHeight = clone.WindowLeft = clone.WindowTop = null;
                 clone.WindowMaximized = false;
 

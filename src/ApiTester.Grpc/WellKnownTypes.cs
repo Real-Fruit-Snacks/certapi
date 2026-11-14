@@ -44,7 +44,7 @@ internal enum WellKnownKind
     Any
 }
 
-internal static class WellKnownTypes
+internal static partial class WellKnownTypes
 {
     // The exact bounds Google.Protobuf's own Timestamp type enforces: the inclusive range of
     // seconds-since-epoch spanning 0001-01-01T00:00:00Z to 9999-12-31T23:59:59Z (nanos carries the
@@ -57,13 +57,13 @@ internal static class WellKnownTypes
     // years — in both directions.
     private const long MaxDurationSeconds = 315576000000L;
 
-    private static readonly Regex TimestampPattern = new(
-        @"^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,9}))?(Z|z|[+-]\d{2}:\d{2})$",
-        RegexOptions.Compiled);
+    private static readonly Regex TimestampPattern = TimestampPatternRegex();
+    [GeneratedRegex(@"^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,9}))?(Z|z|[+-]\d{2}:\d{2})$", RegexOptions.None)]
+    private static partial Regex TimestampPatternRegex();
 
-    private static readonly Regex DurationPattern = new(
-        @"^(-)?(\d+)(?:\.(\d{1,9}))?s$",
-        RegexOptions.Compiled);
+    private static readonly Regex DurationPattern = DurationPatternRegex();
+    [GeneratedRegex(@"^(-)?(\d+)(?:\.(\d{1,9}))?s$", RegexOptions.None)]
+    private static partial Regex DurationPatternRegex();
 
     internal static WellKnownKind KindOf(MessageDescriptor descriptor) => descriptor.FullName switch
     {

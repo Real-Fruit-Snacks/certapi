@@ -9,9 +9,11 @@ namespace ApiTester.Core;
 /// which is how a secret reaches a request without ever being stored: nothing in the workspace,
 /// nothing in an exported file, nothing in source control. A workspace variable of that exact name
 /// still wins, so a saved value can override the ambient one deliberately.</para></summary>
-public static class VariableResolver
+public static partial class VariableResolver
 {
-    private static readonly Regex Token = new(@"\{\{\s*([^{}]*?)\s*\}\}", RegexOptions.Compiled);
+    private static readonly Regex Token = TokenRegex();
+    [GeneratedRegex(@"\{\{\s*([^{}]*?)\s*\}\}", RegexOptions.None)]
+    private static partial Regex TokenRegex();
 
     /// <summary>The prefix that routes a token to the process environment rather than the
     /// workspace. Matched case-insensitively — <c>{{env:HOME}}</c> and <c>{{ENV:HOME}}</c> are the

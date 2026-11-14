@@ -16,12 +16,16 @@ public sealed record InsomniaImportResult(
 /// <c>{{ _.name }}</c> is translated to this product's <c>{{name}}</c>; a tag template
 /// (<c>{% … %}</c>, used for generated values and response chaining) has no equivalent and is
 /// reported as a warning naming the request it was found in.</para></summary>
-public static class InsomniaImport
+public static partial class InsomniaImport
 {
     // Insomnia writes {{ _.varName }} in v4 (and bare {{ varName }} in older exports); both mean
     // "substitute this variable", which is exactly what {{varName}} means here.
-    private static readonly Regex UnderscoreToken = new(@"\{\{\s*_\.([A-Za-z0-9_\-]+)\s*\}\}", RegexOptions.Compiled);
-    private static readonly Regex TagTemplate = new(@"\{%.*?%\}", RegexOptions.Compiled | RegexOptions.Singleline);
+    private static readonly Regex UnderscoreToken = UnderscoreTokenRegex();
+    [GeneratedRegex(@"\{\{\s*_\.([A-Za-z0-9_\-]+)\s*\}\}", RegexOptions.None)]
+    private static partial Regex UnderscoreTokenRegex();
+    private static readonly Regex TagTemplate = TagTemplateRegex();
+    [GeneratedRegex(@"\{%.*?%\}", RegexOptions.Singleline)]
+    private static partial Regex TagTemplateRegex();
 
     /// <summary>Throws <see cref="FormatException"/> when the text is not an Insomnia export at
     /// all; anything less total is a warning on the result instead.</summary>

@@ -13,6 +13,17 @@ All notable changes to this project are documented here. The format follows
   of 225 MB. The downloads are larger for it: about 95 MB and 160 MB.
 - `mock` keeps connections alive between requests, so `bench` against it measures requests
   rather than handshakes. `--no-keep-alive` answers `Connection: close` as before.
+- Requests through a proxy reuse their connection: the CONNECT tunnel and its TLS handshake are
+  made once per site instead of once per request, so a suite, `bench` or the app behind a
+  corporate proxy no longer pays a tunnel and a handshake for every call. HTTP/3 connections are
+  pooled the same way. Each response still reports the server certificate it was sent over.
+- A large workspace loads faster on every command-line run: it is read with a serializer generated
+  at build time instead of reflection (`send` with a 2 MB workspace: 170 ms → 130 ms). The file
+  written is byte-for-byte the same.
+- `mock` sends each response without waiting on Nagle's algorithm, which could hold the body of
+  every response on a kept-alive connection for a delayed ACK (about 40 ms behind a proxy).
+- The regular expressions used on every request (`{{variables}}`, URL rewriting, log redaction and
+  others) are generated at build time instead of compiled at start-up.
 
 ### Fixed
 - `bench` no longer claims connections were pooled and reused when the server answered

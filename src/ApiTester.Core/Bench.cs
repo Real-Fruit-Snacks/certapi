@@ -44,9 +44,8 @@ public static class Bench
     /// request and response. So the figures below are dominated by warm, pooled requests unless
     /// <see cref="BenchOptions.WarmUp"/> is left unset and the run is short enough that the first
     /// connection's cost still shows up in the distribution — which is exactly what --warmup exists to
-    /// discard. The one path that still pays a full connection every time is a request routed through a
-    /// proxy: the CONNECT tunnel is established by the handler itself, not by a callback attributable to
-    /// one connection, so proxied requests are never pooled.</para>
+    /// discard. Requests through a proxy are pooled the same way: the CONNECT tunnel and its handshake
+    /// are made once and reused.</para>
     /// <para><b>Retries.</b> Whatever <paramref name="transport"/> says is honored as given. A caller
     /// that wants the failure rate a bench exists to measure should switch retries off before calling,
     /// because a retry converts a failure into a slow success.</para>

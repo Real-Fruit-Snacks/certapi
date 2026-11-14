@@ -375,6 +375,10 @@ public sealed class MockServer : IAsyncDisposable
                     continue;
                 }
                 if (!_connectionSlots.Wait(0)) { client.Dispose(); continue; }
+                // Responses go out as a head write and a body write: with Nagle on, the body waits
+                // for an ACK the peer may delay by 40 ms, on every response of a kept-alive
+                // connection. Each write here is a complete piece, so send it at once.
+                client.NoDelay = true;
                 var handler = Task.Run(async () =>
                 {
                     try { await HandleAsync(client, _cts.Token); }

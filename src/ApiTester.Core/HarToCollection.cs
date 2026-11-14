@@ -18,11 +18,11 @@ public sealed record HarGroupOptions
 /// <summary>Group HAR entries into a collection suitable for OpenAPI export: one request per
 /// distinct method+templated path, hosts split into folders when the archive spans several.
 /// Pure — no I/O, no sockets.</summary>
-public static class HarToCollection
+public static partial class HarToCollection
 {
-    private static readonly Regex UuidPattern = new(
-        "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
-        RegexOptions.Compiled);
+    private static readonly Regex UuidPattern = UuidPatternRegex();
+    [GeneratedRegex("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$", RegexOptions.None)]
+    private static partial Regex UuidPatternRegex();
 
     private const string RedactedMarker = "[redacted]";
 

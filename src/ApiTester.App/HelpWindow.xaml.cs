@@ -514,8 +514,8 @@ public partial class HelpWindow : Window
                 "request to an origin pays the TCP connect and TLS handshake — every later request " +
                 "that shares the same client certificate and trust policy reuses that connection and " +
                 "measures only the request and response. --warmup discards that first-connection cost " +
-                "so the figures describe a warmed-up endpoint. A request routed through a proxy still " +
-                "opens its own connection every time, because the proxied path can't be pooled. " +
+                "so the figures describe a warmed-up endpoint. Requests through a proxy are pooled too: " +
+                "the CONNECT tunnel is opened once and reused. " +
                 "Retries are also forced off during a bench, because a " +
                 "retry turns a failure into a slow success and hides the failure rate the bench exists " +
                 "to measure — --bench-retries measures it anyway. There is no window for the bench: it " +

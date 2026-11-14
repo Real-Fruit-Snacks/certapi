@@ -101,9 +101,11 @@ public sealed record HmacOptions(HmacSettings Settings, string Secret, string? K
 
 /// <summary>Signs a request with an HMAC: a template you describe, RFC 9421 HTTP Message
 /// Signatures, or the draft-cavage HTTP Signatures many APIs adopted before the RFC.</summary>
-public static class HmacSigner
+public static partial class HmacSigner
 {
-    private static readonly Regex Placeholder = new(@"\{([A-Za-z][A-Za-z0-9]*)(?::([^}]+))?\}", RegexOptions.CultureInvariant);
+    private static readonly Regex Placeholder = PlaceholderRegex();
+    [GeneratedRegex(@"\{([A-Za-z][A-Za-z0-9]*)(?::([^}]+))?\}", RegexOptions.CultureInvariant)]
+    private static partial Regex PlaceholderRegex();
 
     private static readonly HashSet<string> Known = new(StringComparer.Ordinal)
     {

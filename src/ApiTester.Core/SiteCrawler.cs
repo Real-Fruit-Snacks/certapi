@@ -6,18 +6,23 @@ namespace ApiTester.Core;
 
 /// <summary>Links on a page: the href/src/action/srcset values of HTML, and url(…) in CSS,
 /// resolved against the page (and its &lt;base href&gt;).</summary>
-public static class LinkExtractor
+public static partial class LinkExtractor
 {
-    private static readonly Regex Attribute = new(
-        @"\b(?:href|src|action|data-src|poster)\s*=\s*(?:""([^""]*)""|'([^']*)'|([^\s>""']+))",
-        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(2));
-    private static readonly Regex SrcSet = new(@"\bsrcset\s*=\s*(?:""([^""]*)""|'([^']*)')",
-        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(2));
-    private static readonly Regex CssUrl = new(@"url\(\s*(?:""([^""]*)""|'([^']*)'|([^)\s]+))\s*\)",
-        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(2));
-    private static readonly Regex Base = new(@"<base\b[^>]*\bhref\s*=\s*(?:""([^""]*)""|'([^']*)')",
-        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromSeconds(2));
-    private static readonly Regex Comments = new(@"<!--.*?-->", RegexOptions.Singleline, TimeSpan.FromSeconds(2));
+    private static readonly Regex Attribute = AttributeRegex();
+    [GeneratedRegex(@"\b(?:href|src|action|data-src|poster)\s*=\s*(?:""([^""]*)""|'([^']*)'|([^\s>""']+))", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 2000)]
+    private static partial Regex AttributeRegex();
+    private static readonly Regex SrcSet = SrcSetRegex();
+    [GeneratedRegex(@"\bsrcset\s*=\s*(?:""([^""]*)""|'([^']*)')", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 2000)]
+    private static partial Regex SrcSetRegex();
+    private static readonly Regex CssUrl = CssUrlRegex();
+    [GeneratedRegex(@"url\(\s*(?:""([^""]*)""|'([^']*)'|([^)\s]+))\s*\)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 2000)]
+    private static partial Regex CssUrlRegex();
+    private static readonly Regex Base = BaseRegex();
+    [GeneratedRegex(@"<base\b[^>]*\bhref\s*=\s*(?:""([^""]*)""|'([^']*)')", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 2000)]
+    private static partial Regex BaseRegex();
+    private static readonly Regex Comments = CommentsRegex();
+    [GeneratedRegex(@"<!--.*?-->", RegexOptions.Singleline, matchTimeoutMilliseconds: 2000)]
+    private static partial Regex CommentsRegex();
 
     public static IReadOnlyList<Uri> Extract(string text, Uri page, bool css)
     {

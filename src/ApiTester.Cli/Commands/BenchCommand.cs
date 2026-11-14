@@ -73,9 +73,8 @@ public static class BenchCommand
           Connections are pooled and reused, so only the first request to an origin pays the TCP
           connect and TLS handshake; later requests measure the request and response alone. Use
           --warmup to discard that first-connection cost so the figures describe a warmed-up
-          endpoint instead of "how long the first request takes, from cold". A request routed
-          through a proxy still opens its own connection every time, because the proxied path
-          cannot be pooled — see --proxy above.
+          endpoint instead of "how long the first request takes, from cold". Through a proxy
+          the same holds: the CONNECT tunnel is opened once and reused.
           A server that answers 'Connection: close' ends each connection after one response, so
           every request pays a new connection; the note under the figures says when that happened.
 

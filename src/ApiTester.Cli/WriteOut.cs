@@ -9,9 +9,11 @@ namespace ApiTester.Cli;
 /// <summary>curl's <c>-w/--write-out</c>: a template printed to stdout after the transfer, with
 /// <c>%{variable}</c> filled in from the response. The variables are curl's names for what this
 /// tool knows; one it does not know is a usage error, never an empty string a script misreads.</summary>
-public sealed class WriteOut
+public sealed partial class WriteOut
 {
-    private static readonly Regex Variable = new(@"%\{([a-z_]+)(?:\{([^}]+)\})?\}", RegexOptions.CultureInvariant);
+    private static readonly Regex Variable = VariableRegex();
+    [GeneratedRegex(@"%\{([a-z_]+)(?:\{([^}]+)\})?\}", RegexOptions.CultureInvariant)]
+    private static partial Regex VariableRegex();
 
     private static readonly HashSet<string> TimeNames = new(StringComparer.Ordinal)
         { "time_namelookup", "time_connect", "time_appconnect", "time_pretransfer", "time_starttransfer", "time_total" };
