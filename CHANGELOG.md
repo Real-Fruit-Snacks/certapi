@@ -87,6 +87,13 @@ All notable changes to this project are documented here. The format follows
   others) are generated at build time instead of compiled at start-up.
 
 ### Fixed
+- `tls` said "client certificate not requested" for a server that requires one, when no `--cert`
+  was given — the ordinary case for a Windows server, which sends its certificate request with no
+  list of issuers. It now counts the request either way, and says when the server ends the
+  connection just after the handshake: `refused … it requires a client certificate`, or with
+  `--cert`, `refused … it did not accept the certificate sent` (exit 1). A client finishes its
+  side of the handshake before the server judges its certificate, so this is where an mTLS
+  refusal shows.
 - `ws -m … --expect 1` no longer waits for ever when stdin is a pipe nobody closes (a CI step, a
   scheduled task, a parent script): piped lines are sent as they arrive instead of being read to
   the end before connecting.

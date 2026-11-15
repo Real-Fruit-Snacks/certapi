@@ -1351,8 +1351,13 @@ validity, key, subject alternative names, thumbprint, and the SPKI SHA-256 that
 [`--pinnedpubkey`](#trust-and-tls) takes), whether the chain is trusted here and why not, and
 **whether the server asked for a client certificate — with the list of issuing CAs it will
 accept**. That list is the answer to "which of my certificates will this server take?": pick one
-issued by a CA it names. With `--cert`, the report says whether yours was sent. Nothing is sent
-after the handshake. The port defaults to 443 (or the STARTTLS protocol's plain port).
+issued by a CA it names. A Windows server sends no list by default (its `SendTrustedIssuerList`
+setting is off), and then the report says "any issuer". With `--cert`, the report says whether
+yours was sent and whether the server then refused it. A server judges the client's certificate
+only after the client has finished its side of the handshake, so a refusal shows as the
+connection being ended just after it: `refused … it did not accept the certificate sent`, or,
+with no `--cert`, `refused … it requires a client certificate`. Nothing is sent after the
+handshake. The port defaults to 443 (or the STARTTLS protocol's plain port).
 
 | Option | Default | What it does |
 |---|---|---|
@@ -1365,7 +1370,8 @@ after the handshake. The port defaults to 443 (or the STARTTLS protocol's plain 
 Accepts the [certificate](#certificate-options) block and the routing and TLS
 [transport options](#transport-options) (`--connect-to`, `--interface`, `--resolve`, `-4`/`-6`,
 `--tls-min`, `--ca-file`). A proxy is never used: this is not HTTP. Exit 0 when the handshake
-completes, 1 when it fails — the report still says how far it got. An untrusted chain is reported,
+completes, 1 when it fails or the certificate offered is refused — the report still says how far
+it got. An untrusted chain is reported,
 not fatal: this command is for looking at it.
 
 ---

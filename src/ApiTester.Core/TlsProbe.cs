@@ -26,6 +26,11 @@ public sealed record TlsProbeResult
     public bool ClientCertificateRequested { get; init; }
     public IReadOnlyList<string> AcceptableIssuers { get; init; } = Array.Empty<string>();
     public string? ClientCertificateSent { get; init; }
+    /// <summary>Set when the server, having asked for a certificate, ended the connection just
+    /// after the handshake: it refused the one sent, or refused the connection without one. A TLS
+    /// client finishes its side of the handshake before the server has judged its certificate, so
+    /// this — not the handshake — is where an mTLS refusal shows.</summary>
+    public string? RefusedAfterHandshake { get; init; }
     public bool ServerTrusted { get; init; }
     public string? TrustProblem { get; init; }
     public IReadOnlyList<TlsCertificateInfo> Chain { get; init; } = Array.Empty<TlsCertificateInfo>();
@@ -103,7 +108,11 @@ public static class TlsProbe
         if (clientCertificate is not null) options.LocalCertificateSelectionCallback = SelectCertificate;
         else options.LocalCertificateSelectionCallback = (s, t, l, r, acceptable) =>
         {
+            // As above: the call that comes once the server's certificate is known is the one its
+            // request caused. Windows servers send that request with no issuer list by default
+            // (SendTrustedIssuerList is off), so an empty list proves nothing either way.
             if (acceptable.Length > 0) { requested = true; issuers.Clear(); issuers.AddRange(acceptable); }
+            else if (r is not null) requested = true;
             return null!;
         };
         TlsPolicy.Apply(options, transport with { Sni = null });
@@ -112,18 +121,28 @@ public static class TlsProbe
         try
         {
             await ssl.AuthenticateAsClientAsync(options, limit.Token);
-            // A TLS 1.3 server may ask for a certificate after its Finished (post-handshake), and
-            // a read nudges such a request through, so it (and whether ours was taken) is seen.
-            // Not when the request already came in the handshake: there is nothing left to wait
-            // for. Otherwise as long as such a request could take to arrive — two round trips,
-            // judged by how long the connect took, and some margin — rather than a fixed 400 ms
-            // that a nearby server spends doing nothing.
-            bool requestSeen = issuers.Count > 0 || ssl.LocalCertificate is not null;
-            if (ssl.SslProtocol == SslProtocols.Tls13 && startTls == StartTls.None && !requestSeen)
+            // One short read after the handshake, for two things only the server's next move shows:
+            //  - a TLS 1.3 server may ask for a certificate after its Finished (post-handshake), and
+            //    the read nudges that request through;
+            //  - a server that asked judges the certificate (or its absence) only after the client
+            //    has finished, and refuses by ending the connection — with an alert or without.
+            // As long as either could take to arrive: two round trips, judged by the connect, and
+            // a margin. A server that asked for nothing over TLS 1.2 has nothing to show, so no wait.
+            string? refused = null;
+            if (startTls == StartTls.None && (requested || ssl.SslProtocol == SslProtocols.Tls13))
             {
                 using var nudge = CancellationTokenSource.CreateLinkedTokenSource(limit.Token);
                 nudge.CancelAfter(PostHandshakeWait(connected));
-                try { _ = await ssl.ReadAsync(new byte[1], nudge.Token); } catch { /* nothing to read is fine */ }
+                bool closed = false;
+                string? alert = null;
+                try { closed = await ssl.ReadAsync(new byte[1], nudge.Token) == 0; }
+                catch (OperationCanceledException) { /* nothing arrived: the connection stands */ }
+                catch (Exception ex) when (ex is IOException or AuthenticationException or System.ComponentModel.Win32Exception)
+                {
+                    alert = ex.InnerException?.Message is { Length: > 0 } inner ? inner : ex.Message;
+                }
+                if ((closed || alert is not null) && (requested || ssl.LocalCertificate is not null))
+                    refused = alert is null ? "the server closed the connection" : $"the server ended the connection with an alert ({alert.TrimEnd('.')})";
             }
             return new TlsProbeResult
             {
@@ -135,6 +154,7 @@ public static class TlsProbe
                 ClientCertificateRequested = requested || ssl.LocalCertificate is not null,
                 AcceptableIssuers = issuers.Distinct().ToList(),
                 ClientCertificateSent = ssl.LocalCertificate is { } sent ? sent.Subject : null,
+                RefusedAfterHandshake = refused,
                 ServerTrusted = trusted, TrustProblem = trustProblem, Chain = chain
             };
         }

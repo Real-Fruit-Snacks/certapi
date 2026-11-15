@@ -14,7 +14,10 @@ public static class TlsCommand
         (names, validity, key, the SHA-256 that --pinnedpubkey takes), whether the chain is trusted,
         and whether the server asked for a client certificate — with the list of issuers it will
         accept, which is the answer to "which of my certificates will this server take?". With a
-        certificate, whether it was sent. Nothing is sent after the handshake.
+        certificate, whether it was sent, and whether the server then refused it: a server judges
+        the client's certificate only after the client has finished its side of the handshake, so
+        a refusal shows as the connection being ended just after it. Nothing is sent after the
+        handshake.
 
           --starttls <proto>      Upgrade a plain connection first: smtp, imap, pop3, ftp, ldap or
                                   postgres (the port defaults to that protocol's plain port)
@@ -37,7 +40,8 @@ public static class TlsCommand
           certapi tls mail.corp --starttls smtp
           certapi tls https://api.example.com/v1 --alpn h2,http/1.1 --json
 
-        Exit 0 when the handshake completes, 1 when it fails (the report still says how far it got).
+        Exit 0 when the handshake completes, 1 when it fails or the certificate offered is refused
+        (the report still says how far it got).
         """;
 
     public static int Run(Args args, TextWriter stdout, TextWriter stderr, CliServices services)
@@ -73,7 +77,10 @@ public static class TlsCommand
         if (json) stdout.WriteLine(JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
         else Print(result, cert is not null, stdout);
         if (result.Error is not null && !json) stderr.WriteLine("error: " + result.Error);
-        return result.Error is null ? ExitCodes.Ok : ExitCodes.Failure;
+        // A certificate offered and refused is the failure an mTLS check is run to catch; a server
+        // that requires one when none was offered is what the report is for, not a failure.
+        bool offeredAndRefused = cert is not null && result.RefusedAfterHandshake is not null;
+        return result.Error is null && !offeredAndRefused ? ExitCodes.Ok : ExitCodes.Failure;
     }
 
     /// <summary>host, host:port, [v6]:port or a URL; the port defaults by scheme or STARTTLS protocol.</summary>
@@ -121,6 +128,12 @@ public static class TlsCommand
             o.WriteLine(offered
                 ? r.ClientCertificateSent is { } sent ? $"  sent       {sent}" : "  sent       nothing — the certificate offered does not match, or has no usable private key"
                 : "  sent       nothing (give --cert to offer one)");
+            if (r.RefusedAfterHandshake is { } why)
+                o.WriteLine(r.ClientCertificateSent is null
+                    ? $"  refused    {why} — it requires a client certificate"
+                    : $"  refused    {why} — it did not accept the certificate sent");
+            else if (r.ClientCertificateSent is not null)
+                o.WriteLine("  kept       the server kept the connection open after the handshake: the certificate was not refused there");
         }
         else o.WriteLine("  client certificate not requested");
     }
