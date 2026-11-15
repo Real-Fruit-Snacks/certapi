@@ -11,8 +11,12 @@ public sealed class Args
     /// option name — a positional such as "a=b" or a header value is left alone. "--" on its own
     /// ends option parsing: everything after it is positional, which is the only way to pass a
     /// positional that starts with a dash.</summary>
-    public Args(IReadOnlyList<string> tokens)
+    /// <param name="command">The command these are the arguments of: its help says which long
+    /// options take a value, so the value of one (<c>--user-agent -ok</c>) is never split as a
+    /// bundle. Null reads every long option as possibly a switch, as before.</param>
+    public Args(IReadOnlyList<string> tokens, string? command = null)
     {
+        _command = command;
         Original = tokens.ToArray();
         var split = new List<string?>(tokens.Count);
         var attached = new HashSet<int>();
@@ -24,8 +28,8 @@ public sealed class Args
             // curl's bundles — -sS, -fsSL, -sk — and values written onto their option — -XPOST,
             // -HAccept:x, -d{} — the way a pasted curl command spells them. Split only when every
             // letter is a known single-letter option, and never when this token is the value of the
-            // option before it (-H "-kv" is a header, -d -1 a body).
-            if (ExpandBundle(t, split.Count > 0 && !attached.Contains(split.Count - 1) ? split[^1] : null) is { } expanded)
+            // option before it (-H "-kv" is a header, -d -1 a body, --user-agent -ok a user agent).
+            if (ExpandBundle(t, split.Count > 0 && !attached.Contains(split.Count - 1) ? split[^1] : null, LongTakesValue) is { } expanded)
             {
                 foreach (var (part, isValue) in expanded)
                 {
@@ -57,10 +61,21 @@ public sealed class Args
     internal const string BundleSwitches = "kiIsSfLqv46#GOZ";
     internal const string BundleValued = "dHXouxUAbwCrFmntceET";
 
-    private static List<(string Part, bool IsValue)>? ExpandBundle(string token, string? previous)
+    private static List<(string Part, bool IsValue)>? ExpandBundle(string token, string? previous, Func<string, bool> longTakesValue)
     {
         if (token.Length <= 2 || token[0] != '-' || token[1] == '-') return null;
         if (previous is { Length: 2 } && previous[0] == '-' && BundleValued.Contains(previous[1])) return null;
+        var parts = SplitBundle(token);
+        // Asked only once the token would be split: a help is searched only for the rare command
+        // line with a bundle-shaped token straight after a long option.
+        if (parts is not null && previous is { Length: > 2 } && previous.StartsWith("--", StringComparison.Ordinal) &&
+            longTakesValue(previous))
+            return null;
+        return parts;
+    }
+
+    private static List<(string Part, bool IsValue)>? SplitBundle(string token)
+    {
         var parts = new List<(string, bool)>();
         for (int k = 1; k < token.Length; k++)
         {
@@ -93,6 +108,34 @@ public sealed class Args
 
     private readonly int _literalFrom;
     private readonly HashSet<int> _attached;
+    private readonly string? _command;
+
+    /// <summary>Extra long options that take a value in a curl command line, beside the ones send
+    /// reads the same way: <c>certapi curl</c> translates these itself.</summary>
+    private static readonly string[] CurlValueOptions =
+        ["--json", "--data-ascii", "--data-binary", "--data-raw", "--data-urlencode", "--pass", "--cert-type", "--key-type",
+         "--cookie-jar", "--cert", "--header", "--request", "--url", "--user", "--url-query", "--limit-rate", "--dump-header",
+         "--variable", "--trace", "--trace-ascii", "--stderr", "--ciphers", "--tls13-ciphers", "--form", "--form-string",
+         "--output", "--write-out", "--config", "--netrc-file", "--retry", "--retry-delay", "--retry-max-time", "--expect100-timeout"];
+
+    /// <summary>Whether this command's long option takes a value, as its help shows it (the same
+    /// reading completion uses). An alias is looked up under the option it stands for.</summary>
+    private bool LongTakesValue(string option)
+    {
+        if (_command is null) return false;
+        if (_command == "curl" && CurlValueOptions.Contains(option, StringComparer.OrdinalIgnoreCase)) return true;
+        string? help = CliApp.HelpFor(_command == "curl" ? "send" : _command);
+        if (help is null) return false;
+        foreach (var (canonical, aliases) in Aliases)
+            if (aliases.Contains(option, StringComparer.OrdinalIgnoreCase)) { option = canonical; break; }
+        // An option whose value is optional (--cors [<origins>]) never takes a token that looks
+        // like an option, so a bundle after it is still a bundle.
+        if (System.Text.RegularExpressions.Regex.IsMatch(help,
+                $@"(?<![\w-]){System.Text.RegularExpressions.Regex.Escape(option)}(?:,\s*--?[\w.\-]+)*[ =]\[",
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase))
+            return false;
+        return Commands.CompletionCommand.TakesValue(help, option);
+    }
 
     /// <summary>Where options can be: everything after a bare "--" is positional, whatever it looks like.</summary>
     private int OptionEnd => Math.Min(_tokens.Length, _literalFrom);

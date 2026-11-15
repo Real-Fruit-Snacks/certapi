@@ -75,7 +75,7 @@ public static class CurlCommand
         try
         {
             services.Log.Debug("curl as send: " + string.Join(" ", sendArgs.Select(Quote)));
-            return SendCommand.Run(new Args(sendArgs), stdout, stderr, bodyOut, services);
+            return SendCommand.Run(new Args(sendArgs, "send"), stdout, stderr, bodyOut, services);
         }
         finally
         {
@@ -90,14 +90,14 @@ public static class CurlCommand
         return name.Equals("curl", StringComparison.OrdinalIgnoreCase) || name.Equals("curl.exe", StringComparison.OrdinalIgnoreCase);
     }
 
-    private enum DataKind { Text, Binary, Raw, Json }
+    private enum DataKind { Text, Binary, Raw, Json, Encoded }
 
     /// <summary>curl's arguments as send's. Exposed for the tests, which check the translation
     /// itself as well as what it sends.</summary>
     internal static List<string> Translate(IReadOnlyList<string> curlTokens)
     {
         // Bundles (-sSL, -XPOST) first, by the same rule send's own reader uses.
-        var expanded = new Args(curlTokens).ExpandedTokens;
+        var expanded = new Args(curlTokens, "curl").ExpandedTokens;
 
         var output = new List<string>();
         var data = new List<(DataKind Kind, string Value)>();
@@ -125,7 +125,7 @@ public static class CurlCommand
                 case "--data-binary": data.Add((DataKind.Binary, Value())); break;
                 case "--data-raw": data.Add((DataKind.Raw, Value())); break;
                 case "--json": data.Add((DataKind.Json, Value())); json = true; break;
-                case "--data-urlencode": urlencode = true; output.Add("--data-urlencode=" + Value()); break;
+                case "--data-urlencode": urlencode = true; data.Add((DataKind.Encoded, Value())); break;
                 case "-H": case "--header":
                 {
                     string header = Value();
@@ -167,6 +167,16 @@ public static class CurlCommand
         if (!follow) output.Add("--no-redirect");
         if (verbose) output.Add("--debug");
 
+        // curl joins every -d and --data-urlencode part with & in the order they were given. On
+        // their own the encoded parts go to send as they are (it encodes them, files included);
+        // mixed with text -d data they are encoded here, in place, so the order is curl's.
+        // Beside --data-binary they are left to send too, which refuses to join them to binary
+        // data rather than send the file's bytes read as text.
+        if (data.All(d => d.Kind == DataKind.Encoded) || json || data.Any(d => d.Kind == DataKind.Binary))
+        {
+            foreach (var part in data.Where(d => d.Kind == DataKind.Encoded)) output.Add("--data-urlencode=" + part.Value);
+            data.RemoveAll(d => d.Kind == DataKind.Encoded);
+        }
         if (data.Count > 0)
         {
             if (data.Count == 1 && data[0].Kind == DataKind.Binary && data[0].Value is ['@', .. var binaryPath] && binaryPath != "-")
@@ -194,6 +204,7 @@ public static class CurlCommand
     /// line breaks removed, --data-binary as it is), --data-raw is always literal.</summary>
     private static string Resolve((DataKind Kind, string Value) part)
     {
+        if (part.Kind == DataKind.Encoded) return SendCommand.UrlEncodedPart(part.Value);
         if (part.Kind == DataKind.Raw || part.Value.Length < 2 || part.Value[0] != '@') return part.Value;
         string path = part.Value[1..];
         string text;

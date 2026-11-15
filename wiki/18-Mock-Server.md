@@ -292,13 +292,24 @@ For the TLS modes the server writes its certificates to `--cert-dir` (default `.
 - `mock-ca.key`, `mock-server.key` — the private keys the next start signs and serves with,
   encrypted to your Windows account (DPAPI). Another account, or another machine, cannot use them.
 
+The authority is limited to what the mock needs. Its critical name constraint allows only
+`localhost` (and names under it), `127.0.0.0/8` and `::1`, the mock's own three subject names, and
+e-mail addresses and URIs at `localhost`; its extended key usage allows only TLS server and client
+authentication. A certificate signed with its key for another site, another subject, an e-mail
+address, or signing code fails validation even on a machine that trusts `mock-ca.cer`, which keeps
+the kept key from being worth stealing. (The `.invalid` name the `wrong-host` mode uses is allowed
+too, so that mode still fails as a name mismatch.) Trust it for your own account, as above, rather
+than for the machine.
+
 **The certificates are kept.** The next start in the same `--cert-dir` uses them again while they
 are good, so `mock-ca.cer` stays the same: trust it once (`certutil -user -addstore Root
 mock-ca.cer`) and every later start is trusted too; a `certapi trust` pin of the server certificate
 and a `--cert-file mock-client.pfx` in a script keep working as well. Starting is quicker for it, since no keys are made.
 They are made again — with a new `mock-ca.cer`, which the start says — when a file is missing or
 unreadable, when the authority has less than about 400 days left or a certificate less than a day,
-and when `--new-certs` asks for it. A `--tls-mode` certificate is made new every time and not
+when the authority is one from 1.100.0 or 1.100.1 (made before it was constrained), and when
+`--new-certs` asks for it. Two mocks starting at once in the same `--cert-dir` take turns, so the
+second uses the first's certificates rather than writing its own over them. A `--tls-mode` certificate is made new every time and not
 kept; the next ordinary start serves the kept good one again. Where the keys cannot be encrypted
 (not Windows), nothing is kept and every start makes new certificates.
 

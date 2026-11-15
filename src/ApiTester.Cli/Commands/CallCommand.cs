@@ -122,7 +122,7 @@ public static class CallCommand
 
         services.Log.Debug($"call {wanted} → {op.Method} {url}");
         Func<ApiResponse, IEnumerable<AssertionRule>>? checks = noValidate ? null : response => Checks(op, response);
-        return SendCommand.Run(new Args(sendArgs), stdout, stderr, bodyOut, services, checks);
+        return SendCommand.Run(new Args(sendArgs, "send"), stdout, stderr, bodyOut, services, checks);
     }
 
     /// <summary>The status must be documented, and the body must match its schema.</summary>

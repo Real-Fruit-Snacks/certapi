@@ -426,7 +426,9 @@ public sealed class ApiClient : IDisposable
                 // Read before anything else looks at the response, as HttpClient did: a redirect's
                 // body too, so its connection goes back to the pool and its hop time includes it.
                 byte[]? body = transport.MaxResponseBytes is null
-                    ? await ReadBodyAsync(response.Content, request.Timeout - Stopwatch.GetElapsedTime(hopSent), cancellationToken)
+                    ? await ReadBodyAsync(response.Content,
+                        request.Timeout == Timeout.InfiniteTimeSpan ? Timeout.InfiniteTimeSpan : request.Timeout - Stopwatch.GetElapsedTime(hopSent),
+                        cancellationToken)
                     : null;
 
                 // Applied before the redirect decision below, so the next hop carries what this one
@@ -1058,11 +1060,13 @@ public sealed class ApiClient : IDisposable
     // host:port, lowercased, IPv6 brackets stripped, computed from a Uri on both the recording side
     // (inside the ConnectCallback above) and the lookup side (BuildConnection in SendOnceAsync) so
     // the two can never disagree about which origin a connection belongs to.
-    /// <summary>The whole body, held once: read straight into an array of the declared length when
-    /// there is one (growing past it only for a decoded body that turns out longer), otherwise
-    /// into a growing buffer handed back without a further copy when it is already the right size.
-    /// Failures read as HttpClient's own would have: running out of <paramref name="remaining"/>
-    /// is a timeout, and a connection that ends mid-body is an <see cref="HttpRequestException"/>.</summary>
+    /// <summary>The whole body, held once. With a declared length it is read into an array that
+    /// grows towards that length as bytes arrive (doubling from 4 MB, then the rest of the length
+    /// at once after 64 MB), so a body that arrives whole ends in an array of exactly its size with
+    /// no final copy, and a length a server merely claims costs little until the bytes are there. Without one it goes into a growing buffer handed back without a further
+    /// copy when it is already the right size. Failures read as HttpClient's own would have:
+    /// running out of <paramref name="remaining"/> (infinite for no limit) is a timeout, and a
+    /// connection that ends mid-body is an <see cref="HttpRequestException"/>.</summary>
     private static async Task<byte[]> ReadBodyAsync(HttpContent content, TimeSpan remaining, CancellationToken ct)
     {
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -1072,26 +1076,37 @@ public sealed class ApiClient : IDisposable
         {
             await using var stream = await content.ReadAsStreamAsync(deadline.Token).ConfigureAwait(false);
             long? declared = content.Headers.ContentLength;
-            byte[] exact = declared is long n && n >= 0 && n <= Array.MaxLength ? new byte[n] : Array.Empty<byte>();
+            // A length past what an array holds is only read as one: HEAD and 304 carry no body
+            // whatever they declare, and a body that really is that long fails below as it passes.
+            int length = declared is long n && n >= 0 && n <= Array.MaxLength ? (int)n : 0;
+            byte[] exact = length == 0 ? Array.Empty<byte>() : new byte[Math.Min(length, FirstBodyBuffer)];
             int filled = 0;
-            while (filled < exact.Length)
+            while (filled < length)
             {
+                // Doubling while what has arrived is small; once this much of the body really came,
+                // the declared length is believed and reserved whole, so a large body costs its own
+                // size plus at most that much, not half again for the last doubling.
+                if (filled == exact.Length)
+                    Array.Resize(ref exact, filled >= TrustDeclaredAfter ? length : (int)Math.Min(length, exact.Length * 2L));
                 int read = await stream.ReadAsync(exact.AsMemory(filled), deadline.Token).ConfigureAwait(false);
                 if (read == 0) break;
                 filled += read;
             }
-            if (filled < exact.Length) return exact.AsSpan(0, filled).ToArray();
+            if (filled < length) return exact.AsSpan(0, filled).ToArray();
 
             // Without a length, or with more than it said (a decoded body): read on to the end.
             var chunk = new byte[81920];
             int more = declared is null ? 0 : await stream.ReadAsync(chunk, deadline.Token).ConfigureAwait(false);
             if (declared is not null && more == 0) return exact;
-            using var rest = new MemoryStream(capacity: Math.Max(chunk.Length, exact.Length * 2));
+            using var rest = new MemoryStream(capacity: Math.Max(chunk.Length, (int)Math.Min(Array.MaxLength, exact.Length * 2L)));
             rest.Write(exact, 0, exact.Length);
             if (more > 0) rest.Write(chunk, 0, more);
             int got;
             while ((got = await stream.ReadAsync(chunk, deadline.Token).ConfigureAwait(false)) > 0)
+            {
+                if (rest.Length + got > Array.MaxLength) throw TooLarge(declared);
                 rest.Write(chunk, 0, got);
+            }
             return rest.Length == rest.Capacity ? rest.GetBuffer() : rest.ToArray();
         }
         catch (OperationCanceledException ex) when (!ct.IsCancellationRequested)
@@ -1103,6 +1118,18 @@ public sealed class ApiClient : IDisposable
             throw new HttpRequestException(HttpRequestError.ResponseEnded, "Error while copying content to a stream.", ex);
         }
     }
+
+    /// <summary>The most a body's declared length reserves before its bytes arrive: past this the
+    /// buffer doubles as they come in.</summary>
+    internal const int FirstBodyBuffer = 4 * 1024 * 1024;
+
+    /// <summary>How much of a body has to arrive before the rest of its declared length is reserved
+    /// in one step.</summary>
+    internal const int TrustDeclaredAfter = 64 * 1024 * 1024;
+
+    private static HttpRequestException TooLarge(long? declared) => new(HttpRequestError.Unknown,
+        (declared is long n ? $"The response body is {n:N0} bytes" : "The response body is") +
+        $", more than the {Array.MaxLength / (1024 * 1024 * 1024.0):0.#} GB that can be held in memory.", null);
 
     /// <summary>Reads at most <paramref name="cap"/> bytes of a body and reports whether more was
     /// there. The rest is never buffered: the connection is dropped instead of being drained.</summary>

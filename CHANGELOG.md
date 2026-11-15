@@ -6,6 +6,39 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Security
+- The mock's certificate authority is now limited to what the mock needs: `localhost`,
+  `127.0.0.0/8` and `::1`, the mock's own subject names, and TLS server and client
+  authentication (a critical X.509 name constraint and an extended key usage). Since 1.100.0 its
+  key is kept between starts, and the docs suggest trusting `mock-ca.cer`, so before, anything able
+  to read that key as you could have made a certificate for any site, a signed program or a signed
+  e-mail that your machine would accept. An authority
+  kept by 1.100.0 or 1.100.1 is replaced on the next start: trust the new `mock-ca.cer` once, and
+  remove the old one (`certutil -user -delstore Root <old thumbprint>`).
+
+### Fixed
+- A response whose `Content-Length` claimed more than it sent no longer reserved that much memory
+  up front: the buffer starts at 4 MB and grows as the bytes arrive. Before, a server claiming
+  1.9 GB and sending ten bytes cost 1.9 GB, and under a memory limit failed with
+  `OutOfMemoryException`. A body larger than the 2 GB that can be held in memory now says so.
+- `mock`: on a kept-alive connection the 10-second idle limit applied to the whole next request,
+  so an upload that took longer than that to arrive was dropped. It now applies only to waiting
+  for the request to begin; once it has, the request has 30 seconds from then, as a first one
+  has from the connection.
+- A value starting with a dash after a long option that takes one (`--user-agent -ok`,
+  `--query -debug=1`) was split as a curl bundle (`-o k`, `-d ebug=1`). It is now the option's
+  value, on every command and in `certapi curl`; after a switch (`--include -sS`) or an option
+  whose value is optional (`--cors -sS`) a bundle is still a bundle.
+- `certapi curl` joined `--data-urlencode` parts after all the `-d` parts; they are now joined in
+  the order they were given, as curl does, in the body and with `-G` in the query. Beside
+  `--data-binary` they are still refused.
+- Two mocks starting at the same moment in one `--cert-dir` could each make a new authority and
+  leave one's key beside the other's `mock-ca.cer`. They now take turns.
+- `ApiClient` with an infinite request timeout timed the response body out at once.
+- `selftest` left the keys it made ahead undisposed when making a certificate failed.
+- `tls` says the server kept the connection open for *at least* half a second, as it waits up
+  to 1.5 s on a slow link.
+
 ## [1.100.1] - 2026-11-14
 
 ### Fixed

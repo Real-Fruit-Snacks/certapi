@@ -12,29 +12,40 @@ public sealed class SelfTestRunner
         try
         {
             // Three RSA keys, made side by side rather than one after another (each is 70-120 ms).
-            var keys = SelfSignedCertificateFactory.NewRsaKeys(3);
-            using var ca = SelfSignedCertificateFactory.CreateCertificateAuthority("ApiTester Self-Test CA", await keys[0]);
-            using var serverCert = SelfSignedCertificateFactory.CreateSignedCertificate(
-                "localhost", ca, serverAuth: true, clientAuth: false, dnsNames: new[] { "localhost" }, key: await keys[1]);
-            using var clientCert = SelfSignedCertificateFactory.CreateSignedCertificate(
-                "ApiTester Self-Test Client", ca, serverAuth: false, clientAuth: true, key: await keys[2]);
+            // The factory owns a key once it is handed one; any not handed over when something
+            // throws are disposed here.
+            var keys = await Task.WhenAll(SelfSignedCertificateFactory.NewRsaKeys(3));
+            int handed = 0;
+            System.Security.Cryptography.RSA Hand() => keys[handed++];
+            try
+            {
+                using var ca = SelfSignedCertificateFactory.CreateCertificateAuthority("ApiTester Self-Test CA", Hand());
+                using var serverCert = SelfSignedCertificateFactory.CreateSignedCertificate(
+                    "localhost", ca, serverAuth: true, clientAuth: false, dnsNames: new[] { "localhost" }, key: Hand());
+                using var clientCert = SelfSignedCertificateFactory.CreateSignedCertificate(
+                    "ApiTester Self-Test Client", ca, serverAuth: false, clientAuth: true, key: Hand());
 
-            await using var server = await LoopbackMtlsServer.StartAsync(
-                serverCert, clientCert.Thumbprint!, "{\"selfTest\":\"ok\"}");
+                await using var server = await LoopbackMtlsServer.StartAsync(
+                    serverCert, clientCert.Thumbprint!, "{\"selfTest\":\"ok\"}");
 
-            using var client = new ApiClient();
-            var response = await client.SendAsync(
-                new ApiRequest { Method = HttpMethod.Get, Url = server.BaseUrl },
-                clientCert,
-                trustServerCertificate: c => c is not null && c.Thumbprint == serverCert.Thumbprint,
-                cancellationToken: cancellationToken);
+                using var client = new ApiClient();
+                var response = await client.SendAsync(
+                    new ApiRequest { Method = HttpMethod.Get, Url = server.BaseUrl },
+                    clientCert,
+                    trustServerCertificate: c => c is not null && c.Thumbprint == serverCert.Thumbprint,
+                    cancellationToken: cancellationToken);
 
-            if (response.IsSuccess && Encoding.UTF8.GetString(response.Body).Contains("selfTest"))
-                return new SelfTestResult(true,
-                    $"mTLS round-trip succeeded in {response.Elapsed.TotalMilliseconds:F0} ms.");
+                if (response.IsSuccess && Encoding.UTF8.GetString(response.Body).Contains("selfTest"))
+                    return new SelfTestResult(true,
+                        $"mTLS round-trip succeeded in {response.Elapsed.TotalMilliseconds:F0} ms.");
 
-            return new SelfTestResult(false,
-                response.Error?.Message ?? $"Unexpected response: {response.StatusCode}");
+                return new SelfTestResult(false,
+                    response.Error?.Message ?? $"Unexpected response: {response.StatusCode}");
+            }
+            finally
+            {
+                for (int i = handed; i < keys.Length; i++) keys[i].Dispose();
+            }
         }
         catch (Exception ex)
         {

@@ -43,6 +43,67 @@ public class CurlCommandTests
     }
 
     [Fact]
+    public void A_long_options_value_that_looks_like_a_bundle_is_its_value()
+    {
+        // --user-agent takes a value on send: "-ok" is that value, not -o k.
+        var a = new Args(new[] { "--user-agent", "-ok", "--query", "-debug=1", "--include", "-sS" }, "send");
+        Assert.Equal("-ok", a.Value("--user-agent"));
+        Assert.Equal("-debug=1", a.Value("--query"));
+        // --include is a switch on send, so the bundle after it is still a bundle.
+        Assert.True(a.Flag("--include"));
+        Assert.True(a.Flag("-q", "--quiet"));
+        Assert.True(a.Flag("-S", "--show-error"));
+        Assert.Empty(a.Positionals());
+    }
+
+    [Fact]
+    public async Task A_bundle_shaped_value_reaches_the_server_as_typed()
+    {
+        await using var srv = MockServer.Start(0, MockTlsMode.Http);
+        var r = Run("send", srv.BaseUrl.TrimEnd('/') + "/echo", "--user-agent", "-ok");
+        Assert.Equal(0, r.Code);
+        Assert.Equal("-ok", Header(Echo(r.Body), "User-Agent"));
+        var c = Run("curl", srv.BaseUrl.TrimEnd('/') + "/echo", "--user-agent", "-download", "-s");
+        Assert.Equal(0, c.Code);
+        Assert.Equal("-download", Header(Echo(c.Body), "User-Agent"));
+
+        // After an option whose value is optional, a bundle is still a bundle.
+        var m = new Args(new[] { "--cors", "-sS" }, "mock");
+        Assert.True(m.OptionalValue(out var origins, "--cors"));
+        Assert.Null(origins);
+        Assert.Contains("-S", m.ExpandedTokens);
+    }
+
+    [Fact]
+    public async Task Data_and_urlencoded_parts_keep_curls_order()
+    {
+        var t = CurlCommand.Translate(new[] { "http://x/", "--data-urlencode", "a=b c", "-d", "z=1", "--data-urlencode", "q=&" });
+        Assert.Contains("--data-raw=a=b%20c&z=1&q=%26", t);
+        Assert.DoesNotContain(t, x => x.StartsWith("--data-urlencode", StringComparison.Ordinal));
+
+        await using var srv = MockServer.Start(0, MockTlsMode.Http);
+        var r = Run("curl", srv.BaseUrl.TrimEnd('/') + "/echo", "-s", "--data-urlencode", "a=b c", "-d", "z=1", "--data-urlencode", "q=&");
+        Assert.Equal(0, r.Code);
+        var e = Echo(r.Body);
+        Assert.Equal("a=b%20c&z=1&q=%26", e.GetProperty("body").GetString());
+        Assert.Equal("application/x-www-form-urlencoded", Header(e, "Content-Type"));
+
+        var g = Run("curl", "-G", srv.BaseUrl.TrimEnd('/') + "/echo", "-s", "--data-urlencode", "a=b c", "-d", "z=1");
+        Assert.Equal(0, g.Code);
+        Assert.Equal("a=b%20c&z=1", Echo(g.Body).GetProperty("query").GetString());
+
+        // Beside binary data they are left to send, which refuses the mix rather than reading the
+        // file's bytes as text.
+        var binary = CurlCommand.Translate(new[] { "http://x/", "--data-binary", "@f.bin", "--data-urlencode", "x=y" });
+        Assert.Contains("--data-file=f.bin", binary);
+        Assert.Contains("--data-urlencode=x=y", binary);
+
+        // On their own they still go to send to encode, a file's text included.
+        var only = CurlCommand.Translate(new[] { "http://x/", "--data-urlencode", "a=b c" });
+        Assert.Contains("--data-urlencode=a=b c", only);
+    }
+
+    [Fact]
     public void A_value_attached_to_its_letter_is_the_value()
     {
         var a = new Args(new[] { "-XPOST", "-HAccept:x", "-sSXPUT" });

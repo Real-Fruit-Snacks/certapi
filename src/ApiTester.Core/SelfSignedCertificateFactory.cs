@@ -19,11 +19,18 @@ public static class SelfSignedCertificateFactory
     public static Task<RSA>[] NewRsaKeys(int count) =>
         Enumerable.Range(0, count).Select(_ => Task.Run(NewRsaKey)).ToArray();
 
-    public static X509Certificate2 CreateCertificateAuthority(string name, RSA? key = null)
+    /// <param name="nameConstraints">A name constraints extension (<see cref="BuildNameConstraints"/>)
+    /// limiting the names the authority's certificates may carry; null for none.</param>
+    /// <param name="usages">Extended key usages the authority's certificates are limited to (a
+    /// chain engine intersects them down the chain); null for none, which limits nothing.</param>
+    public static X509Certificate2 CreateCertificateAuthority(string name, RSA? key = null, X509Extension? nameConstraints = null,
+        OidCollection? usages = null)
     {
         using var rsa = key ?? RSA.Create(2048);
         var req = new CertificateRequest($"CN={name}", rsa, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
         req.CertificateExtensions.Add(new X509BasicConstraintsExtension(true, false, 0, true));
+        if (nameConstraints is not null) req.CertificateExtensions.Add(nameConstraints);
+        if (usages is not null) req.CertificateExtensions.Add(new X509EnhancedKeyUsageExtension(usages, false));
         req.CertificateExtensions.Add(new X509KeyUsageExtension(
             X509KeyUsageFlags.KeyCertSign | X509KeyUsageFlags.DigitalSignature, true));
         req.CertificateExtensions.Add(new X509SubjectKeyIdentifierExtension(req.PublicKey, false));
@@ -38,6 +45,52 @@ public static class SelfSignedCertificateFactory
         return X509CertificateLoader.LoadPkcs12(
             cert.Export(X509ContentType.Pfx), (string?)null,
             X509KeyStorageFlags.Exportable);
+    }
+
+    /// <summary>A critical X.509 name constraints extension (RFC 5280 4.2.1.10) permitting only
+    /// <paramref name="dnsNames"/> (each with its subdomains), the <paramref name="networks"/>, and,
+    /// when given, e-mail addresses at <paramref name="emailHosts"/>, URIs on <paramref name="uriHosts"/>
+    /// and the subject names in <paramref name="subjects"/>. A name of a type that has a permitted
+    /// list must be in it, so a certificate the authority signs for anything else fails chain
+    /// validation. .NET has no builder for this extension, so it is written here.</summary>
+    public static X509Extension BuildNameConstraints(
+        IEnumerable<string> dnsNames, IEnumerable<(System.Net.IPAddress Network, int PrefixLength)> networks,
+        IEnumerable<string>? emailHosts = null, IEnumerable<string>? uriHosts = null,
+        IEnumerable<X500DistinguishedName>? subjects = null)
+    {
+        var w = new System.Formats.Asn1.AsnWriter(System.Formats.Asn1.AsnEncodingRules.DER);
+        using (w.PushSequence())                                                   // NameConstraints
+        using (w.PushSequence(new System.Formats.Asn1.Asn1Tag(System.Formats.Asn1.TagClass.ContextSpecific, 0)))   // permittedSubtrees
+        {
+            foreach (var name in dnsNames)
+                using (w.PushSequence())                                           // GeneralSubtree
+                    w.WriteCharacterString(System.Formats.Asn1.UniversalTagNumber.IA5String, name,
+                        new System.Formats.Asn1.Asn1Tag(System.Formats.Asn1.TagClass.ContextSpecific, 2));   // dNSName
+            foreach (var host in emailHosts ?? [])
+                using (w.PushSequence())
+                    w.WriteCharacterString(System.Formats.Asn1.UniversalTagNumber.IA5String, host,
+                        new System.Formats.Asn1.Asn1Tag(System.Formats.Asn1.TagClass.ContextSpecific, 1));   // rfc822Name
+            foreach (var subject in subjects ?? [])
+                using (w.PushSequence())
+                using (w.PushSequence(new System.Formats.Asn1.Asn1Tag(System.Formats.Asn1.TagClass.ContextSpecific, 4, isConstructed: true)))
+                    w.WriteEncodedValue(subject.RawData);                                                     // directoryName (explicit)
+            foreach (var host in uriHosts ?? [])
+                using (w.PushSequence())
+                    w.WriteCharacterString(System.Formats.Asn1.UniversalTagNumber.IA5String, host,
+                        new System.Formats.Asn1.Asn1Tag(System.Formats.Asn1.TagClass.ContextSpecific, 6));   // uniformResourceIdentifier
+            foreach (var (network, prefix) in networks)
+            {
+                byte[] address = network.GetAddressBytes();
+                if (prefix < 0 || prefix > address.Length * 8) throw new ArgumentOutOfRangeException(nameof(networks));
+                var mask = new byte[address.Length];
+                for (int i = 0; i < prefix; i++) mask[i / 8] |= (byte)(0x80 >> (i % 8));
+                for (int i = 0; i < address.Length; i++) address[i] &= mask[i];
+                using (w.PushSequence())
+                    w.WriteOctetString([.. address, .. mask],
+                        new System.Formats.Asn1.Asn1Tag(System.Formats.Asn1.TagClass.ContextSpecific, 7));     // iPAddress
+            }
+        }
+        return new X509Extension("2.5.29.30", w.Encode(), critical: true);
     }
 
     /// <summary>Loopback port 1: nothing ever listens there, so a connection attempt is REFUSED

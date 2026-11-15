@@ -218,6 +218,10 @@ public static class MockCertificates
     public static Generated Generate(MockTlsMode mode, string certDir, MockTlsDefect defect = MockTlsDefect.None, bool fresh = false)
     {
         Directory.CreateDirectory(certDir);
+        // Two mocks starting at once in one folder take turns: otherwise both could make a new
+        // authority and leave one's key beside the other's mock-ca.cer, and a client told to trust
+        // that file would refuse the mock that made the key. The second then finds the first's.
+        using var turn = FolderTurn.Take(certDir);
         var protector = SecretProtection.Default;
         bool keep = protector.IsAvailable;
         var files = new List<string>();
@@ -235,7 +239,8 @@ public static class MockCertificates
         }
 
         X509Certificate2? ca = keep && !fresh ? LoadKey(certDir, CaKeyFile, protector) : null;
-        if (ca is not null && !(ca.HasPrivateKey && IsAuthority(ca) && Lasts(ca, TimeSpan.FromDays(400))))
+        // An authority from before its names were constrained (1.100.0, 1.100.1) is replaced too.
+        if (ca is not null && !(ca.HasPrivateKey && IsAuthority(ca) && LimitedToLoopback(ca) && Lasts(ca, TimeSpan.FromDays(400))))
         {
             ca.Dispose();
             ca = null;
@@ -254,7 +259,7 @@ public static class MockCertificates
         if (ca is null)
         {
             keys = SelfSignedCertificateFactory.NewRsaKeys(mode == MockTlsMode.Mtls ? 3 : 2);
-            ca = SelfSignedCertificateFactory.CreateCertificateAuthority("certapi mock CA", NextKey(0));
+            ca = CreateAuthority(NextKey(0));
             WriteKey(CaKeyFile, ca);
         }
 
@@ -297,8 +302,8 @@ public static class MockCertificates
 
                     // Perfectly valid — for somewhere else. The client is connecting to localhost.
                     MockTlsDefect.WrongHost => SelfSignedCertificateFactory.CreateSignedCertificate(
-                        "not-the-host.invalid", ca, serverAuth: true, clientAuth: false,
-                        dnsNames: new[] { "not-the-host.invalid" }),
+                        WrongHostName, ca, serverAuth: true, clientAuth: false,
+                        dnsNames: new[] { WrongHostName }),
 
                     // Its own issuer: nothing chains to the mock's certificate authority at all.
                     MockTlsDefect.SelfSigned => SelfSignedCertificateFactory.CreateSelfSignedServerCertificate(
@@ -327,7 +332,7 @@ public static class MockCertificates
                 else
                 {
                     using var client = SelfSignedCertificateFactory.CreateSignedCertificate(
-                        "certapi mock client", ca, serverAuth: false, clientAuth: true, key: NextKey(2));
+                        ClientName, ca, serverAuth: false, clientAuth: true, key: NextKey(2));
                     Write("mock-client.pfx", client.Export(X509ContentType.Pfx));
                 }
             }
@@ -340,6 +345,73 @@ public static class MockCertificates
             if (keys is not null)
                 for (int i = 0; i < keys.Length; i++)
                     if (!taken[i]) _ = keys[i].ContinueWith(t => { if (t.IsCompletedSuccessfully) t.Result.Dispose(); }, TaskScheduler.Default);
+        }
+    }
+
+    /// <summary>What a mock authority may certify: localhost (with its subdomains), the loopback
+    /// addresses, and the .invalid name the wrong-host defect uses, so that defect still fails as a
+    /// name mismatch; only the mock's own three subject names; e-mail and URIs only at localhost;
+    /// and only TLS server and client authentication (no code signing, no e-mail protection). Its
+    /// key is kept on disk and mock-ca.cer is meant to be trusted, so without this, anything that
+    /// could read the key could mint a certificate for any site, a signed program, or a signed
+    /// e-mail that a machine trusting mock-ca.cer would accept.</summary>
+    internal static readonly string[] PermittedNames = ["localhost", WrongHostName];
+    internal const string WrongHostName = "not-the-host.invalid";
+    internal const string ClientName = "certapi mock client";
+    private static readonly (IPAddress, int)[] PermittedNetworks = [(IPAddress.Parse("127.0.0.0"), 8), (IPAddress.IPv6Loopback, 128)];
+    private static readonly string[] PermittedSubjects = ["CN=localhost", "CN=" + ClientName, "CN=" + WrongHostName];
+
+    internal static X509Extension NameConstraints() =>
+        SelfSignedCertificateFactory.BuildNameConstraints(PermittedNames, PermittedNetworks,
+            emailHosts: ["localhost"], uriHosts: ["localhost"],
+            subjects: PermittedSubjects.Select(n => new X500DistinguishedName(n)));
+
+    private static OidCollection Usages() =>
+        new() { new Oid("1.3.6.1.5.5.7.3.1"), new Oid("1.3.6.1.5.5.7.3.2") };   // server auth, client auth
+
+    /// <summary>A new mock certificate authority, limited as <see cref="PermittedNames"/> says.</summary>
+    internal static X509Certificate2 CreateAuthority(RSA? key = null) =>
+        SelfSignedCertificateFactory.CreateCertificateAuthority("certapi mock CA", key, NameConstraints(), Usages());
+
+    internal static bool LimitedToLoopback(X509Certificate2 ca) =>
+        ca.Extensions["2.5.29.30"] is { Critical: true } e && e.RawData.AsSpan().SequenceEqual(NameConstraints().RawData) &&
+        ca.Extensions.OfType<X509EnhancedKeyUsageExtension>().FirstOrDefault() is { } eku &&
+        eku.EnhancedKeyUsages.Cast<Oid>().Select(o => o.Value).Order().SequenceEqual(Usages().Cast<Oid>().Select(o => o.Value).Order());
+
+    /// <summary>A named mutex per certificate folder (full path), held while one start reads and
+    /// writes it. Waited for up to 30 seconds; after that, or where named mutexes are not
+    /// available, the start goes ahead as it did before there was one.</summary>
+    internal sealed class FolderTurn : IDisposable
+    {
+        private readonly Mutex? _mutex;
+        private FolderTurn(Mutex? mutex) => _mutex = mutex;
+
+        internal static FolderTurn Take(string certDir)
+        {
+            string full = Path.GetFullPath(certDir).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            if (OperatingSystem.IsWindows()) full = full.ToUpperInvariant();
+            string name = @"Local\certapi-mock-certs-" + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(full)))[..32];
+            Mutex? mutex = null;
+            try
+            {
+                mutex = new Mutex(false, name);
+                bool owned;
+                try { owned = mutex.WaitOne(TimeSpan.FromSeconds(30)); }
+                catch (AbandonedMutexException) { owned = true; }   // the holder exited mid-way: ours now
+                if (owned) return new FolderTurn(mutex);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or WaitHandleCannotBeOpenedException or PlatformNotSupportedException) { }
+            mutex?.Dispose();
+            return new FolderTurn(null);
+        }
+
+        /// <remarks>A mutex is released by the thread that took it, so <see cref="Generate"/> must
+        /// stay synchronous between taking its turn and the end of its <c>using</c>.</remarks>
+        public void Dispose()
+        {
+            if (_mutex is null) return;
+            _mutex.ReleaseMutex();
+            _mutex.Dispose();
         }
     }
 
@@ -1138,12 +1210,16 @@ public sealed class MockServer : IAsyncDisposable
     // ---------- request parsing ----------
 
     /// <summary>Read one request. <paramref name="carry"/> holds bytes already read past the
-    /// previous request on this connection; whatever arrives past this one is left in it.</summary>
+    /// previous request on this connection; whatever arrives past this one is left in it.
+    /// <paramref name="idle"/> is how long to wait for the request to begin; once its first byte
+    /// is here, the whole request has <see cref="RequestReadTimeout"/> from then, as a first
+    /// request does, so a large upload on a kept-alive connection is not cut off by the idle limit.</summary>
     private static async Task<(string Method, string Target, Dictionary<string, string> Headers, string Body, bool Http10)?>
-        ReadRequestAsync(Stream stream, List<byte> carry, TimeSpan timeout, CancellationToken outer)
+        ReadRequestAsync(Stream stream, List<byte> carry, TimeSpan idle, CancellationToken outer)
     {
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(outer);
-        deadline.CancelAfter(timeout);
+        bool started = carry.Count > 0;
+        deadline.CancelAfter(started ? RequestReadTimeout : idle);
         var ct = deadline.Token;
         var buffer = new byte[8192];
         var acc = new List<byte>(carry);
@@ -1153,6 +1229,13 @@ public sealed class MockServer : IAsyncDisposable
         {
             int n = await stream.ReadAsync(buffer, ct);
             if (n == 0) break;
+            if (!started)
+            {
+                started = true;
+                // From the first byte the request has the full allowance — once: a first request
+                // was given it already, and is not given it twice.
+                if (idle != RequestReadTimeout) deadline.CancelAfter(RequestReadTimeout);
+            }
             acc.AddRange(new ArraySegment<byte>(buffer, 0, n));
             headerEnd = IndexOfHeaderEnd(acc);
             if (acc.Count > 1_048_576) break;   // 1 MB header guard
