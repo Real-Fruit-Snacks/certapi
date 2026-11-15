@@ -262,7 +262,13 @@ public static class CurlParser
                 char n = input[i + 1];
                 if (n == '\n') { i++; continue; }                                         // line continuation
                 if (n == '\r' && i + 2 < input.Length && input[i + 2] == '\n') { i += 2; continue; }
-                sb.Append(n); i++; has = true;
+                // bash would drop any backslash here, but on Windows one before an ordinary
+                // character is a path separator (-E C:\certs\me.pfx, --cacert certs\ca.cer): it is
+                // kept. Before a character a shell gives meaning to — a space, a quote, $, another
+                // backslash — it escapes it, as in bash, so a real bash command reads the same.
+                if (IsShellSpecial(n)) { sb.Append(n); i++; }
+                else sb.Append('\\');
+                has = true;
             }
             else if (ch is ' ' or '\t' or '\r' or '\n')
             {
@@ -306,6 +312,10 @@ public static class CurlParser
         if (has) tokens.Add(sb.ToString());
         return tokens;
     }
+
+    private static bool IsShellSpecial(char c) =>
+        char.IsWhiteSpace(c) || c is '\'' or '"' or '\\' or '$' or '`' or '|' or '&' or ';' or '(' or ')'
+            or '<' or '>' or '*' or '?' or '[' or ']' or '#' or '~' or '!' or '{' or '}' or '^' or '=';
 
     /// <summary>Reads a bash <c>$'…'</c> string from <paramref name="i"/> (just past the opening
     /// quote); returns the index of the closing quote.</summary>

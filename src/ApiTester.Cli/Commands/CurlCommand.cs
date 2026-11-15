@@ -18,7 +18,8 @@ public static class CurlCommand
         Runs a curl command as curl would read it, through certapi's send: paste the command as it
         is (with or without the leading curl), quoted as one argument or as separate arguments.
         bash quoting, line continuations (\ and cmd's ^), and "Copy as cURL" from a browser all
-        work. Options typed after the quoted command are added to it.
+        work. Options typed after the quoted command are added to it. A backslash in a Windows path
+        is kept (-E C:\certs\me.pfx); one before a space, a quote or $ escapes it, as in bash.
 
         Where curl and certapi send differ, curl's meaning is kept:
           redirects               followed only with -L, as in curl (send follows them by default)

@@ -6,6 +6,15 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.100.1] - 2026-11-14
+
+### Fixed
+- `certapi curl` and `import curl` kept a pasted command's Windows paths intact only inside
+  quotes: unquoted, a path such as `-E certs\me.pfx` or `--cacert C:\certs\ca.cer` lost its
+  backslashes, as bash would drop them. A backslash before an ordinary character is now kept;
+  before a space, a quote, `$` or another shell character it still escapes it, so a bash command
+  reads as it did.
+
 ## [1.100.0] - 2026-11-14
 
 ### Added
@@ -3567,7 +3576,8 @@ Initial release.
 - Save any response (including binary) to a file.
 - Self-contained single-file executable — no installer, no admin rights, no runtime dependency.
 
-[Unreleased]: https://github.com/Real-Fruit-Snacks/certapi/compare/v1.100.0...HEAD
+[Unreleased]: https://github.com/Real-Fruit-Snacks/certapi/compare/v1.100.1...HEAD
+[1.100.1]: https://github.com/Real-Fruit-Snacks/certapi/compare/v1.100.0...v1.100.1
 [1.100.0]: https://github.com/Real-Fruit-Snacks/certapi/compare/v1.99.0...v1.100.0
 [1.99.0]: https://github.com/Real-Fruit-Snacks/certapi/compare/v1.98.0...v1.99.0
 [1.98.0]: https://github.com/Real-Fruit-Snacks/certapi/compare/v1.97.0...v1.98.0

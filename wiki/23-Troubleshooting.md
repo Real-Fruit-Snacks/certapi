@@ -364,7 +364,7 @@ Every line says when it happened, counted from the start of the process, which m
 the time go?" a matter of reading the gaps:
 
 ```
-debug: [+0.048s] certapi 1.100.0 send · .NET 10.0.15 · win-x64
+debug: [+0.048s] certapi 1.100.1 send · .NET 10.0.15 · win-x64
 debug: [+0.052s] workspace: C:\Users\me\AppData\Roaming\CertApiTester\state.json (12 KB) read in 3 ms
 debug: [+0.072s] certificate store: 6 with a private key in CurrentUser, read in 16 ms
 debug: [+0.074s] GET https://api.example.com/orders

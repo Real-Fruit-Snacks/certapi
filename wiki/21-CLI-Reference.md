@@ -552,7 +552,9 @@ Runs a curl command as curl would read it, through [`send`](#send). Paste it as 
 without the leading `curl` (or `curl.exe`), as one quoted argument or as separate ones. A single
 argument is split the way a shell would: bash quoting, `\` and cmd `^` line continuations, and the
 `^"` quoting of a browser's "Copy as cURL (cmd)". Options typed after the quoted command are
-added to it: `certapi curl "curl …" --timing`.
+added to it: `certapi curl "curl …" --timing`. A backslash in a Windows path is kept, so
+`-E C:\certs\me.pfx` and `--cacert certs\ca.cer` work unquoted; one before a space, a quote or `$`
+escapes it, as in bash.
 
 Everything `send` does applies — the Windows certificate store, pinning, `--timing`, `--debug` —
 and certapi's own options can be added to the pasted command (`--assert`, `--pretty`, `--json`).

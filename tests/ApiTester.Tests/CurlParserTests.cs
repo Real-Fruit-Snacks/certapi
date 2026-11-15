@@ -5,6 +5,22 @@ namespace ApiTester.Tests;
 public class CurlParserTests
 {
     [Fact]
+    public void An_unquoted_windows_path_keeps_its_backslashes()
+    {
+        // bash would drop them; on Windows they are the path. Before a character a shell gives a
+        // meaning to, a backslash still escapes it, so a bash line reads the same as in bash.
+        var t = CurlParser.Tokenize(@"curl -E certs\me.pfx --cacert C:\certs\ca.cer https://h/x -H a\ b -d \$x");
+        Assert.Equal(new[] { "curl", "-E", @"certs\me.pfx", "--cacert", @"C:\certs\ca.cer", "https://h/x", "-H", "a b", "-d", "$x" }, t);
+    }
+
+    [Fact]
+    public void A_backslash_line_continuation_still_joins_lines()
+    {
+        var t = CurlParser.Tokenize("curl https://h/x \\\n  -E certs\\me.pfx");
+        Assert.Equal(new[] { "curl", "https://h/x", "-E", @"certs\me.pfx" }, t);
+    }
+
+    [Fact]
     public void Simple_get()
     {
         var r = CurlParser.Parse("curl https://api.example.com/users");
