@@ -29,16 +29,22 @@ All notable changes to this project are documented here. The format follows
   each time. Starting `mock --mtls` is quicker for it (on Windows, 270 ms → 165 ms).
 
 ### Changed
+- `certapi.exe` takes its culture data from Windows (NLS) instead of loading ICU, about 10 ms
+  sooner on every command that prints a number or a date (`send` 111 → 102 ms, `certs`
+  85 → 75 ms). What it prints is the same.
 - A refused connection to this machine is reported at once instead of after two seconds. Windows
   retries a refused connect twice, so every send to a local server that was down took 2 s (a
   20-request `run` against one: 41 s), and so did every new connection to `http://localhost:<port>`
   when the server listened on 127.0.0.1 only, since `localhost` is tried as `::1` first. The
   retries are now turned off for loopback addresses only — a real network keeps them, since a SYN
-  can be lost there. `send`, `run`, `curl`, `doctor`, `tls`, the streams, `grpc`, `serve` and a
+  can be lost there — and only while nothing listens on the port: Windows refuses the same way
+  when a server's queue of waiting connections is full, so a refusal from a port something does
+  listen on is retried as before, and a busy local server still takes every connection. `send`, `run`, `curl`, `doctor`, `tls`, the streams, `grpc`, `serve` and a
   proxy on this machine all get it.
-- `tls` no longer waits a fixed 400 ms after every TLS 1.3 handshake for a certificate request that
-  might follow it: not at all when the request came in the handshake, and otherwise two round
-  trips and a margin (50 ms to a nearby server).
+- `tls` no longer waits a fixed 400 ms after every TLS 1.3 handshake. A server that asked for no
+  certificate is given two round trips and a margin to ask late (50 ms to a nearby one: 692 ms →
+  391 ms); one that asked is given half a second to refuse the certificate, since that is when a
+  refusal shows (see Fixed).
 - `selftest` and a `mock` making new certificates generate their RSA keys in parallel.
 - `send --har`, `run --json` and `certs --json` write their JSON without the reflection serializer,
   which spent 30–60 ms building metadata first; the output is byte for byte the same.

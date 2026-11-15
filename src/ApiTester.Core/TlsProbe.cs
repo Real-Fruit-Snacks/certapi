@@ -127,12 +127,14 @@ public static class TlsProbe
             //  - a server that asked judges the certificate (or its absence) only after the client
             //    has finished, and refuses by ending the connection — with an alert or without.
             // As long as either could take to arrive: two round trips, judged by the connect, and
-            // a margin. A server that asked for nothing over TLS 1.2 has nothing to show, so no wait.
+            // a margin — a wider one when a certificate was asked for, since the server is then
+            // judging it, chain and revocation checks included, before it answers. A server that
+            // asked for nothing over TLS 1.2 has nothing to show, so no wait.
             string? refused = null;
             if (startTls == StartTls.None && (requested || ssl.SslProtocol == SslProtocols.Tls13))
             {
                 using var nudge = CancellationTokenSource.CreateLinkedTokenSource(limit.Token);
-                nudge.CancelAfter(PostHandshakeWait(connected));
+                nudge.CancelAfter(requested ? JudgementWait(connected) : PostHandshakeWait(connected));
                 bool closed = false;
                 string? alert = null;
                 try { closed = await ssl.ReadAsync(new byte[1], nudge.Token) == 0; }
@@ -175,6 +177,11 @@ public static class TlsProbe
     /// connect is one) and 50 ms, between 50 and 400 ms.</summary>
     internal static TimeSpan PostHandshakeWait(TimeSpan connect) =>
         TimeSpan.FromMilliseconds(Math.Clamp(connect.TotalMilliseconds * 2 + 50, 50, 400));
+
+    /// <summary>How long to wait for a server that asked for a certificate to refuse it: two round
+    /// trips and half a second for its own checks, at most 1.5 s.</summary>
+    internal static TimeSpan JudgementWait(TimeSpan connect) =>
+        TimeSpan.FromMilliseconds(Math.Clamp(connect.TotalMilliseconds * 2 + 500, 500, 1500));
 
     private static string Name(SslProtocols p) => p switch
     {

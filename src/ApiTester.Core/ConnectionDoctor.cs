@@ -218,20 +218,19 @@ public static class ConnectionDoctor
 
         // ---- stage 4: TCP --------------------------------------------------------------------
         start = clock.Elapsed;
-        var socket = new Socket(SocketType.Stream, ProtocolType.Tcp) { NoDelay = true };
-        LoopbackConnect.Prepare(socket, target.Host);
+        Socket socket;
         // --connect-timeout bounds this stage as it bounds a send's connect: on a network that
         // blackholes the host, the OS's own timeout is tens of seconds to minutes.
         using var connectBudget = CancellationTokenSource.CreateLinkedTokenSource(ct);
         if (options.ConnectTimeout is { } connectTimeout) connectBudget.CancelAfter(connectTimeout);
         try
         {
-            await socket.ConnectAsync(target.Host, target.Port, connectBudget.Token);
+            socket = await LoopbackConnect.ConnectAsync(() => new Socket(SocketType.Stream, ProtocolType.Tcp) { NoDelay = true },
+                LoopbackConnect.EndPointFor(target.Host, target.Port), connectBudget.Token);
             stages.Add(DoctorStage.Pass("tcp", $"connected to {target.Host}:{target.Port}", clock.Elapsed - start));
         }
         catch (Exception ex)
         {
-            socket.Dispose();
             string why = ex is OperationCanceledException && !ct.IsCancellationRequested && options.ConnectTimeout is { } t
                 ? $"no answer within {t.TotalSeconds:0.#} s (--connect-timeout)"
                 : ex.Message;

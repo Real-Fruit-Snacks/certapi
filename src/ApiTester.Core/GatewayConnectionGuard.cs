@@ -253,11 +253,8 @@ public sealed class GatewayConnectionGuard
     {
         if (limit is { } within)
             return await ConnectSocketAsync(context.DnsEndPoint.Host, context.DnsEndPoint.Port, within, null, ct);
-        var socket = new Socket(SocketType.Stream, ProtocolType.Tcp) { NoDelay = true };
-        LoopbackConnect.Prepare(socket, context.DnsEndPoint.Host);
-        try { await socket.ConnectAsync(context.DnsEndPoint, ct); }
-        catch { socket.Dispose(); throw; }
-        return socket;
+        return await LoopbackConnect.ConnectAsync(() => new Socket(SocketType.Stream, ProtocolType.Tcp) { NoDelay = true },
+            context.DnsEndPoint, ct);
     }
 
     /// <summary>A TCP connection to <paramref name="host"/>:<paramref name="port"/>, as the gateway
@@ -278,22 +275,15 @@ public sealed class GatewayConnectionGuard
         Exception? last = null;
         foreach (var address in addresses)
         {
-            var socket = new Socket(address.AddressFamily, SocketType.Stream, ProtocolType.Tcp) { NoDelay = true };
-            LoopbackConnect.Prepare(socket, address);
             try
             {
-                await WithinAsync(async t => { await socket.ConnectAsync(new IPEndPoint(address, port), t); return true; }, limit, ct);
-                return socket;
+                return await WithinAsync(t => LoopbackConnect.ConnectAsync(
+                    () => new Socket(address.AddressFamily, SocketType.Stream, ProtocolType.Tcp) { NoDelay = true },
+                    new IPEndPoint(address, port), t).AsTask(), limit, ct);
             }
             catch (Exception ex) when (ex is SocketException or GatewayConnectTimeoutException)
             {
-                socket.Dispose();
                 last = ex;   // the next address, if there is one
-            }
-            catch
-            {
-                socket.Dispose();
-                throw;
             }
         }
         throw last!;

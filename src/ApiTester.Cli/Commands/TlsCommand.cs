@@ -133,7 +133,7 @@ public static class TlsCommand
                     ? $"  refused    {why} — it requires a client certificate"
                     : $"  refused    {why} — it did not accept the certificate sent");
             else if (r.ClientCertificateSent is not null)
-                o.WriteLine("  kept       the server kept the connection open after the handshake: the certificate was not refused there");
+                o.WriteLine("  kept       the server kept the connection open for half a second after the handshake: the certificate was not refused there");
         }
         else o.WriteLine("  client certificate not requested");
     }

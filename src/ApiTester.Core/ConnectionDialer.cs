@@ -67,20 +67,21 @@ public static class ConnectionDialer
         Exception? last = null;
         foreach (var address in addresses)
         {
-            var socket = new Socket(address.AddressFamily, SocketType.Stream, ProtocolType.Tcp) { NoDelay = true };
+            Socket Create()
+            {
+                var socket = new Socket(address.AddressFamily, SocketType.Stream, ProtocolType.Tcp) { NoDelay = true };
+                try { if (local is not null) socket.Bind(new IPEndPoint(local, 0)); }
+                catch { socket.Dispose(); throw; }
+                return socket;
+            }
             try
             {
-                if (local is not null) socket.Bind(new IPEndPoint(local, 0));
-                LoopbackConnect.Prepare(socket, address);
-                await socket.ConnectAsync(new IPEndPoint(address, port), ct);
-                return socket;
+                return await LoopbackConnect.ConnectAsync(Create, new IPEndPoint(address, port), ct);
             }
             catch (Exception ex) when (ex is SocketException && !ct.IsCancellationRequested)
             {
-                socket.Dispose();
                 last = ex;
             }
-            catch { socket.Dispose(); throw; }
         }
         throw last ?? new SocketException((int)SocketError.HostNotFound);
     }

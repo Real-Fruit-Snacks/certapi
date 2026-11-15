@@ -38,6 +38,15 @@
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
   </PropertyGroup>
 
+  <!-- Culture data from Windows itself (NLS) rather than ICU: loading ICU costs every command that
+       formats a number or a date about 10 ms (measured on Windows x64: send 111 → 102 ms, certs
+       85 → 75 ms). Number and date formatting, casing and IDN host names come out the same for
+       what certapi prints; only culture-sensitive sorting can differ, and certapi compares
+       ordinally. -->
+  <ItemGroup>
+    <RuntimeHostConfigurationOption Include="System.Globalization.UseNls" Value="true" />
+  </ItemGroup>
+
   <!-- The WebView2 package also references its WinForms and WPF controls, which would make the
        command line depend on the Windows Desktop runtime. Only the core API is used here. -->
   <Target Name="DropWebView2UiControls" BeforeTargets="ResolveAssemblyReferences">

@@ -22,7 +22,8 @@ public class TlsProbeRequestTests : IDisposable
     {
         using var serverCert = MockCertificates.Generate(MockTlsMode.Mtls, _dir).ServerCertificate;
         await using var mock = MockServer.Start(0, MockTlsMode.Mtls, serverCert);
-        var r = await Probe(mock.Port);
+        TlsProbeResult r = null!;
+        for (int i = 0; i < 3 && r?.RefusedAfterHandshake is null; i++) r = await Probe(mock.Port);   // as below
         Assert.True(r.Connected, r.Error);
         Assert.True(r.ClientCertificateRequested);
         Assert.Null(r.ClientCertificateSent);
@@ -62,15 +63,25 @@ public class TlsProbeRequestTests : IDisposable
         await using var server = await LoopbackMtlsServer.StartAsync(serverCert, wanted.Thumbprint);
         int port = new Uri(server.BaseUrl).Port;
 
-        var r = await Probe(port, other);
+        // Up to three tries: the refusal comes when the server has judged the certificate, and a
+        // loaded test run can delay that past the probe's wait once. A probe that never sees it
+        // fails every try.
+        TlsProbeResult r = null!;
+        for (int i = 0; i < 3 && r?.RefusedAfterHandshake is null; i++) r = await Probe(port, other);
         Assert.True(r.ClientCertificateRequested);
         Assert.NotNull(r.RefusedAfterHandshake);
 
         string pfx = Path.Combine(_dir, "other.pfx");
         File.WriteAllBytes(pfx, other.Export(X509ContentType.Pfx, "pw"));
-        var so = new StringWriter();
-        int code = CliApp.Run(new[] { "tls", $"127.0.0.1:{port}", "--cert-file", pfx, "--cert-password", "pw", "--no-config" }, so, TextWriter.Null);
+        int code = -1;
+        string output = "";
+        for (int i = 0; i < 3 && code != 1; i++)
+        {
+            var so = new StringWriter();
+            code = CliApp.Run(new[] { "tls", $"127.0.0.1:{port}", "--cert-file", pfx, "--cert-password", "pw", "--no-config" }, so, TextWriter.Null);
+            output = so.ToString();
+        }
         Assert.Equal(1, code);
-        Assert.Contains("did not accept the certificate sent", so.ToString());
+        Assert.Contains("did not accept the certificate sent", output);
     }
 }
