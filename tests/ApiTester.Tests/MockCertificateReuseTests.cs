@@ -55,6 +55,18 @@ public class MockCertificateReuseTests : IDisposable
     }
 
     [Fact]
+    public void Issued_by_checks_the_signature_not_just_the_name()
+    {
+        using var ca = SelfSignedCertificateFactory.CreateCertificateAuthority("certapi mock CA");
+        using var impostor = SelfSignedCertificateFactory.CreateCertificateAuthority("certapi mock CA");   // same name, other key
+        using var leaf = SelfSignedCertificateFactory.CreateSignedCertificate("localhost", ca, true, false, new[] { "localhost" });
+        Assert.True(MockCertificates.IssuedBy(leaf, ca));
+        Assert.False(MockCertificates.IssuedBy(leaf, impostor));
+        using var other = SelfSignedCertificateFactory.CreateCertificateAuthority("another CA");
+        Assert.False(MockCertificates.IssuedBy(leaf, other));
+    }
+
+    [Fact]
     public void Fresh_makes_a_new_authority()
     {
         var first = Start();

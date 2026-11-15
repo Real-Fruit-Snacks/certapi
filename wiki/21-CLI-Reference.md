@@ -884,8 +884,10 @@ present a client certificate like any other TLS connection.
 | `--workspace <file>` | live state | Read trust pins and captured tokens from a workspace file |
 | `--no-auto-token` | off | Do not attach a captured bearer token to the handshake |
 
-Lines piped on stdin are sent as text messages after the `-m` values. At a terminal, each line you
-type is sent as it is entered. Received text messages print to stdout as they arrive, and a binary
+Lines piped on stdin are sent as text messages after the `-m` values, each as it arrives — so a
+stdin that is a pipe nobody closes (a CI step, a scheduled task) does not hold the connection
+back, and `-m … --expect 1` there still finishes. With `--expect 0`, everything piped is sent
+before the command ends. At a terminal, each line you type is sent as it is entered. Received text messages print to stdout as they arrive, and a binary
 frame prints as `[binary N bytes]`. Runs until the server closes, `--expect` is reached, or Ctrl+C.
 Exit 0 on a clean close; exit 1 when the connection fails or breaks, including under `--expect`.
 

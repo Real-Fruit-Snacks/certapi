@@ -42,15 +42,22 @@ public static class CertsCommand
 
         if (json)
         {
-            stdout.WriteLine(JsonSerializer.Serialize(certs.Select(c => new
+            stdout.WriteLine(JsonText.Indented(w =>
             {
-                subject = c.Subject,
-                issuer = c.Issuer,
-                thumbprint = c.Thumbprint,
-                notAfter = c.NotAfter,
-                expired = c.IsExpired(),
-                clientAuthEku = c.HasClientAuthEku
-            }), new JsonSerializerOptions { WriteIndented = true }));
+                w.WriteStartArray();
+                foreach (var c in certs)
+                {
+                    w.WriteStartObject();
+                    w.WriteString("subject", c.Subject);
+                    w.WriteString("issuer", c.Issuer);
+                    w.WriteString("thumbprint", c.Thumbprint);
+                    w.WriteString("notAfter", c.NotAfter);
+                    w.WriteBoolean("expired", c.IsExpired());
+                    w.WriteBoolean("clientAuthEku", c.HasClientAuthEku);
+                    w.WriteEndObject();
+                }
+                w.WriteEndArray();
+            }));
             return ExitCodes.Ok;
         }
 

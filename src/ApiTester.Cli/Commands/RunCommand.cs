@@ -453,33 +453,52 @@ public static class RunCommand
 
         if (json)
         {
-            stdout.WriteLine(JsonSerializer.Serialize(new
+            stdout.WriteLine(JsonText.Indented(w =>
             {
-                results = results.Select(r => new
+                w.WriteStartObject();
+                w.WriteStartArray("results");
+                foreach (var r in results)
                 {
-                    path = r.Path,
-                    method = r.Model.Method,
+                    w.WriteStartObject();
+                    w.WriteString("path", r.Path);
+                    w.WriteString("method", r.Model.Method);
                     // The URL actually sent (resolver already applied), not recomputed from the model —
                     // recomputing here would report "%7B%7Btok%7D%7D" for a request that actually sent
                     // the resolved value.
-                    url = r.Url,
-                    status = r.Response.StatusCode,
-                    elapsedMs = Math.Round(r.Response.Elapsed.TotalMilliseconds),
-                    sizeBytes = r.Response.Body.LongLength,
-                    passed = Passed(r.Model, r.Response),
-                    assertions = r.Model.Assertions.Any(a => a.Enabled)
-                        ? AssertionEvaluator.Evaluate(r.Model.Assertions, r.Response)
-                            .Select(a => new { a.Description, a.Passed, actual = a.Actual })
-                        : null,
-                    error = r.Response.Error?.Message
-                }),
+                    w.WriteString("url", r.Url);
+                    w.NumberOrNull("status", r.Response.StatusCode);
+                    w.WriteNumber("elapsedMs", Math.Round(r.Response.Elapsed.TotalMilliseconds));
+                    w.WriteNumber("sizeBytes", r.Response.Body.LongLength);
+                    w.WriteBoolean("passed", Passed(r.Model, r.Response));
+                    if (r.Model.Assertions.Any(a => a.Enabled))
+                    {
+                        w.WriteStartArray("assertions");
+                        foreach (var a in AssertionEvaluator.Evaluate(r.Model.Assertions, r.Response))
+                        {
+                            w.WriteStartObject();
+                            w.WriteString("Description", a.Description);
+                            w.WriteBoolean("Passed", a.Passed);
+                            w.StringOrNull("actual", a.Actual);
+                            w.WriteEndObject();
+                        }
+                        w.WriteEndArray();
+                    }
+                    else w.WriteNull("assertions");
+                    w.StringOrNull("error", r.Response.Error?.Message);
+                    w.WriteEndObject();
+                }
+                w.WriteEndArray();
+                w.WriteStartObject("summary");
+                w.WriteNumber("total", results.Count);
+                w.WriteNumber("passed", passed);
+                w.WriteNumber("failed", failed);
+                w.WriteNumber("elapsedMs", clock.ElapsedMilliseconds);
                 // A count of zero would be noise in every ordinary run's envelope, so the key appears
                 // only when a chain actually stopped short.
-                summary = skippedSteps.Count == 0
-                    ? new { total = results.Count, passed, failed, elapsedMs = clock.ElapsedMilliseconds }
-                    : (object)new { total = results.Count, passed, failed, elapsedMs = clock.ElapsedMilliseconds,
-                                    skipped = skippedSteps.Count }
-            }, new JsonSerializerOptions { WriteIndented = true }));
+                if (skippedSteps.Count > 0) w.WriteNumber("skipped", skippedSteps.Count);
+                w.WriteEndObject();
+                w.WriteEndObject();
+            }));
         }
         else
         {
@@ -646,35 +665,62 @@ public static class RunCommand
 
         if (json)
         {
-            stdout.WriteLine(JsonSerializer.Serialize(new
+            stdout.WriteLine(JsonText.Indented(w =>
             {
-                results = results.Select(r => new
+                w.WriteStartObject();
+                w.WriteStartArray("results");
+                foreach (var r in results)
                 {
-                    path = r.Label,
-                    method = r.Method,
-                    url = r.Url,
-                    status = r.Response.StatusCode,
-                    elapsedMs = Math.Round(r.Response.Elapsed.TotalMilliseconds),
-                    sizeBytes = r.Response.Body.LongLength,
-                    passed = EntryPassed(r),
-                    diff = r.Diff is null ? null : new
+                    w.WriteStartObject();
+                    w.WriteString("path", r.Label);
+                    w.WriteString("method", r.Method);
+                    w.WriteString("url", r.Url);
+                    w.NumberOrNull("status", r.Response.StatusCode);
+                    w.WriteNumber("elapsedMs", Math.Round(r.Response.Elapsed.TotalMilliseconds));
+                    w.WriteNumber("sizeBytes", r.Response.Body.LongLength);
+                    w.WriteBoolean("passed", EntryPassed(r));
+                    if (r.Diff is null) w.WriteNull("diff");
+                    else
                     {
-                        identical = r.Diff.Identical,
-                        statusBefore = r.Diff.StatusBefore,
-                        statusAfter = r.Diff.StatusAfter,
-                        headers = r.Diff.Headers.Select(h => new { name = h.Name, before = h.Before, after = h.After }).ToList(),
-                        body = r.Diff.Body.Select(b => new
+                        w.WriteStartObject("diff");
+                        w.WriteBoolean("identical", r.Diff.Identical);
+                        w.NumberOrNull("statusBefore", r.Diff.StatusBefore);
+                        w.NumberOrNull("statusAfter", r.Diff.StatusAfter);
+                        w.WriteStartArray("headers");
+                        foreach (var h in r.Diff.Headers)
                         {
-                            path = b.Path,
-                            kind = b.Kind.ToString(),
-                            before = b.Before,
-                            after = b.After
-                        }).ToList()
-                    },
-                    error = r.Response.Error?.Message
-                }),
-                summary = new { total = results.Count, passed, failed, elapsedMs = clock.ElapsedMilliseconds }
-            }, new JsonSerializerOptions { WriteIndented = true }));
+                            w.WriteStartObject();
+                            w.WriteString("name", h.Name);
+                            w.StringOrNull("before", h.Before);
+                            w.StringOrNull("after", h.After);
+                            w.WriteEndObject();
+                        }
+                        w.WriteEndArray();
+                        w.WriteStartArray("body");
+                        foreach (var b in r.Diff.Body)
+                        {
+                            w.WriteStartObject();
+                            w.WriteString("path", b.Path);
+                            w.WriteString("kind", b.Kind.ToString());
+                            w.StringOrNull("before", b.Before);
+                            w.StringOrNull("after", b.After);
+                            w.WriteEndObject();
+                        }
+                        w.WriteEndArray();
+                        w.WriteEndObject();
+                    }
+                    w.StringOrNull("error", r.Response.Error?.Message);
+                    w.WriteEndObject();
+                }
+                w.WriteEndArray();
+                w.WriteStartObject("summary");
+                w.WriteNumber("total", results.Count);
+                w.WriteNumber("passed", passed);
+                w.WriteNumber("failed", failed);
+                w.WriteNumber("elapsedMs", clock.ElapsedMilliseconds);
+                w.WriteEndObject();
+                w.WriteEndObject();
+            }));
         }
         else
         {

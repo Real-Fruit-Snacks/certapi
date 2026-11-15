@@ -49,9 +49,11 @@ public static class TlsProbe
         limit.CancelAfter(timeout);
         Stream? network = null;
         string? remote = null;
+        TimeSpan connected = TimeSpan.Zero;
         try
         {
             network = await ConnectionDialer.DialAsync(transport with { Proxy = ProxyMode.None }, new DnsEndPoint(host, port), limit.Token);
+            connected = clock.Elapsed;
             if (network is NetworkStream ns) remote = ns.Socket.RemoteEndPoint?.ToString();
             if (startTls != StartTls.None) await UpgradeAsync(network, startTls, host, limit.Token);
         }
@@ -110,12 +112,17 @@ public static class TlsProbe
         try
         {
             await ssl.AuthenticateAsClientAsync(options, limit.Token);
-            // TLS 1.3 sends the CertificateRequest after the server's Finished: a read nudges it
-            // through, so the request (and whether ours was taken) is seen.
-            if (ssl.SslProtocol == SslProtocols.Tls13 && startTls == StartTls.None)
+            // A TLS 1.3 server may ask for a certificate after its Finished (post-handshake), and
+            // a read nudges such a request through, so it (and whether ours was taken) is seen.
+            // Not when the request already came in the handshake: there is nothing left to wait
+            // for. Otherwise as long as such a request could take to arrive — two round trips,
+            // judged by how long the connect took, and some margin — rather than a fixed 400 ms
+            // that a nearby server spends doing nothing.
+            bool requestSeen = issuers.Count > 0 || ssl.LocalCertificate is not null;
+            if (ssl.SslProtocol == SslProtocols.Tls13 && startTls == StartTls.None && !requestSeen)
             {
                 using var nudge = CancellationTokenSource.CreateLinkedTokenSource(limit.Token);
-                nudge.CancelAfter(TimeSpan.FromMilliseconds(400));
+                nudge.CancelAfter(PostHandshakeWait(connected));
                 try { _ = await ssl.ReadAsync(new byte[1], nudge.Token); } catch { /* nothing to read is fine */ }
             }
             return new TlsProbeResult
@@ -143,6 +150,11 @@ public static class TlsProbe
         }
         finally { await ssl.DisposeAsync(); }
     }
+
+    /// <summary>How long to wait for a post-handshake certificate request: two round trips (the
+    /// connect is one) and 50 ms, between 50 and 400 ms.</summary>
+    internal static TimeSpan PostHandshakeWait(TimeSpan connect) =>
+        TimeSpan.FromMilliseconds(Math.Clamp(connect.TotalMilliseconds * 2 + 50, 50, 400));
 
     private static string Name(SslProtocols p) => p switch
     {

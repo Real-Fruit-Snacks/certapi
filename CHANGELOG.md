@@ -29,6 +29,23 @@ All notable changes to this project are documented here. The format follows
   each time. Starting `mock --mtls` is quicker for it (on Windows, 270 ms → 165 ms).
 
 ### Changed
+- A refused connection to this machine is reported at once instead of after two seconds. Windows
+  retries a refused connect twice, so every send to a local server that was down took 2 s (a
+  20-request `run` against one: 41 s), and so did every new connection to `http://localhost:<port>`
+  when the server listened on 127.0.0.1 only, since `localhost` is tried as `::1` first. The
+  retries are now turned off for loopback addresses only — a real network keeps them, since a SYN
+  can be lost there. `send`, `run`, `curl`, `doctor`, `tls`, the streams, `grpc`, `serve` and a
+  proxy on this machine all get it.
+- `tls` no longer waits a fixed 400 ms after every TLS 1.3 handshake for a certificate request that
+  might follow it: not at all when the request came in the handshake, and otherwise two round
+  trips and a margin (50 ms to a nearby server).
+- `selftest` and a `mock` making new certificates generate their RSA keys in parallel.
+- `send --har`, `run --json` and `certs --json` write their JSON without the reflection serializer,
+  which spent 30–60 ms building metadata first; the output is byte for byte the same.
+- Every command starts a little sooner: the `--help` check no longer builds an expression per
+  option when no `-h`/`--help` was typed, and a URL, header or body with no `{{` skips variable
+  resolution, and with it the one-time set-up of every generated expression.
+- `mock` checks its kept certificates by their signature instead of building a chain.
 - `send --json` writes its envelope directly instead of through the reflection serializer, about
   50 ms sooner on Windows (201 ms → 147 ms against a local server). The text is the same, byte
   for byte; `mcp`'s send tool gets the same saving.
@@ -70,6 +87,9 @@ All notable changes to this project are documented here. The format follows
   others) are generated at build time instead of compiled at start-up.
 
 ### Fixed
+- `ws -m … --expect 1` no longer waits for ever when stdin is a pipe nobody closes (a CI step, a
+  scheduled task, a parent script): piped lines are sent as they arrive instead of being read to
+  the end before connecting.
 - `mock` listens on `::1` as well as `127.0.0.1`. `localhost` resolves to `::1` first on Windows,
   and the refused connection there cost about two seconds before every new connection to
   `https://localhost:<port>` — the name the mock's certificate is for. The certificate now names

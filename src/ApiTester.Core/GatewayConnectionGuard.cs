@@ -254,6 +254,7 @@ public sealed class GatewayConnectionGuard
         if (limit is { } within)
             return await ConnectSocketAsync(context.DnsEndPoint.Host, context.DnsEndPoint.Port, within, null, ct);
         var socket = new Socket(SocketType.Stream, ProtocolType.Tcp) { NoDelay = true };
+        LoopbackConnect.Prepare(socket, context.DnsEndPoint.Host);
         try { await socket.ConnectAsync(context.DnsEndPoint, ct); }
         catch { socket.Dispose(); throw; }
         return socket;
@@ -278,6 +279,7 @@ public sealed class GatewayConnectionGuard
         foreach (var address in addresses)
         {
             var socket = new Socket(address.AddressFamily, SocketType.Stream, ProtocolType.Tcp) { NoDelay = true };
+            LoopbackConnect.Prepare(socket, address);
             try
             {
                 await WithinAsync(async t => { await socket.ConnectAsync(new IPEndPoint(address, port), t); return true; }, limit, ct);

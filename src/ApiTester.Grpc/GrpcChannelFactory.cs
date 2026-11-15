@@ -92,6 +92,7 @@ internal static class GrpcChannelFactory
         RevocationCheck.Apply(handler.SslOptions, transport);
         TlsPolicy.Apply(handler.SslOptions, transport with { Sni = null });
         if (transport.ConnectTimeout is { } connect) handler.ConnectTimeout = connect;
+        ApiTester.Core.LoopbackConnect.Install(handler);
         if (clientCertificate is not null)
             handler.SslOptions.ClientCertificates = new X509CertificateCollection { clientCertificate };
 

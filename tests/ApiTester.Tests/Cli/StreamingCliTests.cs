@@ -85,6 +85,36 @@ public class StreamingCliTests
         Assert.Contains("pinged", so.ToString());
     }
 
+    /// <summary>A stdin that is a pipe nobody ever closes: no line, and no end.</summary>
+    private sealed class NeverEndingInput : TextReader
+    {
+        public override string? ReadLine() { Thread.Sleep(Timeout.Infinite); return null; }
+        public override async ValueTask<string?> ReadLineAsync(CancellationToken ct)
+        {
+            await Task.Delay(Timeout.Infinite, ct);
+            return null;
+        }
+    }
+
+    [Fact]
+    public async Task Ws_does_not_wait_for_a_stdin_that_never_ends()
+    {
+        // A CI step or a scheduled task often runs with stdin a pipe that stays open: -m and
+        // --expect must finish there instead of waiting to read stdin to its end first.
+        using var ca = SelfSignedCertificateFactory.CreateCertificateAuthority("CA");
+        using var serverCert = SelfSignedCertificateFactory.CreateSignedCertificate("localhost", ca, true, false, new[] { "localhost" });
+        using var clientCert = SelfSignedCertificateFactory.CreateSignedCertificate("CliClient", ca, false, true);
+        await using var server = await LoopbackMtlsServer.StartWebSocketEchoAsync(serverCert, clientCert.Thumbprint!);
+
+        var so = new StringWriter();
+        var run = Task.Run(() => CliApp.Run(
+            new[] { "ws", server.WebSocketUrl, "--cert", "CliClient", "--insecure", "-m", "hello", "--expect", "1" },
+            new NeverEndingInput(), so, new StringWriter(), new MemoryStream(), ServicesWith(clientCert)));
+        Assert.Same(run, await Task.WhenAny(run, Task.Delay(TimeSpan.FromSeconds(15))));
+        Assert.Equal(0, await run);
+        Assert.Contains("hello", so.ToString());
+    }
+
     [Fact]
     public async Task Ws_expect_zero_sends_without_waiting_for_a_reply()
     {

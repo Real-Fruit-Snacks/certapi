@@ -92,16 +92,12 @@ public static class WsCommand
         if (!noAutoToken && TokenService.AutoAttach(state, url, headerPairs, out _) is not null && !quiet)
             stderr.WriteLine($"using captured token for {TokenService.HostOf(url)}");
 
-        // Outgoing messages: explicit --message values first, then any lines piped on stdin. Only
-        // piped: at a terminal, reading to the end first would wait for Ctrl+Z/Ctrl+D before even
-        // connecting — there, each typed line is sent as it is entered instead.
+        // Outgoing messages: explicit --message values first, then each line of stdin as it
+        // arrives — typed at a terminal or piped. Piped lines are not read to the end before
+        // connecting: a stdin that is a pipe nobody closes (a CI step, a scheduled task, a parent
+        // script) would then hold the connection back for ever, --expect or not.
         var toSend = new List<string>(messages);
         bool interactive = ReferenceEquals(input, Console.In) && !Console.IsInputRedirected;
-        if (!interactive)
-        {
-            string? line;
-            while ((line = input.ReadLine()) is not null) toSend.Add(line);
-        }
 
         return RunAsync().GetAwaiter().GetResult();
 
@@ -131,20 +127,22 @@ public static class WsCommand
                 if (!quiet) stderr.WriteLine($"> {m}");
             }
 
-            if (interactive)
-                _ = Task.Run(async () =>
+            var lines = Task.Run(async () =>
+            {
+                try
                 {
-                    try
+                    while (!services.Cancel.IsCancellationRequested &&
+                           await input.ReadLineAsync(services.Cancel) is { } line)
                     {
-                        while (!services.Cancel.IsCancellationRequested &&
-                               await input.ReadLineAsync(services.Cancel) is { } typed)
-                        {
-                            await session.SendTextAsync(typed, services.Cancel);
-                            if (!quiet) stderr.WriteLine($"> {typed}");
-                        }
+                        await session.SendTextAsync(line, services.Cancel);
+                        if (!quiet) stderr.WriteLine($"> {line}");
                     }
-                    catch { /* the session ended or Ctrl+C: nothing more to send */ }
-                });
+                }
+                catch { /* the session ended or Ctrl+C: nothing more to send */ }
+            });
+            // --expect 0 sends and leaves: everything piped is sent first. (At a terminal it leaves
+            // at once, as before: there is no end of input to wait for.)
+            if (expect == 0 && !interactive) await lines;
 
             int want = expect ?? int.MaxValue;   // no --expect ⇒ listen until close or Ctrl+C
             int got = 0;

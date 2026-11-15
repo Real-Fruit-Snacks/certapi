@@ -515,6 +515,9 @@ public static class CliApp
     /// <c>-H</c> (a header), which the option reader would otherwise match case-insensitively.</summary>
     internal static bool AsksForHelp(IEnumerable<string> words, string? help = null)
     {
+        // The usual case, decided without reading the help: neither spelling was typed. Working out
+        // which options take a value builds an expression per option, about 11 ms on every run.
+        if (!words.Any(w => w == "-h" || w.Equals("--help", StringComparison.OrdinalIgnoreCase))) return false;
         string? previous = null;
         foreach (var w in words)
         {

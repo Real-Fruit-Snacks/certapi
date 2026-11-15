@@ -49,6 +49,7 @@ public static class StreamTransport
         if (clientCertificate is not null)
             ssl.ClientCertificates = new X509CertificateCollection { clientCertificate };
         handler.SslOptions = ssl;
+        LoopbackConnect.Install(handler);
         return handler;
     }
 

@@ -71,6 +71,7 @@ public static class ConnectionDialer
             try
             {
                 if (local is not null) socket.Bind(new IPEndPoint(local, 0));
+                LoopbackConnect.Prepare(socket, address);
                 await socket.ConnectAsync(new IPEndPoint(address, port), ct);
                 return socket;
             }

@@ -5,9 +5,23 @@ namespace ApiTester.Core;
 
 public static class SelfSignedCertificateFactory
 {
-    public static X509Certificate2 CreateCertificateAuthority(string name)
+    /// <summary>A new RSA-2048 key, generated now rather than on first use. Generating one takes
+    /// 70–120 ms on Windows, so a caller that needs several makes them in parallel with this and
+    /// passes each to the factory (which then owns and disposes it).</summary>
+    public static RSA NewRsaKey()
     {
-        using var rsa = RSA.Create(2048);
+        var rsa = RSA.Create(2048);
+        _ = rsa.ExportRSAPublicKey();   // CNG generates the key lazily: make it happen here
+        return rsa;
+    }
+
+    /// <summary>Starts <paramref name="count"/> keys generating on the thread pool.</summary>
+    public static Task<RSA>[] NewRsaKeys(int count) =>
+        Enumerable.Range(0, count).Select(_ => Task.Run(NewRsaKey)).ToArray();
+
+    public static X509Certificate2 CreateCertificateAuthority(string name, RSA? key = null)
+    {
+        using var rsa = key ?? RSA.Create(2048);
         var req = new CertificateRequest($"CN={name}", rsa, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
         req.CertificateExtensions.Add(new X509BasicConstraintsExtension(true, false, 0, true));
         req.CertificateExtensions.Add(new X509KeyUsageExtension(
@@ -49,6 +63,8 @@ public static class SelfSignedCertificateFactory
     /// expired or not-yet-valid certificate — the mock's TLS-misbehaviour modes, which make the
     /// client's own error paths reachable from a terminal rather than only from a test.</param>
     /// <param name="notAfter">When it stops; defaults to a year out.</param>
+    /// <param name="key">The key to certify, made ahead (see <see cref="NewRsaKey"/>); the factory
+    /// owns it from here. Null for a new one.</param>
     /// <param name="ipAddresses">Addresses added to the Subject Alternative Name beside the DNS names.</param>
     public static X509Certificate2 CreateSignedCertificate(
         string name, X509Certificate2 issuer, bool serverAuth, bool clientAuth,
@@ -56,9 +72,10 @@ public static class SelfSignedCertificateFactory
         string? crlDistributionPoint = null,
         DateTimeOffset? notBefore = null,
         DateTimeOffset? notAfter = null,
-        IEnumerable<System.Net.IPAddress>? ipAddresses = null)
+        IEnumerable<System.Net.IPAddress>? ipAddresses = null,
+        RSA? key = null)
     {
-        using var rsa = RSA.Create(2048);
+        using var rsa = key ?? RSA.Create(2048);
         var req = new CertificateRequest($"CN={name}", rsa, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
         req.CertificateExtensions.Add(new X509BasicConstraintsExtension(false, false, 0, false));
         req.CertificateExtensions.Add(new X509KeyUsageExtension(

@@ -4,22 +4,25 @@ using System.Text.Json.Serialization;
 
 namespace ApiTester.Core;
 
+/// <summary>The HAR serializer, generated at build time: reflection spent about 60 ms building
+/// these types' metadata before the first byte of a `--har` file was written. The options are the
+/// ones the reflection serializer was given, so the document is the same.</summary>
+[JsonSourceGenerationOptions(
+    PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase,
+    IncludeFields = true,
+    WriteIndented = true,
+    DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull)]
+[JsonSerializable(typeof(Har))]
+internal sealed partial class HarJson : JsonSerializerContext { }
+
 /// <summary>Builds HAR entries from a completed request/response exchange, and serializes a HAR
 /// document. Pure — no I/O, no sockets.</summary>
 public static class HarWriter
 {
-    private static JsonSerializerOptions? _options;
-
     /// <summary>The shared <see cref="JsonSerializerOptions"/> used for both writing and reading HAR
     /// documents: camelCase properties, fields included (for <see cref="HarPostData"/> and
-    /// <see cref="HarTimings"/>), and nulls omitted.</summary>
-    internal static JsonSerializerOptions Options => _options ??= new JsonSerializerOptions
-    {
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-        IncludeFields = true,
-        WriteIndented = true,
-        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
-    };
+    /// <see cref="HarTimings"/>), and nulls omitted — with the generated metadata.</summary>
+    internal static JsonSerializerOptions Options => HarJson.Default.Options;
 
     /// <summary>Is this header name one of the sensitive ones redacted when
     /// <c>includeSecrets</c> is false (see <see cref="SecretHeaders.IsSecret"/>).</summary>

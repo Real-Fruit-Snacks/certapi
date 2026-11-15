@@ -43,6 +43,7 @@ public sealed class MtlsBrowserSession : IDisposable
         };
         if (clientCertificate is not null)
             handler.SslOptions.ClientCertificates = new X509CertificateCollection { clientCertificate };
+        LoopbackConnect.Install(handler);
 
         _http = new HttpClient(handler, disposeHandler: true) { Timeout = TimeSpan.FromSeconds(100) };
     }

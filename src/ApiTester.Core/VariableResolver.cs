@@ -11,7 +11,10 @@ namespace ApiTester.Core;
 /// still wins, so a saved value can override the ambient one deliberately.</para></summary>
 public static partial class VariableResolver
 {
-    private static readonly Regex Token = TokenRegex();
+    // A property over the generated method (which keeps its own instance), not a static field: a
+    // field would be set up by the type's static constructor on the first call of any method here,
+    // the "{{"-less fast path included, and that is the cost the fast path exists to avoid.
+    private static Regex Token => TokenRegex();
     [GeneratedRegex(@"\{\{\s*([^{}]*?)\s*\}\}", RegexOptions.None)]
     private static partial Regex TokenRegex();
 
@@ -31,6 +34,10 @@ public static partial class VariableResolver
         string template, IReadOnlyDictionary<string, string> vars, Func<string, string?>? environment)
     {
         if (string.IsNullOrEmpty(template)) return (template ?? "", Array.Empty<string>());
+        // Nothing to resolve without "{{" — the case for most URLs, headers and bodies. Checked
+        // first because the first use of any generated expression in this assembly sets up shared
+        // search tables for all of them, about 15 ms that a run with no variables need not pay.
+        if (!template.Contains("{{", StringComparison.Ordinal)) return (template, Array.Empty<string>());
 
         var lookup = environment ?? Environment.GetEnvironmentVariable;
         var unresolved = new List<string>();

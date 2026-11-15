@@ -758,6 +758,9 @@ public sealed class ApiClient : IDisposable
         bool viaProxy)
     {
         var handler = BuildCommonHandler(transport, windowsAuth, destination);
+        // The handler dials by itself here (to the proxy, or for HTTP/3 not over TCP at all): a
+        // proxy on this machine (Fiddler, a local corporate agent) still fails fast when it is down.
+        LoopbackConnect.Install(handler);
         // An H3-direct send must never consult a proxy the validation already ruled out:
         // QUIC cannot go through the TCP proxy protocols this product speaks.
         if (!viaProxy) handler.UseProxy = false;

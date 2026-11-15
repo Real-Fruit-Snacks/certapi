@@ -219,6 +219,7 @@ public static class ConnectionDoctor
         // ---- stage 4: TCP --------------------------------------------------------------------
         start = clock.Elapsed;
         var socket = new Socket(SocketType.Stream, ProtocolType.Tcp) { NoDelay = true };
+        LoopbackConnect.Prepare(socket, target.Host);
         // --connect-timeout bounds this stage as it bounds a send's connect: on a network that
         // blackholes the host, the OS's own timeout is tens of seconds to minutes.
         using var connectBudget = CancellationTokenSource.CreateLinkedTokenSource(ct);

@@ -241,9 +241,20 @@ public static class MockCertificates
             ca = null;
         }
         bool reused = ca is not null;
+        // A new authority means new certificates under it too: their keys are made alongside its
+        // own, not one after another (each RSA key is 70-120 ms).
+        Task<RSA>[]? keys = null;
+        var taken = new bool[3];
+        RSA? NextKey(int i)
+        {
+            if (keys is null || i >= keys.Length) return null;
+            taken[i] = true;
+            return keys[i].GetAwaiter().GetResult();
+        }
         if (ca is null)
         {
-            ca = SelfSignedCertificateFactory.CreateCertificateAuthority("certapi mock CA");
+            keys = SelfSignedCertificateFactory.NewRsaKeys(mode == MockTlsMode.Mtls ? 3 : 2);
+            ca = SelfSignedCertificateFactory.CreateCertificateAuthority("certapi mock CA", NextKey(0));
             WriteKey(CaKeyFile, ca);
         }
 
@@ -261,7 +272,7 @@ public static class MockCertificates
                     kept?.Dispose();
                     serverCert = SelfSignedCertificateFactory.CreateSignedCertificate(
                         "localhost", ca, serverAuth: true, clientAuth: false, dnsNames: new[] { "localhost" },
-                        ipAddresses: LoopbackAddresses);
+                        ipAddresses: LoopbackAddresses, key: NextKey(1));
                     WriteKey(ServerKeyFile, serverCert);
                 }
             }
@@ -316,7 +327,7 @@ public static class MockCertificates
                 else
                 {
                     using var client = SelfSignedCertificateFactory.CreateSignedCertificate(
-                        "certapi mock client", ca, serverAuth: false, clientAuth: true);
+                        "certapi mock client", ca, serverAuth: false, clientAuth: true, key: NextKey(2));
                     Write("mock-client.pfx", client.Export(X509ContentType.Pfx));
                 }
             }
@@ -325,6 +336,10 @@ public static class MockCertificates
         finally
         {
             ca.Dispose();
+            // A key made ahead that nothing used (a --tls-mode certificate makes its own).
+            if (keys is not null)
+                for (int i = 0; i < keys.Length; i++)
+                    if (!taken[i]) _ = keys[i].ContinueWith(t => { if (t.IsCompletedSuccessfully) t.Result.Dispose(); }, TaskScheduler.Default);
         }
     }
 
@@ -360,15 +375,27 @@ public static class MockCertificates
     private static bool IsAuthority(X509Certificate2 cert) =>
         cert.Extensions.OfType<X509BasicConstraintsExtension>().Any(b => b.CertificateAuthority);
 
+    /// <summary>Whether <paramref name="ca"/> signed <paramref name="leaf"/>: the issuer name is the
+    /// authority's, and the signature verifies with its key. Checked directly rather than by
+    /// building a chain, which on Windows costs about 25 ms of every start (a chain engine is made
+    /// for it); validity is checked separately.</summary>
     internal static bool IssuedBy(X509Certificate2 leaf, X509Certificate2 ca)
     {
-        using var chain = new X509Chain();
-        chain.ChainPolicy.TrustMode = X509ChainTrustMode.CustomRootTrust;
-        chain.ChainPolicy.CustomTrustStore.Add(ca);
-        chain.ChainPolicy.RevocationMode = X509RevocationMode.NoCheck;
-        chain.ChainPolicy.DisableCertificateDownloads = true;
-        return chain.Build(leaf) && chain.ChainElements.Count == 2 &&
-               chain.ChainElements[1].Certificate.Thumbprint == ca.Thumbprint;
+        if (!leaf.IssuerName.RawData.AsSpan().SequenceEqual(ca.SubjectName.RawData)) return false;
+        try
+        {
+            // Certificate ::= SEQUENCE { tbsCertificate, signatureAlgorithm, signatureValue BIT STRING }
+            var certificate = new System.Formats.Asn1.AsnReader(leaf.RawData, System.Formats.Asn1.AsnEncodingRules.DER).ReadSequence();
+            var tbs = certificate.ReadEncodedValue();
+            certificate.ReadSequence();
+            var signature = certificate.ReadBitString(out _);
+            using var key = ca.GetRSAPublicKey();
+            return key is not null && key.VerifyData(tbs.Span, signature, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+        }
+        catch (Exception ex) when (ex is System.Formats.Asn1.AsnContentException or CryptographicException)
+        {
+            return false;
+        }
     }
 }
 
