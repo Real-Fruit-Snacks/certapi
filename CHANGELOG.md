@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.100.2] - 2026-11-15
+
 ### Security
 - The mock's certificate authority is now limited to what the mock needs: `localhost`,
   `127.0.0.0/8` and `::1`, the mock's own subject names, and TLS server and client
@@ -3609,7 +3611,8 @@ Initial release.
 - Save any response (including binary) to a file.
 - Self-contained single-file executable — no installer, no admin rights, no runtime dependency.
 
-[Unreleased]: https://github.com/Real-Fruit-Snacks/certapi/compare/v1.100.1...HEAD
+[Unreleased]: https://github.com/Real-Fruit-Snacks/certapi/compare/v1.100.2...HEAD
+[1.100.2]: https://github.com/Real-Fruit-Snacks/certapi/compare/v1.100.1...v1.100.2
 [1.100.1]: https://github.com/Real-Fruit-Snacks/certapi/compare/v1.100.0...v1.100.1
 [1.100.0]: https://github.com/Real-Fruit-Snacks/certapi/compare/v1.99.0...v1.100.0
 [1.99.0]: https://github.com/Real-Fruit-Snacks/certapi/compare/v1.98.0...v1.99.0
