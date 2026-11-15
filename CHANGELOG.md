@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.100.0] - 2026-11-14
+
 ### Added
 - `certapi curl`: paste a curl command and it runs with curl's meaning, through `send` — the
   Windows certificate store, `--timing`, `--assert` and the rest still apply, and can be added to
@@ -39,8 +41,9 @@ All notable changes to this project are documented here. The format follows
   retries are now turned off for loopback addresses only — a real network keeps them, since a SYN
   can be lost there — and only while nothing listens on the port: Windows refuses the same way
   when a server's queue of waiting connections is full, so a refusal from a port something does
-  listen on is retried as before, and a busy local server still takes every connection. `send`, `run`, `curl`, `doctor`, `tls`, the streams, `grpc`, `serve` and a
-  proxy on this machine all get it.
+  listen on is retried as before, and a busy local server still takes every connection. `send`,
+  `run`, `curl`, `doctor`, `tls`, the streams, `grpc`, `serve` and a proxy on this machine all get
+  it.
 - `tls` no longer waits a fixed 400 ms after every TLS 1.3 handshake. A server that asked for no
   certificate is given two round trips and a margin to ask late (50 ms to a nearby one: 692 ms →
   391 ms); one that asked is given half a second to refuse the certificate, since that is when a
@@ -3564,7 +3567,8 @@ Initial release.
 - Save any response (including binary) to a file.
 - Self-contained single-file executable — no installer, no admin rights, no runtime dependency.
 
-[Unreleased]: https://github.com/Real-Fruit-Snacks/certapi/compare/v1.99.0...HEAD
+[Unreleased]: https://github.com/Real-Fruit-Snacks/certapi/compare/v1.100.0...HEAD
+[1.100.0]: https://github.com/Real-Fruit-Snacks/certapi/compare/v1.99.0...v1.100.0
 [1.99.0]: https://github.com/Real-Fruit-Snacks/certapi/compare/v1.98.0...v1.99.0
 [1.98.0]: https://github.com/Real-Fruit-Snacks/certapi/compare/v1.97.0...v1.98.0
 [1.97.0]: https://github.com/Real-Fruit-Snacks/certapi/compare/v1.96.3...v1.97.0
