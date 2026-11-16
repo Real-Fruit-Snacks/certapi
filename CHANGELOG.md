@@ -6,6 +6,38 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- `serve --retry <n>`: the gateway sends a request to the upstream again when the connection fails
+  or the answer is a `--retry-on` status (429, 502, 503, 504 by default), with `send`'s backoff and
+  `Retry-After` honoured. Every attempt and every wait shares `--timeout`, so a caller never waits
+  longer than it would have; when the time or the attempts run out, the last answer is relayed.
+  Only `GET`, `HEAD`, `OPTIONS`, `PUT` and `DELETE` unless `--retry-unsafe`; a body up to 1 MB goes
+  again whole, a larger one only when the connection failed before any of it was sent. The request
+  line says `(3 attempts)`. A profile's `serve` section takes `retry`; the top-level `retry` (for
+  `send`) still does not apply to the gateway. Before, `--retry` was accepted and ignored here.
+- `serve --http2`: HTTP/2 is offered to https sites, so many requests share one connection and one
+  certificate handshake; a site without it answers in HTTP/1.1. Plain http sites and sites with
+  Windows sign-in stay on HTTP/1.1. The request line ends `HTTP/2` when it was used.
+- `serve` looks for a renewal of each client certificate every 5 minutes (the store query again, or
+  the file when it changed) and presents one it finds from the next connection on, without a
+  restart; requests under way finish on the old one. A certificate named by thumbprint is not
+  renewed this way.
+- `serve` warns about a client certificate's expiry while it runs, not only at the start: daily
+  within 14 days of it, hourly once it has passed. `/_certapi/health` lists each certificate
+  presented with its `notAfter` and `daysLeft`.
+- `serve --connection-lifetime <seconds>` (default 600, profile key `connectionLifetime`): a
+  connection to a site is replaced after this long, once the request on it is done. Before, a site
+  in steady use kept its connections for as long as the gateway ran, so a site that moved (a DNS
+  failover, a load balancer's new members) was not followed until a restart. `0` keeps the old
+  behaviour.
+
+### Changed
+- When several certificates match `--cert` and all are one subject from one issuer (a renewal next
+  to the certificate it replaced), every command now uses the newest — valid now, made for client
+  authentication, latest expiry — and a note says which. Before, it stopped with "be more specific",
+  so a renewal in the store stopped `serve` (and every script) from starting until `--cert` was
+  changed. Matches from different issuers still need `--cert-issuer` or `--cert-serial`.
+
 ## [1.100.2] - 2026-11-15
 
 ### Security

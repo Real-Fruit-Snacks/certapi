@@ -96,6 +96,8 @@ public sealed record ServeProfile
     public int? Timeout { get; init; }
     public int? MaxConnections { get; init; }
     public int? MaxRequests { get; init; }
+    public int? ConnectionLifetime { get; init; }
+    public int? Retry { get; init; }
     public bool? Tls { get; init; }
     public bool? RewriteBody { get; init; }
     public IReadOnlyList<GatewayRouteSpec> Sites { get; init; } = Array.Empty<GatewayRouteSpec>();
@@ -105,7 +107,7 @@ public sealed record ServeProfile
         "port", "vhost", "browser", "cors", "corsHeaders", "corsExpose", "corsMethods", "corsMaxAge",
         "corsCredentials", "token", "allow", "listen", "cookieJar", "autoToken",
         "windowsAuth", "windowsUser", "windowsPassword", "forwarded", "maxBody", "timeout",
-        "maxConnections", "maxRequests", "tls", "rewriteBody", "sites",
+        "maxConnections", "maxRequests", "connectionLifetime", "retry", "tls", "rewriteBody", "sites",
     };
 }
 
@@ -449,6 +451,8 @@ public static class ConfigLoader
             Timeout = Int("timeout"),
             MaxConnections = Int("maxConnections"),
             MaxRequests = Int("maxRequests"),
+            ConnectionLifetime = Int("connectionLifetime"),
+            Retry = Int("retry"),
             Tls = Bool("tls"),
             Sites = sites,
         };

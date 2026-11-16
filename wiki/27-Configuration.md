@@ -152,7 +152,8 @@ certapi serve --profile corp            # start it
 The `serve` fields are `port`, `vhost`, `browser`, `cors` (`true`, an origin, or a list),
 `corsHeaders`, `corsExpose`, `corsMethods` (a name or a list), `corsMaxAge`, `corsCredentials`, `token`,
 `allow`, `listen`, `cookieJar`, `autoToken`, `windowsAuth`, `windowsUser`, `windowsPassword`,
-`forwarded`, `maxBody`, `timeout`, `maxConnections`, `maxRequests`, `tls`, `rewriteBody` and
+`forwarded`, `maxBody`, `timeout`, `maxConnections`, `maxRequests`, `connectionLifetime` (seconds),
+`retry` (the gateway's own; the top-level `retry` is for `send`), `tls`, `rewriteBody` and
 `sites`. `sites` is exactly the
 [`--routes` file format](19-Local-Gateway.md#sites-with-their-own-certificate-and-settings---routes):
 each site has a `name` (or `prefix`) and an `upstream`, and may set its own `cert`, `insecure`,

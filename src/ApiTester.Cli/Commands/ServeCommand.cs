@@ -96,6 +96,10 @@ public static class ServeCommand
                                   requests (default 16; each WebSocket has one of its own). A
                                   request past it waits for one to come free, within --timeout,
                                   rather than opening another
+          --connection-lifetime <s>  How long one connection to a site is used before a new one
+                          replaces it (default 600; 0 keeps it while it is in use). A request on
+                          it is never cut off. Without a limit, a site that moved — a DNS
+                          failover, a load balancer's new members — is not followed until restart
           --max-requests <n>      Requests the gateway handles at once, WebSockets included
                                   (default 256); one more is answered 503 straight away. Its own
                                   /_certapi/ endpoints and CORS preflights do not count
@@ -269,13 +273,35 @@ public static class ServeCommand
           --ca-file, --revocation / --revocation-strict, --tls-min, --connect-timeout, --offline,
           -4 / -6 and --sni (every site's handshake; a site's own "sni" wins). Without
           --connect-timeout the name lookup and each address still get at most 15 s here (504
-          when none answers). The
-          redirect, decompression, HTTP-version and retry flags are accepted but do not apply: the
-          gateway hands back the 3xx and the exact bytes the upstream sent, and does not retry on
-          a caller's behalf. With a PAC script or WPAD, the system proxy is asked once per site
-          rather than before every request. A host that fails 5 connection attempts within 30 s
-          (through a proxy: the proxy) is left alone for 10 s or more, and its requests get 502
-          saying so. Once a minute, with traffic, a health line says what the gateway holds.
+          when none answers). The redirect and decompression flags are accepted but do not apply:
+          the gateway hands back the 3xx and the exact bytes the upstream sent. With a PAC script
+          or WPAD, the system proxy is asked once per site rather than before every request. A
+          host that fails 5 connection attempts within 30 s (through a proxy: the proxy) is left
+          alone for 10 s or more, and its requests get 502 saying so. Once a minute, with
+          traffic, a health line says what the gateway holds.
+
+          --retry <n> sends a request to the upstream again, on the caller's behalf, when the
+          connection fails or the upstream answers a --retry-on status, with the same backoff as
+          send and a Retry-After honoured. All the attempts and the waits between them share
+          --timeout, so a caller never waits longer than it would have; when time runs out, the
+          last answer is the one relayed. GET, HEAD, OPTIONS, PUT and DELETE only, unless
+          --retry-unsafe. A body up to 1 MB is sent again whole; a larger one only when the
+          connection failed before any of it was sent. The request line says "(3 attempts)".
+
+          --http2 offers HTTP/2 to https sites: many requests share one connection (and one
+          certificate handshake) instead of one each, and a site without HTTP/2 answers in
+          HTTP/1.1 as before. Plain http sites, and sites with Windows sign-in (which belongs to
+          an HTTP/1.1 connection), stay on HTTP/1.1. --http3 does not apply here.
+
+        Certificates:
+          While it runs, the gateway looks for a renewal of each client certificate every 5
+          minutes, choosing it the way the start did: the store query again (several matches that
+          are one subject from one issuer are a renewal, and the newest is used), or the file
+          again when it changed. A renewal — valid now and lasting longer — is presented from the
+          next connection on, without a restart; requests under way finish on the old one. A
+          certificate named by thumbprint is never renewed this way. Within 14 days of a
+          certificate's expiry a warning is written once a day, and once it has expired, once an
+          hour; /_certapi/health lists each certificate's notAfter and daysLeft for a monitor.
 
         Global: --debug (verbose diagnostics) and --log-file <path> work here too.
 
@@ -419,6 +445,7 @@ public static class ServeCommand
         string? maxBodyRaw = args.Value("--max-body") ?? sp?.MaxBody;
         string? maxConnectionsRaw = args.Value("--max-connections") ?? sp?.MaxConnections?.ToString();
         string? maxRequestsRaw = args.Value("--max-requests") ?? sp?.MaxRequests?.ToString();
+        string? lifetimeRaw = args.Value("--connection-lifetime") ?? sp?.ConnectionLifetime?.ToString();
 
         bool check = args.Flag("--check");
         bool tls = args.Switch("--tls", sp?.Tls);
@@ -460,7 +487,10 @@ public static class ServeCommand
         // Resolve the certificate before Positionals() rejects its options (store or a file). The
         // standalone --tls-untrust path above returns before this, so it never touches the store to
         // resolve a client certificate it will never use.
-        var cert = CliCert.Resolve(args, store, services, stderr);
+        var cert = CliCert.Resolve(args, store, services, stderr, Environment.GetEnvironmentVariable, out var certOrigin);
+        // Every certificate the gateway is given, with how it was chosen, so a renewal is found while it runs.
+        var watchedCertificates = new List<(X509Certificate2 Certificate, CertificateOrigin Origin)>();
+        if (cert is not null && certOrigin is not null) watchedCertificates.Add((cert, certOrigin));
 
         var positionals = args.Positionals();
         // The positional upstream is sugar for --upstream /=<url>, so one form, the other, or both
@@ -488,6 +518,14 @@ public static class ServeCommand
         int maxRequests = DefaultMaxRequests;
         if (maxRequestsRaw is not null && (!int.TryParse(maxRequestsRaw, out maxRequests) || maxRequests is < 1 or > 100_000))
             throw new CliUsageException($"--max-requests expects 1-100000, got '{maxRequestsRaw}'.");
+
+        var connectionLifetime = MtlsGateway.DefaultConnectionLifetime;
+        if (lifetimeRaw is not null)
+        {
+            if (!int.TryParse(lifetimeRaw, out int lifetimeSeconds) || lifetimeSeconds is < 0 or > 86_400)
+                throw new CliUsageException($"--connection-lifetime expects 0-86400 seconds (0: keep a connection while it is in use), got '{lifetimeRaw}'.");
+            connectionLifetime = lifetimeSeconds == 0 ? Timeout.InfiniteTimeSpan : TimeSpan.FromSeconds(lifetimeSeconds);
+        }
 
         long? maxBody = null;
         if (maxBodyRaw is not null)
@@ -563,9 +601,9 @@ public static class ServeCommand
         }
         if (positionals.Count == 1 && PathIn(positionals[0]) is { } droppedRoot)
             stderr.WriteLine($"note: {positionals[0]}: only the scheme, host and port are used; request {droppedRoot}… to reach it.");
-        foreach (var routesFile in routesFiles) routeList.AddRange(LoadRoutesFile(routesFile, store, services, stderr, transportOverrides.ExtraRoots));
+        foreach (var routesFile in routesFiles) routeList.AddRange(LoadRoutesFile(routesFile, store, services, stderr, transportOverrides.ExtraRoots, watchedCertificates));
         if (profileSites is not null)
-            routeList.AddRange(BuildSites(profileSites, $"profile '{services.Profile!.Name}'", store, services, stderr, transportOverrides.ExtraRoots));
+            routeList.AddRange(BuildSites(profileSites, $"profile '{services.Profile!.Name}'", store, services, stderr, transportOverrides.ExtraRoots, watchedCertificates));
 
         GatewayRoutes routes;
         // Two upstreams on one mount point is a configuration mistake with no right answer, so it is
@@ -580,6 +618,16 @@ public static class ServeCommand
         // per route before the listener binds, so an unusable combination is a usage error rather
         // than a setting silently dropped on the floor.
         var transport = transportOverrides.ApplyTo(new TransportOptions());
+        // The gateway retries on its callers' behalf only when asked to for the gateway: --retry
+        // typed here, or the profile's serve section. A profile's top-level retry is for send, and
+        // a caller that retries itself would otherwise have each of its attempts multiplied.
+        bool retryTyped = args.Original.Any(t => t == "--retry" || t.StartsWith("--retry=", StringComparison.Ordinal));
+        if (!retryTyped)
+        {
+            if (sp?.Retry is < 0 or > 100)
+                throw new CliUsageException($"profile serve.retry expects 0-100, got {sp.Retry}.");
+            transport = transport with { Retries = sp?.Retry ?? 0 };
+        }
         foreach (var route in routes.All)
         {
             var siteTransport = route.Settings?.Sni is { } siteSni ? transport with { Sni = siteSni } : transport;
@@ -619,6 +667,7 @@ public static class ServeCommand
             routes, cert, insecure, TimeSpan.FromSeconds(timeoutSeconds), transport, trustPredicates.For);
         if (allow is not null) gateway.EnableDynamicUpstreams(allow);
         gateway.MaxConnectionsPerSite = maxConnections;
+        gateway.ConnectionLifetime = connectionLifetime;
         if (winUser is not null || windowsAuth)
             gateway.UseWindowsAuth(winUser is not null ? WindowsAuthOptions.FromCredentials(winUser, winPass) : new WindowsAuthOptions(true));
         // Now that the gateway exists, a Location to any host it can reach is rewritten back
@@ -696,6 +745,8 @@ public static class ServeCommand
                 Forwarded = forwarded, MaxBody = maxBody,
                 HeaderRules = requestSets.Count + requestRemovals.Count + responseSets.Count + responseRemovals.Count > 0,
                 Tls = tls,
+                Retries = transport.Retries,
+                Http2 = transport.Version == HttpVersionMode.Http2,
             }),
         };
         if (vhosts is not null)
@@ -875,6 +926,21 @@ public static class ServeCommand
             try { while (await healthTimer.WaitForNextTickAsync(ct)) health.Tick(); }
             catch (OperationCanceledException) { }
         });
+        // Written like the health line, under -q too: a renewal, or a certificate about to stop
+        // working, is the record someone reads after the fact.
+        var certificateWatch = new ServeCertificateWatch(gateway, watchedCertificates, services, serveLog.Write,
+            services.ServeCertificateCheckInterval);
+        using var certificateTimer = new PeriodicTimer(services.ServeCertificateCheckInterval);
+        var certificateLoop = Task.Run(async () =>
+        {
+            try
+            {
+                while (await certificateTimer.WaitForNextTickAsync(ct))
+                    try { certificateWatch.Check(); }
+                    catch (Exception ex) { serveLog.Write("warning: the certificate check failed: " + ex.Message); }
+            }
+            catch (OperationCanceledException) { }
+        });
         try
         {
             var inFlight = new System.Collections.Concurrent.ConcurrentDictionary<Task, byte>();
@@ -947,6 +1013,7 @@ public static class ServeCommand
         finally
         {
             try { healthLoop.Wait(TimeSpan.FromSeconds(1)); } catch { /* it only samples */ }
+            try { certificateLoop.Wait(TimeSpan.FromSeconds(1)); } catch { /* it only looks */ }
             // Written out while QuickEdit is still off, so a click now cannot hold up the last
             // lines, and with them the exit.
             serveLog.Drain(TimeSpan.FromSeconds(2));
@@ -1057,20 +1124,21 @@ public static class ServeCommand
     /// front: a certificate or file that cannot be found is a startup error naming the site, not a
     /// handshake failure discovered from the browser later.</summary>
     internal static List<GatewayRoute> LoadRoutesFile(string path, string store, CliServices services, TextWriter stderr,
-        ExtraRootSet? gatewayRoots = null)
+        ExtraRootSet? gatewayRoots = null, List<(X509Certificate2 Certificate, CertificateOrigin Origin)>? origins = null)
     {
         if (!File.Exists(path)) throw new CliDataException($"--routes: {path} does not exist.");
         IReadOnlyList<GatewayRouteSpec> specs;
         try { specs = GatewayRoutesFile.Parse(File.ReadAllText(path), path, Path.GetDirectoryName(Path.GetFullPath(path))); }
         catch (InvalidDataException ex) { throw new CliDataException(ex.Message); }
-        return BuildSites(specs, "--routes", store, services, stderr, gatewayRoots);
+        return BuildSites(specs, "--routes", store, services, stderr, gatewayRoots, origins);
     }
 
     /// <summary>Sites from their written form — a routes file or a profile — into the gateway's
     /// routes: certificate loaded, CA files merged with the gateway's own, Windows credentials and
     /// headers validated. One place, so the two sources can never mean different things.</summary>
     internal static List<GatewayRoute> BuildSites(IReadOnlyList<GatewayRouteSpec> specs, string where, string store,
-        CliServices services, TextWriter stderr, ExtraRootSet? gatewayRoots)
+        CliServices services, TextWriter stderr, ExtraRootSet? gatewayRoots,
+        List<(X509Certificate2 Certificate, CertificateOrigin Origin)>? origins = null)
     {
         bool localMachine = store.Equals("LocalMachine", StringComparison.OrdinalIgnoreCase);
         var routes = new List<GatewayRoute>();
@@ -1083,12 +1151,14 @@ public static class ServeCommand
                 try { cert = services.Own(CertificateFileLoader.Load(spec.CertFile, spec.CertPassword, spec.KeyFile)); }
                 catch (CertificateFileException ex) { throw new CliDataException($"{label}: {ex.Message}"); }
                 CliCert.NoteMissingIntermediates(spec.CertFile, cert.Thumbprint!, stderr);
+                origins?.Add((cert, new CertificateOrigin { File = spec.CertFile, Password = spec.CertPassword, KeyFile = spec.KeyFile }));
             }
             else if (spec.Cert is not null)
             {
                 try { cert = CertPicker.Resolve(services.ListCertificates(localMachine), spec.Cert.Length == 0 ? null : spec.Cert, null, null, stderr).Certificate; }
                 catch (CliUsageException ex) { throw new CliDataException($"{label}: {ex.Message}"); }
                 catch (CliDataException ex) { throw new CliDataException($"{label}: {ex.Message}"); }
+                origins?.Add((cert, new CertificateOrigin { Query = spec.Cert.Length == 0 ? null : spec.Cert, LocalMachine = localMachine }));
             }
 
             SiteSettings? settings = null;
@@ -1639,7 +1709,10 @@ public static class ServeCommand
                 }
             }
             res.Close();
-            log($"{method,-6} {pathAndQuery}  -> {gwResp.StatusCode}  {sw.ElapsedMilliseconds} ms" + (recorder is not null ? " (recorded)" : ""));
+            log($"{method,-6} {pathAndQuery}  -> {gwResp.StatusCode}  {sw.ElapsedMilliseconds} ms" +
+                (gwResp.Version == "2" ? "  HTTP/2" : "") +
+                (gwResp.Attempts > 1 ? $"  ({gwResp.Attempts} attempts)" : "") +
+                (recorder is not null ? " (recorded)" : ""));
         }
         catch (GatewayRouteNotFoundException ex)
         {
@@ -1892,6 +1965,13 @@ public static class ServeCommand
                     status = "ok", version = CliApp.ProductVersion, routes = routes.All.Count, dynamic = gateway.DynamicAllowlist is not null,
                     maxConnectionsPerSite = gateway.MaxConnectionsPerSite,
                     load = policy.Health?.Describe(),
+                    // What a monitor needs to raise a renewal ticket before the outage, not after it.
+                    certificates = gateway.PresentedCertificates().Select(c => new
+                    {
+                        subject = c.Subject, thumbprint = c.Thumbprint,
+                        notAfter = c.NotAfter.ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ", System.Globalization.CultureInfo.InvariantCulture),
+                        daysLeft = (int)Math.Floor((c.NotAfter - DateTime.Now).TotalDays),
+                    }).ToArray(),
                 };
                 break;
             case "/_certapi/routes":
@@ -1900,7 +1980,7 @@ public static class ServeCommand
                     routes = routes.All.Select(r => new
                     {
                         name = r.DisplayName, prefix = r.PathPrefix, upstream = r.Upstream.ToString(),
-                        cert = (r.Certificate ?? gateway.CertificateFor(r.Upstream))?.Subject,
+                        cert = (gateway.Current(r.Certificate) ?? gateway.CertificateFor(r.Upstream))?.Subject,
                         settings = r.Settings?.Describe().ToArray() ?? Array.Empty<string>()
                     }),
                     allow = gateway.DynamicAllowlist?.Entries,

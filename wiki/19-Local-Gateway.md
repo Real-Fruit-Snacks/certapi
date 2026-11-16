@@ -162,9 +162,11 @@ certapi serve --profile corp
 `corsHeaders`, `corsExpose`, `corsMethods` (each a name or a list), `corsMaxAge`, `corsCredentials`,
 `token`, `allow` (a host or a list), `listen`, `cookieJar` (`true` or a file), `autoToken`,
 `windowsAuth`, `windowsUser`, `windowsPassword`, `forwarded`, `maxBody`, `timeout`,
-`maxConnections`, `maxRequests`, `tls`, `rewriteBody` and `sites` (exactly the `--routes` format). The certificate, `insecure`, proxy, CA files, revocation,
+`maxConnections`, `maxRequests`, `connectionLifetime`, `retry`, `tls`, `rewriteBody` and `sites` (exactly the `--routes` format). The certificate, `insecure`, proxy, CA files, revocation,
 `tlsMin` and `connectTimeout` come from the profile's top-level fields, as for every command; the
-top-level `timeout`, `workspace`, `retry` and `headers` do not apply to `serve`. Options with no field
+top-level `timeout`, `workspace`, `retry` and `headers` do not apply to `serve` (the gateway retries
+only when `--retry` or the `serve` section's own `retry` says so, so a profile that retries `send`
+does not multiply the attempts of a caller that retries too). Options with no field
 (`--check`, `--quiet`, the individual browser flags, header rules, `--record`/`--replay`) are typed on
 the command line alongside `--profile`.
 
@@ -203,6 +205,9 @@ secret masked.
 | `--timeout <seconds>` | How long to wait for the upstream's **response headers** (default 100). A body that streams longer is not cut off |
 | `--max-body <bytes>` | Refuse a request body over the limit with 413 (`k`/`m`/`g` suffixes) |
 | `--max-connections <n>` | Connections the gateway may open to one site at once for requests (default 16; each WebSocket has one of its own); a request past it waits for one to come free, within `--timeout` ([limits](#limits-and-health)) |
+| `--connection-lifetime <seconds>` | How long one connection to a site is used before a new one replaces it (default 600; `0` keeps a connection while it is in use). A request on it is never cut off ([limits](#limits-and-health)) |
+| `--retry <n>` | Send a request to the upstream again when the connection fails or the answer is a `--retry-on` status ([retries](#retries)) |
+| `--http2` | Offer HTTP/2 to https sites, so requests share one connection ([HTTP/2](#http2)) |
 | `--max-requests <n>` | Requests the gateway handles at once, WebSockets included (default 256); one more is answered 503 at once. `/_certapi/` and CORS preflights do not count and are always answered ([limits](#limits-and-health)) |
 | `--forwarded` | Add `X-Forwarded-For/Proto/Host` and `Via: 1.1 certapi` to forwarded requests |
 | `--workspace <file>` | Resolve a saved-website `<upstream>` from a workspace file |
@@ -237,8 +242,9 @@ secret masked.
 The proxy options (`--proxy`, `--no-proxy`, `--noproxy`, `--pac`, `--no-env-proxy`, `--proxy-user`),
 `--resolve`, `--tls-min`, `--connect-timeout`, `--offline` and `-4`/`-6` apply to the gateway's
 connections exactly as they do on [`send`](21-CLI-Reference.md#transport-options); without
-`--connect-timeout` the name lookup and each address still get at most 15 seconds here ([limits](#limits-and-health)). The redirect,
-decompression, HTTP-version and retry options are accepted but do not apply. `--sni` names the server
+`--connect-timeout` the name lookup and each address still get at most 15 seconds here ([limits](#limits-and-health)). The redirect and
+decompression options are accepted but do not apply, and of the HTTP versions only `--http2` does
+([HTTP/2](#http2)); the retry options do ([retries](#retries)). `--sni` names the server
 in every site's handshake (a site's own `"sni"` wins), direct connections only. The gateway answers
 `/_certapi/health` (state as JSON) and `/_certapi/routes` (sites, settings, allow list) itself, on
 `127.0.0.1` and on every virtual host alike; both honour `--token`.
@@ -266,6 +272,72 @@ never waits for the console:
   startup table, the request lines and the gateway's notes off; warnings and the health line still print. `--trace` is different: it writes each network event as it happens, on the request's
   own thread, so on a remote desktop send it to a file (`--trace-file`).
 
+## Retries
+
+```powershell
+certapi serve https://api.corp --cert "CN=svc-orders" --port 8443 --retry 2
+```
+
+With `--retry <n>` the gateway sends a request to the upstream again, on its caller's behalf, when
+the connection fails (refused, reset, no answer in time) or the upstream answers one of the
+`--retry-on` statuses (default `429,502,503,504`). The wait between attempts is the one `send` uses:
+`--retry-delay` (default 500 ms) doubled each time with a little jitter, or what a `Retry-After`
+header asks for.
+
+- **The caller never waits longer than without it.** Every attempt, and every wait between them,
+  shares `--timeout`. A wait that would outlast it is not started: the answer in hand is relayed
+  instead, so a `503` with `Retry-After: 120` reaches the caller at once.
+- **Only requests that are safe to send twice**: `GET`, `HEAD`, `OPTIONS`, `PUT` and `DELETE`, unless
+  `--retry-unsafe` adds `POST` and `PATCH`. `--no-retry-transport` keeps to the statuses.
+- **A body is sent again whole when the gateway holds it.** One up to 1 MB with a declared length is
+  read before it is forwarded, and goes again from its start. A larger or chunked one streams
+  through as it arrives, so it is sent again only when the connection failed before any of it was.
+- **A site the gateway has paused** ([limits](#limits-and-health)) is not tried again at once: the pause
+  is the answer until it ends.
+- **When the attempts run out**, the last answer (or the last error, `502`/`504`) is the one relayed.
+  The request line says how many it took: `GET /orders  -> 200  412 ms  (3 attempts)`.
+
+A caller that already retries can leave the gateway's off; one that cannot (a page, a script, a
+tool you do not control) gets the retries here.
+
+## HTTP/2
+
+`--http2` offers HTTP/2 to every https site. A site that speaks it then carries many requests at
+once on one connection, with one certificate handshake, instead of one connection and handshake
+each (up to `--max-connections`); a busy caller that sends requests in parallel waits less and opens
+fewer connections through the machine's security software. When one connection is full (the site's
+own limit on requests at once) another is opened. A site without HTTP/2 answers in HTTP/1.1 as
+before: the version is agreed in the TLS handshake. Plain `http://` sites, and sites with Windows
+sign-in (Negotiate/NTLM belongs to an HTTP/1.1 connection), stay on HTTP/1.1, and relayed WebSockets
+are unchanged. The request line ends `HTTP/2` for a request that used it. `--http3` and
+`--http1.1` do not apply to the gateway.
+
+## Certificates while the gateway runs
+
+A gateway that runs for weeks outlives its client certificate. So, while it runs:
+
+- **It looks for a renewal every 5 minutes**, choosing each certificate the way the start did: the
+  store query again (`--cert`, `--cert-issuer`, a site's `"cert"`), or the file again when it has
+  changed (`--cert-file`, a site's `"certFile"`). A certificate that is valid now and lasts longer
+  than the one presented is a renewal. It is presented from the next connection on, without a
+  restart; a request already under way finishes on the old one. The log says so, under `-q` too:
+  `certificate renewed: 'CN=svc-orders' 3F2A…, valid until 2027-11-20, is presented from now on in place of 91C0… (valid until 2026-11-28)`.
+- **A renewal in the store does not stop the next start either.** After a renewal both the old and
+  the new certificate are in the store with the same subject. When every match is one subject from
+  one issuer, every command now takes the newest (valid now, made for client authentication,
+  latest expiry) and says which; matches from different issuers still need `--cert-issuer` or
+  `--cert-serial`, as before.
+- **A certificate named by thumbprint is never renewed this way**: a renewal has another thumbprint.
+  Name it by subject (with `--cert-issuer` if need be) to have renewals taken.
+- **Expiry is said ahead of time.** Within 14 days of a certificate's expiry, a warning is written
+  once a day; once it has expired, once an hour, since every site that checks it now refuses the
+  connection. `/_certapi/health` lists each certificate presented, with its `notAfter` and
+  `daysLeft`, for a monitor to raise the renewal before the outage:
+
+```json
+"certificates": [ { "subject": "CN=svc-orders", "thumbprint": "3F2A…", "notAfter": "2027-11-20T09:00:00Z", "daysLeft": 369 } ]
+```
+
 ## Limits and health
 
 On a managed work machine every connection the gateway opens goes through software that sits
@@ -276,6 +348,11 @@ own drivers. So the gateway keeps what it asks of the machine bounded:
   for a connection to come free, and the wait counts toward `--timeout`. Many requests at once (a
   busy page over HTTP/2 with `--tls`, several tabs, a script) then cost at most 16 TLS handshakes
   per site. Each relayed WebSocket has a connection of its own, outside the 16.
+- **Each connection is replaced after 10 minutes** (`--connection-lifetime`), once the request on it
+  is done; a request in flight is never cut off. A site in steady use otherwise keeps its
+  connections for as long as the gateway runs, and a site that moves (a DNS failover, a load
+  balancer whose members changed) is not followed until a restart. Connections that go idle close
+  after a minute, as before, so this adds a handshake every 10 minutes only to a site in constant use.
 - **At most 256 requests at once** (`--max-requests`). One more is answered `503` straight away,
   with `Retry-After: 1`. A relayed WebSocket counts as one for as long as it is open. The
   gateway's own `/_certapi/` endpoints and CORS preflights reach no upstream, so they do not count

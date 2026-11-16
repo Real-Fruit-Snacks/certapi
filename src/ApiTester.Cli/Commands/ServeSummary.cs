@@ -31,6 +31,8 @@ internal static class ServeSummary
         public long? MaxBody { get; init; }
         public bool HeaderRules { get; init; }
         public bool Tls { get; init; }
+        public int Retries { get; init; }
+        public bool Http2 { get; init; }
     }
 
     public static IReadOnlyList<Row> Rows(GatewayRoutes routes, MtlsGateway gateway, VirtualHosts? vhosts,
@@ -96,6 +98,8 @@ internal static class ServeSummary
         if (f.Forwarded) parts.Add("forwarded");
         if (f.MaxBody is { } mb) parts.Add("max-body " + mb);
         if (f.Tls) parts.Add("tls");
+        if (f.Retries > 0) parts.Add($"retry {f.Retries}");
+        if (f.Http2) parts.Add("http2");
         parts.Add(f.Token ? "token required" : "no token");
         parts.Add(f.Listen is null ? "loopback only" : "listen " + f.Listen);
         return "  every site: " + string.Join(" · ", parts);

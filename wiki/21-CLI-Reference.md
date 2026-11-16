@@ -190,7 +190,7 @@ only to `--from-url`.
 
 | Option | Default | What it does |
 |---|---|---|
-| `--cert <thumbprint or subject>` | none | Client certificate from the Windows certificate store. Matches a full thumbprint, or part of the subject (`"CN=My Client"`, or just `my client`) |
+| `--cert <thumbprint or subject>` | none | Client certificate from the Windows certificate store. Matches a full thumbprint, or part of the subject (`"CN=My Client"`, or just `my client`). Several matches that are all one subject from one issuer are a renewal beside the certificate it replaced: the newest is used (valid now, made for client authentication, latest expiry) and a note says which. Matches from different issuers need `--cert-issuer` or `--cert-serial` |
 | `--store <location>` | `CurrentUser` | Which store to search. `LocalMachine` searches **both** the machine store and your own, because a machine certificate is normally used alongside personal ones |
 | `--cert-file <path>` | none | Load the certificate from a file instead of the store: `.pfx`/`.p12`, or `.pem`/`.crt`. Mutually exclusive with `--cert` |
 | `-E <file[:password]>` | none | curl's spelling: a certificate file with its password after the last colon (a drive letter's colon is not taken for one), or `CurrentUser\MY\<thumbprint>` / `LocalMachine\MY\<thumbprint>` for a store certificate, as curl's Windows build reads it. Not with `--cert` or `--cert-file` |
@@ -1153,6 +1153,9 @@ Accepts the [certificate](#certificate-options) and [transport](#transport-optio
 | `--timeout <seconds>` | `100` | How long to wait for the upstream's **response headers**. A body that streams for longer — events, long polls, downloads — is not cut off; a slow upstream is `504` |
 | `--max-body <bytes>` | none | Refuse a request body larger than this with `413`. `k`/`m`/`g` suffixes |
 | `--max-connections <n>` | `16` | Connections the gateway may open to one site at once for requests (each WebSocket has one of its own). A request past it waits for one to come free, within `--timeout`. Profile key `maxConnections` ([limits](19-Local-Gateway.md#limits-and-health)) |
+| `--connection-lifetime <seconds>` | `600` | How long one connection to a site is used before a new one replaces it; `0` keeps a connection while it is in use. A request on it is never cut off. Without a limit, a site that moved (a DNS failover, a load balancer's new members) is not followed until a restart. Profile key `connectionLifetime` ([limits](19-Local-Gateway.md#limits-and-health)) |
+| `--retry <n>` | `0` | Send a request to the upstream again when the connection fails or the answer is a `--retry-on` status, with `send`'s backoff and `Retry-After` honoured. Every attempt and wait shares `--timeout`; `GET`/`HEAD`/`OPTIONS`/`PUT`/`DELETE` only unless `--retry-unsafe`; a body up to 1 MB goes again whole, a larger one only if the connection failed before it was sent. The request line says `(3 attempts)`. Profile key `retry` in the `serve` section ([retries](19-Local-Gateway.md#retries)) |
+| `--http2` | off | Offer HTTP/2 to https sites: many requests share one connection and one certificate handshake; a site without it answers in HTTP/1.1. Not for plain http or Windows sign-in sites ([HTTP/2](19-Local-Gateway.md#http2)) |
 | `--max-requests <n>` | `256` | Requests the gateway handles at once, WebSockets included; one more is answered `503` with `Retry-After: 1`. `/_certapi/` and CORS preflights do not count and are always answered. Profile key `maxRequests` |
 | `--forwarded` | off | Add `X-Forwarded-For`, `X-Forwarded-Proto`, `X-Forwarded-Host` and `Via: 1.1 certapi` to forwarded requests, for an upstream that builds links from them |
 | `--routes <file>` | none | Sites from a JSON file, repeatable: `[{ "name": "hr", "upstream": "https://hr.corp:8443", "cert": "CN=svc-hr", "windowsAuth": true }, …]` or `{ "routes": […] }` (or `"sites"`). Each site can set `cert` (or `certFile`/`certPassword`/`keyFile`), `insecure`, `caFile`, `revocation`, `windowsAuth`/`windowsUser`/`windowsPassword`, `headers` and `sni`, each overriding the gateway's flag for that site only; `prefix` mounts at a path instead of `/name`. Paths are relative to the file; values may be `${env:NAME}`. A missing certificate or file is a startup error naming the site. Full field list in [Local Gateway](19-Local-Gateway.md#sites-with-their-own-certificate-and-settings---routes) |
@@ -1162,19 +1165,25 @@ Accepts the [certificate](#certificate-options) and [transport](#transport-optio
 | `--open [<path>]` | off | Once the gateway is listening, open the default browser at the first site (its `--vhost` host, or its mount), or at this path on the gateway |
 | `-q, --quiet` | off | No startup table, per-request log or notes; warnings and the once-a-minute health line still print |
 
-The gateway answers two paths itself, never forwarding them: `/_certapi/health` (state as JSON)
-and `/_certapi/routes` (each site's name, prefix, upstream, certificate and settings; the allow
+While it runs, the gateway looks for a renewal of each client certificate every 5 minutes and
+presents one it finds without a restart, and warns daily within 14 days of a certificate's expiry
+(hourly once expired); see [certificates while the gateway runs](19-Local-Gateway.md#certificates-while-the-gateway-runs).
+When several certificates match `--cert` and all are one subject from one issuer (a renewal beside
+the certificate it replaces), every command uses the newest and says which.
+
+The gateway answers two paths itself, never forwarding them: `/_certapi/health` (state as JSON,
+including each presented certificate's `notAfter` and `daysLeft`) and `/_certapi/routes` (each site's name, prefix, upstream, certificate and settings; the allow
 list). Both honour `--token`.
 
 **From a profile.** A profile's `serve` section has `port`, `vhost`, `browser`, `cors`, `corsHeaders`,
 `corsExpose`, `corsMethods`, `corsMaxAge`, `corsCredentials`, `token`,
 `allow`, `listen`, `cookieJar`, `autoToken`, `windowsAuth`, `windowsUser`, `windowsPassword`,
-`forwarded`, `maxBody`, `timeout`, `maxConnections`, `maxRequests`, `tls`, `rewriteBody`, and `sites`
+`forwarded`, `maxBody`, `timeout`, `maxConnections`, `maxRequests`, `connectionLifetime`, `retry`, `tls`, `rewriteBody`, and `sites`
 in the `--routes` format. The other options
 (`--check`, `--workspace`, `--quiet`, the individual browser flags, header rules, `--record`/`--replay`)
 are command-line only. The certificate, `insecure`, proxy, CA files, revocation, `tlsMin` and
 `connectTimeout` come from the profile's top-level fields; the top-level `timeout`, `workspace`,
-`retry` and `headers` do not apply to `serve`. A typed flag wins: a typed list (`--allow`,
+`retry` and `headers` do not apply to `serve` (its own `retry` does). A typed flag wins: a typed list (`--allow`,
 `--cors <origins>`, `--ca-file`) replaces the profile's, typed Windows credentials replace the
 profile's as a pair, and sites typed on the command line replace the profile's list. See
 [Configuration](27-Configuration.md).

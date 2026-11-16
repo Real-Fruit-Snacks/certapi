@@ -140,12 +140,18 @@ public sealed class ApiClient : IDisposable
     /// <summary>How long to wait before the next attempt: exponential backoff with jitter, unless the
     /// server said when to come back. Jitter keeps a fleet of clients that all failed at the same
     /// moment from returning in one synchronized wave.</summary>
-    private static TimeSpan RetryDelayFor(ApiResponse response, TransportOptions transport, int attempt)
+    private static TimeSpan RetryDelayFor(ApiResponse response, TransportOptions transport, int attempt) =>
+        BackoffDelay(transport, attempt, RetryAfterDelay(response));
+
+    /// <summary>The wait before attempt <paramref name="attempt"/> + 1: what the server asked for in
+    /// a Retry-After (when honoured), otherwise --retry-delay doubled per attempt with ±10% jitter,
+    /// capped at 30 s. Shared by `send` and the gateway, so the two back off alike.</summary>
+    internal static TimeSpan BackoffDelay(TransportOptions transport, int attempt, TimeSpan? retryAfter)
     {
         const double capMs = 30_000;
 
         // A server that bothers to say when to come back knows better than any computed guess.
-        if (transport.HonorRetryAfter && RetryAfterDelay(response) is { } asked)
+        if (transport.HonorRetryAfter && retryAfter is { } asked)
             return TimeSpan.FromMilliseconds(Math.Clamp(asked.TotalMilliseconds, 0, capMs));
 
         // No delay asked for is no delay, however many times it is doubled — and taking this out
@@ -160,6 +166,13 @@ public sealed class ApiClient : IDisposable
         ms *= 0.9 + (Random.Shared.NextDouble() * 0.2);
         return TimeSpan.FromMilliseconds(Math.Clamp(ms, 0, capMs));
     }
+
+    /// <summary>The wait a parsed Retry-After header asks for: its delta, or the time until its date
+    /// (never negative).</summary>
+    internal static TimeSpan? RetryAfterValue(System.Net.Http.Headers.RetryConditionHeaderValue value) =>
+        value.Delta is { } delta ? (delta < TimeSpan.Zero ? TimeSpan.Zero : delta)
+        : value.Date is { } date ? (date - DateTimeOffset.UtcNow is var wait && wait > TimeSpan.Zero ? wait : TimeSpan.Zero)
+        : null;
 
     /// <summary>The wait a Retry-After header asks for, or null when there is none this client can make
     /// sense of — in which case the computed backoff stands rather than the send failing over a header.</summary>

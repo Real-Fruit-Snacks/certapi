@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Globalization;
 using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
@@ -80,7 +81,14 @@ public sealed record GatewayResponse(
     string? ReasonPhrase,
     IReadOnlyList<KeyValuePair<string, string>> Headers,
     Stream Body,
-    IDisposable Lifetime);
+    IDisposable Lifetime)
+{
+    /// <summary>How many times the request was sent: more than 1 when --retry sent it again.</summary>
+    public int Attempts { get; init; } = 1;
+
+    /// <summary>The HTTP version the upstream answered with ("1.1", "2").</summary>
+    public string? Version { get; init; }
+}
 
 /// <summary>The hosts a dynamic target may name. An entry is an exact host or a <c>*.suffix</c>
 /// / <c>.suffix</c> wildcard; <c>*</c> alone allows every host and is the caller's explicit choice to
@@ -146,6 +154,16 @@ public sealed class MtlsGateway : IDisposable
 
     private UpstreamAllowlist? _dynamic;
     private WindowsAuthOptions? _windowsAuth;
+
+    /// <summary>Renewals: the thumbprint of a certificate the gateway was given, to the one it now
+    /// presents instead (<see cref="Renew"/>). Every lookup of a site's certificate goes through
+    /// <see cref="Current"/>, so the HTTP relay, the WebSocket relay and the descriptions agree.</summary>
+    private readonly ConcurrentDictionary<string, X509Certificate2> _renewed = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Clients a renewal replaced. Nothing sends through them again; their connections close
+    /// as they go idle, and they are disposed with the gateway (a response still streaming through
+    /// one is not cut off).</summary>
+    private readonly ConcurrentBag<Lazy<HttpClient>> _retired = new();
     private readonly GatewayConnectionGuard _guard = new();
     private readonly ProxyConfiguration.CachedSystemProxy? _systemProxy = ProxyConfiguration.CachedSystemProxy.ForThisMachine();
 
@@ -164,6 +182,15 @@ public sealed class MtlsGateway : IDisposable
     public int MaxConnectionsPerSite { get; set; } = DefaultMaxConnectionsPerSite;
 
     public const int DefaultMaxConnectionsPerSite = 16;
+
+    /// <summary>How long one connection to a site is used before it is replaced by a new one, once
+    /// the request on it is done (a request in flight is never cut off). Without a limit a site in
+    /// steady use keeps its connections for as long as the gateway runs, so a site that moves — a DNS
+    /// failover, a load balancer that changed its members — is not followed until a restart.
+    /// <see cref="Timeout.InfiniteTimeSpan"/> keeps them while they are in use. Set before the first request.</summary>
+    public TimeSpan ConnectionLifetime { get; set; } = DefaultConnectionLifetime;
+
+    public static readonly TimeSpan DefaultConnectionLifetime = TimeSpan.FromMinutes(10);
 
     /// <summary>Counts the gateway's connections and pauses an endpoint that keeps failing.</summary>
     public GatewayConnectionGuard Guard => _guard;
@@ -225,7 +252,46 @@ public sealed class MtlsGateway : IDisposable
 
     /// <summary>The client certificate presented to <paramref name="upstream"/>: the site's own
     /// when a static mount to that authority names one, otherwise the gateway's default.</summary>
-    public X509Certificate2? CertificateFor(Uri upstream) => SiteFor(upstream)?.Certificate ?? _clientCertificate;
+    public X509Certificate2? CertificateFor(Uri upstream) => Current(SiteFor(upstream)?.Certificate ?? _clientCertificate);
+
+    /// <summary>The certificate presented in place of <paramref name="given"/>: its renewal when
+    /// <see cref="Renew"/> named one (followed through later renewals), otherwise itself.</summary>
+    public X509Certificate2? Current(X509Certificate2? given)
+    {
+        var cert = given;
+        for (int hops = 0; cert is not null && hops < 16 && _renewed.TryGetValue(cert.Thumbprint, out var next); hops++)
+            cert = next;
+        return cert;
+    }
+
+    /// <summary>Present <paramref name="replacement"/> wherever <paramref name="old"/> (or a
+    /// certificate it renewed) was presented. New connections use it at once; a request already on
+    /// a connection finishes there. The caller keeps both certificates alive.</summary>
+    public void Renew(X509Certificate2 old, X509Certificate2 replacement)
+    {
+        var current = Current(old)!;
+        if (current.Thumbprint.Equals(replacement.Thumbprint, StringComparison.OrdinalIgnoreCase)) return;
+        _renewed[current.Thumbprint] = replacement;
+        // Pools are keyed by the certificate they present: those for the old one are retired, so the
+        // next request to each site opens a connection that presents the new one.
+        foreach (var key in _clients.Keys)
+            if (key.Split('|') is [_, var thumb, ..] && thumb.Equals(current.Thumbprint, StringComparison.OrdinalIgnoreCase) &&
+                _clients.TryRemove(key, out var client))
+                _retired.Add(client);
+    }
+
+    /// <summary>The certificates the gateway presents now, the default first, each once.</summary>
+    public IReadOnlyList<X509Certificate2> PresentedCertificates()
+    {
+        var all = new List<X509Certificate2>();
+        void Add(X509Certificate2? c)
+        {
+            if (Current(c) is { } now && !all.Any(a => a.Thumbprint.Equals(now.Thumbprint, StringComparison.OrdinalIgnoreCase))) all.Add(now);
+        }
+        Add(_clientCertificate);
+        foreach (var r in _routes.All) Add(r.Certificate);
+        return all;
+    }
 
     /// <summary>The connection settings a site actually gets: its own where it has them, the
     /// gateway's flags everywhere else. Null <paramref name="site"/> (a dynamic target) gets the
@@ -233,7 +299,7 @@ public sealed class MtlsGateway : IDisposable
     public (X509Certificate2? Certificate, bool Insecure, TransportOptions? Transport, WindowsAuthOptions? WindowsAuth) Effective(GatewayRoute? site)
     {
         var s = site?.Settings;
-        var cert = site?.Certificate ?? _clientCertificate;
+        var cert = Current(site?.Certificate ?? _clientCertificate);
         bool insecure = s?.Insecure ?? _ignoreServerCertificateErrors;
         var transport = _transport;
         if (s is not null && (s.ExtraRoots is not null || s.Revocation is not null || s.Insecure is not null || s.Sni is not null))
@@ -260,7 +326,8 @@ public sealed class MtlsGateway : IDisposable
         string key = Authority(upstream) + "|" + (cert?.Thumbprint ?? "") + "|" + (route.Settings?.PoolKey ?? "");
         string host = upstream.Host;
         return _clients.GetOrAdd(key, _ => new Lazy<HttpClient>(() => new HttpClient(
-            CreateHandler(cert, insecure, transport, _trustForHost?.Invoke(host), windowsAuth, upstream, _guard, MaxConnectionsPerSite, _systemProxy),
+            CreateHandler(cert, insecure, transport, _trustForHost?.Invoke(host), windowsAuth, upstream, _guard, MaxConnectionsPerSite, _systemProxy,
+                ConnectionLifetime, UsesHttp2(upstream, transport, windowsAuth)),
             disposeHandler: true)
         {
             // Infinite on the client: the per-request timeout below covers the wait for headers,
@@ -277,7 +344,7 @@ public sealed class MtlsGateway : IDisposable
         bool ignoreServerCertificateErrors, TransportOptions? transport,
         Func<X509Certificate2?, bool>? trustServerCertificate, WindowsAuthOptions? windowsAuth = null,
         Uri? destination = null, GatewayConnectionGuard? guard = null, int? maxConnectionsPerServer = null,
-        ProxyConfiguration.CachedSystemProxy? systemProxy = null)
+        ProxyConfiguration.CachedSystemProxy? systemProxy = null, TimeSpan? connectionLifetime = null, bool http2 = false)
     {
         // A gateway built without transport options gets the defaults, which is RevocationMode.None —
         // exactly the behavior this gateway had before revocation checking existed.
@@ -348,6 +415,10 @@ public sealed class MtlsGateway : IDisposable
             options.PacUrl is null && systemProxy.Takes(site))
             handler.Proxy = systemProxy;
         if (maxConnectionsPerServer is > 0) handler.MaxConnectionsPerServer = maxConnectionsPerServer.Value;
+        if (connectionLifetime is { } lifetime) handler.PooledConnectionLifetime = lifetime;
+        // Over HTTP/2 many requests share a connection; when one is full (the server's limit on
+        // streams at once) another is opened rather than requests queueing behind it.
+        if (http2) handler.EnableMultipleHttp2Connections = true;
         // Around the TCP connect, whatever the steps above installed for it, and inside the --sni
         // handshake below: a TLS handshake that fails (or waits on a smart card's PIN prompt) is not
         // a connection failure, and must not hold a paused site's trial.
@@ -559,12 +630,19 @@ public sealed class MtlsGateway : IDisposable
             systemProxy: _systemProxy);
     }
 
+    /// <summary>Whether requests to <paramref name="upstream"/> are offered HTTP/2 (--http2): only
+    /// over https, where the version is agreed in the handshake and a server without it answers in
+    /// HTTP/1.1, and not with Windows sign-in, which belongs to an HTTP/1.1 connection.</summary>
+    private static bool UsesHttp2(Uri upstream, TransportOptions? transport, WindowsAuthOptions? windowsAuth) =>
+        transport?.Version == HttpVersionMode.Http2 && upstream.Scheme == Uri.UriSchemeHttps && windowsAuth is null;
+
     public async Task<GatewayResponse> ForwardAsync(GatewayRequest request, CancellationToken ct)
     {
         var route = ResolveTarget(request.PathAndQuery, out var uri, out _)
                     ?? throw new GatewayRouteNotFoundException(request.PathAndQuery);
         var http = ClientFor(route);
-        using var message = new HttpRequestMessage(new HttpMethod(request.Method), uri!);
+        var (_, _, siteTransport, siteWindowsAuth) = Effective(route);
+        bool http2 = UsesHttp2(route.Upstream, siteTransport, siteWindowsAuth);
 
         string? contentType = request.ContentType;
         var forwarded = new List<KeyValuePair<string, string>>();
@@ -574,83 +652,199 @@ public sealed class MtlsGateway : IDisposable
             if (h.Key.Equals("Content-Type", StringComparison.OrdinalIgnoreCase)) { contentType ??= h.Value; continue; }
             forwarded.Add(h);
         }
-        // Content-Encoding, Content-Language, Content-Disposition … travel with the body.
-        var bodyHeaders = ContentHeaders.AddRequestHeaders(message, forwarded);
 
-        if (MethodAllowsBody(request.Method))
+        // --retry: a body held in memory (small ones are) is sent again from its start; a streamed
+        // one only while none of it has been read, which is the case when the connection failed.
+        var body = request.Body is null ? null : new ResendableBody(request.Body);
+        int retries = Math.Max(0, siteTransport?.Retries ?? 0);
+        bool idempotent = request.Method.ToUpperInvariant() is "GET" or "HEAD" or "OPTIONS" or "PUT" or "DELETE";
+        if (!idempotent && siteTransport?.RetryUnsafeMethods != true) retries = 0;
+
+        HttpRequestMessage Build()
         {
-            if (request.Body is not null)
+            var message = new HttpRequestMessage(new HttpMethod(request.Method), uri!);
+            if (http2)
             {
-                message.Content = new StreamContent(request.Body);
-                // The caller's own framing, forwarded as such — see GatewayRequest.ContentLength.
-                if (request.ContentLength is { } declared && declared >= 0)
-                    message.Content.Headers.ContentLength = declared;
+                message.Version = HttpVersion.Version20;
+                message.VersionPolicy = HttpVersionPolicy.RequestVersionOrLower;
             }
-            else
+            // Content-Encoding, Content-Language, Content-Disposition … travel with the body.
+            var bodyHeaders = ContentHeaders.AddRequestHeaders(message, forwarded);
+            if (MethodAllowsBody(request.Method))
             {
-                // A POST/PUT with no body still needs a frame: without Content-Length: 0 a strict
-                // server answers 411 Length Required.
-                message.Content = new ByteArrayContent(Array.Empty<byte>());
+                if (body is not null)
+                {
+                    message.Content = new StreamContent(body);
+                    // The caller's own framing, forwarded as such — see GatewayRequest.ContentLength.
+                    if (request.ContentLength is { } declared && declared >= 0)
+                        message.Content.Headers.ContentLength = declared;
+                }
+                else
+                {
+                    // A POST/PUT with no body still needs a frame: without Content-Length: 0 a strict
+                    // server answers 411 Length Required.
+                    message.Content = new ByteArrayContent(Array.Empty<byte>());
+                }
+                if (!string.IsNullOrEmpty(contentType) && MediaTypeHeaderValue.TryParse(contentType, out var mt))
+                    message.Content.Headers.ContentType = mt;
+                ContentHeaders.ApplyTo(message.Content, bodyHeaders, keepContentType: true);
             }
-            if (!string.IsNullOrEmpty(contentType) && MediaTypeHeaderValue.TryParse(contentType, out var mt))
-                message.Content.Headers.ContentType = mt;
-            ContentHeaders.ApplyTo(message.Content, bodyHeaders, keepContentType: true);
+            return message;
         }
 
-        // The per-request timeout covers the wait for the upstream's headers only; the body streams
-        // under the caller's cancellation alone (see ClientFor).
+        // The per-request timeout covers the wait for the upstream's headers only — every attempt
+        // and the waits between them together; the body streams under the caller's cancellation
+        // alone (see ClientFor).
         using var headerTimeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
         headerTimeout.CancelAfter(_timeout);
-        HttpResponseMessage response;
-        try
+        var started = System.Diagnostics.Stopwatch.StartNew();
+        for (int attempt = 1; ; attempt++)
         {
-            // ResponseHeadersRead: return as soon as headers arrive; the body streams lazily.
-            response = await http.SendAsync(message, HttpCompletionOption.ResponseHeadersRead, headerTimeout.Token);
-        }
-        // A tunnel the proxy refused: its answer is passed on, and the refusal counted (see
-        // GatewayConnectionGuard for why it is not paused).
-        catch (HttpRequestException ex) when (ex.HttpRequestError == HttpRequestError.ProxyTunnelError)
-        {
-            _guard.CountRefusedTunnel();
-            throw;
-        }
-        catch (HttpRequestException ex) when (Find<GatewayConnectTimeoutException>(ex) is not null)
-        {
-            // "The connection attempt got no answer within 15 s (app.corp:443)": a timeout, so 504.
-            throw new TimeoutException(ex.Message + ".", ex);
-        }
-        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
-        {
-            if (headerTimeout.IsCancellationRequested)
-                throw new TimeoutException($"The upstream did not answer within {_timeout.TotalSeconds:0} s.");
-            // Nothing else cancels a send: the handler's own connect timeout (--connect-timeout) ran
-            // out, on the TCP connect, a proxy tunnel or the TLS handshake.
-            var limit = Effective(route).Transport?.ConnectTimeout;
-            throw new TimeoutException($"No connection to {uri!.Authority} within " +
-                (limit is { } l ? $"{l.TotalSeconds:0.#} s (--connect-timeout)." : "the connect timeout."));
+            bool mayRetry = attempt <= retries && (body is null || body.CanResend) && !ct.IsCancellationRequested;
+            HttpResponseMessage response;
+            var message = Build();
+            try
+            {
+                // ResponseHeadersRead: return as soon as headers arrive; the body streams lazily.
+                response = await http.SendAsync(message, HttpCompletionOption.ResponseHeadersRead, headerTimeout.Token);
+            }
+            // A tunnel the proxy refused: its answer is passed on, and the refusal counted (see
+            // GatewayConnectionGuard for why it is not paused).
+            catch (HttpRequestException ex) when (ex.HttpRequestError == HttpRequestError.ProxyTunnelError)
+            {
+                message.Dispose();
+                _guard.CountRefusedTunnel();
+                throw;
+            }
+            catch (HttpRequestException ex) when (Find<GatewayConnectTimeoutException>(ex) is not null)
+            {
+                message.Dispose();
+                if (mayRetry && siteTransport!.RetryOnTransportError && await WaitToRetryAsync(attempt, null)) continue;
+                // "The connection attempt got no answer within 15 s (app.corp:443)": a timeout, so 504.
+                throw new TimeoutException(ex.Message + "." + Tried(attempt), ex);
+            }
+            catch (HttpRequestException ex)
+            {
+                message.Dispose();
+                // Only what a second attempt could survive, as on send: a connection refused, reset or
+                // ended early, or a name that did not resolve. A refused or untrusted certificate, or
+                // an answer that is not HTTP, would fail the same way again. A site the guard has
+                // paused fails at once every time until its pause is over: trying it again now would
+                // only spend the attempts.
+                bool transient = ex.HttpRequestError is HttpRequestError.ConnectionError or HttpRequestError.NameResolutionError
+                    or HttpRequestError.ResponseEnded;
+                if (mayRetry && transient && siteTransport!.RetryOnTransportError && Find<GatewayEndpointPausedException>(ex) is null &&
+                    await WaitToRetryAsync(attempt, null)) continue;
+                if (attempt > 1) throw new HttpRequestException(ex.HttpRequestError, ex.Message + Tried(attempt), ex.InnerException, ex.StatusCode);
+                throw;
+            }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+            {
+                message.Dispose();
+                if (headerTimeout.IsCancellationRequested)
+                    throw new TimeoutException($"The upstream did not answer within {_timeout.TotalSeconds:0} s." + Tried(attempt));
+                // Nothing else cancels a send: the handler's own connect timeout (--connect-timeout) ran
+                // out, on the TCP connect, a proxy tunnel or the TLS handshake.
+                if (mayRetry && siteTransport!.RetryOnTransportError && await WaitToRetryAsync(attempt, null)) continue;
+                var limit = siteTransport?.ConnectTimeout;
+                throw new TimeoutException($"No connection to {uri!.Authority} within " +
+                    (limit is { } l ? $"{l.TotalSeconds:0.#} s (--connect-timeout)." : "the connect timeout.") + Tried(attempt));
+            }
+            catch
+            {
+                message.Dispose();
+                throw;
+            }
+
+            // A status the site asked to be retried on (--retry-on: 429, 502, 503, 504 by default):
+            // this answer is let go and the request sent again, as long as there is time for it.
+            if (mayRetry && siteTransport!.RetryOn.Contains((int)response.StatusCode) &&
+                await WaitToRetryAsync(attempt, response.Headers.RetryAfter is { } ra ? ApiClient.RetryAfterValue(ra) : null, response))
+            {
+                message.Dispose();
+                continue;
+            }
+
+            try
+            {
+                var headers = new List<KeyValuePair<string, string>>();
+                foreach (var h in response.Headers)
+                    if (!HopByHop.Is(h.Key))
+                        foreach (var v in h.Value) headers.Add(new(h.Key, v));
+                foreach (var h in response.Content.Headers)
+                    // Content-Length is hop-by-hop for the forwarded *request* (HttpClient sets it), but on
+                    // the *response* it frames the body the caller receives, so relay it through.
+                    if (!HopByHop.Is(h.Key) || h.Key.Equals("Content-Length", StringComparison.OrdinalIgnoreCase))
+                        foreach (var v in h.Value) headers.Add(new(h.Key, v));
+
+                var bodyStream = await response.Content.ReadAsStreamAsync(ct);
+                return new GatewayResponse(
+                    (int)response.StatusCode, response.ReasonPhrase, headers, bodyStream, new Both(response, message))
+                {
+                    Attempts = attempt,
+                    Version = response.Version.Major >= 2 ? response.Version.Major.ToString(CultureInfo.InvariantCulture) : response.Version.ToString(2)
+                };
+            }
+            catch
+            {
+                response.Dispose();
+                message.Dispose();
+                throw;
+            }
         }
 
-        try
+        // Waits out the backoff before attempt + 1 and readies the body for it; false (send nothing
+        // more) when the wait would outlast --timeout or the body cannot be sent again.
+        async Task<bool> WaitToRetryAsync(int attempt, TimeSpan? retryAfter, HttpResponseMessage? answer = null)
         {
-            var headers = new List<KeyValuePair<string, string>>();
-            foreach (var h in response.Headers)
-                if (!HopByHop.Is(h.Key))
-                    foreach (var v in h.Value) headers.Add(new(h.Key, v));
-            foreach (var h in response.Content.Headers)
-                // Content-Length is hop-by-hop for the forwarded *request* (HttpClient sets it), but on
-                // the *response* it frames the body the caller receives, so relay it through.
-                if (!HopByHop.Is(h.Key) || h.Key.Equals("Content-Length", StringComparison.OrdinalIgnoreCase))
-                    foreach (var v in h.Value) headers.Add(new(h.Key, v));
+            var delay = ApiClient.BackoffDelay(siteTransport!, attempt, retryAfter);
+            if (started.Elapsed + delay >= _timeout || body is { CanResend: false }) return false;
+            // The answer being retried is kept until the wait is over: if the wait is cut short, it is
+            // the answer the caller gets.
+            try { await Task.Delay(delay, headerTimeout.Token); }
+            catch (OperationCanceledException) { return false; }
+            answer?.Dispose();
+            body?.Rewind();
+            return true;
+        }
+    }
 
-            var bodyStream = await response.Content.ReadAsStreamAsync(ct);
-            return new GatewayResponse(
-                (int)response.StatusCode, response.ReasonPhrase, headers, bodyStream, response);
-        }
-        catch
-        {
-            response.Dispose();
-            throw;
-        }
+    private static string Tried(int attempts) => attempts > 1 ? $" ({attempts} attempts)" : "";
+
+    /// <summary>What a response's lifetime releases: the response, and the request message it answered.</summary>
+    private sealed class Both(IDisposable first, IDisposable second) : IDisposable
+    {
+        public void Dispose() { first.Dispose(); second.Dispose(); }
+    }
+
+    /// <summary>A request body that may be sent more than once. One held in memory goes again from
+    /// its start; a streamed one only while nothing of it has been read (a connection that failed
+    /// before the body was sent). Not disposed with the request message that sent it, since the
+    /// next attempt needs it; the caller owns the stream.</summary>
+    private sealed class ResendableBody(Stream inner) : Stream
+    {
+        private readonly long _start = inner.CanSeek ? inner.Position : 0;
+        private bool _read;
+
+        public bool CanResend => inner.CanSeek || !_read;
+        public void Rewind() { if (inner.CanSeek) inner.Position = _start; }
+
+        public override bool CanRead => true;
+        public override bool CanSeek => inner.CanSeek;
+        public override bool CanWrite => false;
+        public override long Length => inner.Length;
+        public override long Position { get => inner.Position; set => inner.Position = value; }
+        public override void Flush() { }
+        public override int Read(byte[] buffer, int offset, int count) { _read = true; return inner.Read(buffer, offset, count); }
+        public override int Read(Span<byte> buffer) { _read = true; return inner.Read(buffer); }
+        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        { _read = true; return inner.ReadAsync(buffer, cancellationToken); }
+        public override Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)
+        { _read = true; return inner.ReadAsync(buffer, offset, count, cancellationToken); }
+        public override long Seek(long offset, SeekOrigin origin) => inner.Seek(offset, origin);
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        protected override void Dispose(bool disposing) { /* the caller's stream: see the summary */ }
     }
 
     private static T? Find<T>(Exception? ex) where T : Exception
@@ -666,7 +860,7 @@ public sealed class MtlsGateway : IDisposable
 
     public void Dispose()
     {
-        foreach (var client in _clients.Values)
+        foreach (var client in _clients.Values.Concat(_retired))
             if (client.IsValueCreated) client.Value.Dispose();
     }
 }

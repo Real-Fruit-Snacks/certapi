@@ -33,8 +33,14 @@ public static class CliCert
     /// <param name="environment">Where CERTAPI_CERT_PIN is read from; injectable so a test never
     /// touches the process environment.</param>
     public static X509Certificate2? Resolve(Args args, string store, CliServices services, TextWriter stderr,
-        Func<string, string?> environment)
+        Func<string, string?> environment) => Resolve(args, store, services, stderr, environment, out _);
+
+    /// <param name="origin">How the certificate was chosen — the store query or the file — so a
+    /// long-running command (`serve`) can choose again and find a renewal. Null with no certificate.</param>
+    public static X509Certificate2? Resolve(Args args, string store, CliServices services, TextWriter stderr,
+        Func<string, string?> environment, out CertificateOrigin? origin)
     {
+        origin = null;
         // The precedence rule for the whole product, written as the null-coalescing chain it is:
         // an explicitly typed flag is non-null and wins; otherwise the configuration profile
         // supplies it; otherwise the built-in default stands. There is no separate precedence
@@ -95,10 +101,49 @@ public static class CliCert
                 certQuery.Length == 0 ? null : certQuery, certIssuer, certSerial, stderr).Certificate;
         }
 
+        origin = certFile is not null
+            ? new CertificateOrigin { File = certFile, Password = certPassword, KeyFile = keyFile, Pin = pin }
+            : new CertificateOrigin
+            {
+                Query = string.IsNullOrEmpty(certQuery) ? null : certQuery, Issuer = certIssuer, Serial = certSerial,
+                LocalMachine = localMachine, Pin = pin
+            };
         var unlocked = WithPin(cert, pin, stderr);
         // A PIN makes a copy bound to the unlocked key; it is this invocation's too.
         if (!ReferenceEquals(unlocked, cert)) services.Own(unlocked);
         return unlocked;
+    }
+
+    /// <summary>The certificate <paramref name="origin"/> names now, chosen the same way as at the
+    /// start (the newest of a renewal), without its PIN (applied by the caller, once it is a
+    /// renewal); null when none does or it cannot be read. A file is read again only when it
+    /// changed since <paramref name="fileSeen"/>, which it updates. The store's other certificates
+    /// are released, unless <paramref name="inUse"/> says one is being presented.</summary>
+    internal static X509Certificate2? ResolveAgain(CertificateOrigin origin, CliServices services, ref DateTime? fileSeen,
+        Func<X509Certificate2, bool> inUse, out string? problem)
+    {
+        problem = null;
+        if (origin.File is { } file)
+        {
+            DateTime written;
+            try { written = File.GetLastWriteTimeUtc(file); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { problem = ex.Message; return null; }
+            if (fileSeen == written) return null;
+            X509Certificate2 loaded;
+            try { loaded = CertificateFileLoader.Load(file, origin.Password, origin.KeyFile); }
+            catch (CertificateFileException ex) { problem = ex.Message; return null; }
+            // A file caught mid-write fails to load; it is tried again next time rather than skipped.
+            fileSeen = written;
+            services.Own(loaded);
+            return loaded;
+        }
+
+        var listed = services.ListCertificates(origin.LocalMachine);
+        var (hit, error, _) = CertPicker.Select(listed, origin.Query, origin.Issuer, origin.Serial);
+        foreach (var c in listed)
+            if (!ReferenceEquals(c.Certificate, hit?.Certificate) && !inUse(c.Certificate)) c.Certificate.Dispose();
+        if (hit is null) problem = error;
+        return hit?.Certificate;
     }
 
     /// <summary>curl's -E: <c>file[:password]</c>, or — as curl's Windows build reads it — a store
@@ -144,4 +189,23 @@ public static class CliCert
         if (note is not null) stderr.WriteLine("note: " + note);
         return unlocked;
     }
+}
+
+/// <summary>How a client certificate was chosen: a store query (subject or thumbprint, issuer,
+/// serial) or a file. Kept by `serve` so it can choose again while it runs.</summary>
+public sealed record CertificateOrigin
+{
+    public string? Query { get; init; }
+    public string? Issuer { get; init; }
+    public string? Serial { get; init; }
+    public bool LocalMachine { get; init; }
+    public string? File { get; init; }
+    public string? Password { get; init; }
+    public string? KeyFile { get; init; }
+    public string? Pin { get; init; }
+
+    /// <summary>A thumbprint names one certificate: a renewal, which has another, is never it.</summary>
+    public bool NamesOneCertificate =>
+        File is null && Issuer is null && Serial is null && Query is { } q &&
+        q.Where(char.IsLetterOrDigit).ToArray() is { Length: 40 } hex && hex.All(Uri.IsHexDigit);
 }

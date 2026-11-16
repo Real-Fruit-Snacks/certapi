@@ -91,6 +91,9 @@ public sealed class CliServices
     /// <summary>How often `serve` samples its load and writes the health line; a test shortens it.</summary>
     public TimeSpan ServeHealthInterval { get; init; } = TimeSpan.FromMinutes(1);
 
+    /// <summary>How often `serve` looks for a renewal of its client certificates; a test shortens it.</summary>
+    public TimeSpan ServeCertificateCheckInterval { get; init; } = TimeSpan.FromMinutes(5);
+
     private readonly List<System.Security.Cryptography.X509Certificates.X509Certificate2> _owned = new();
 
     /// <summary>A certificate this invocation loaded from a file, disposed when the command ends.
