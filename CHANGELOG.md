@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.101.0] - 2026-11-15
+
 ### Added
 - `serve --retry <n>`: the gateway sends a request to the upstream again when the connection fails
   or the answer is a `--retry-on` status (429, 502, 503, 504 by default), with `send`'s backoff and
@@ -3643,7 +3645,8 @@ Initial release.
 - Save any response (including binary) to a file.
 - Self-contained single-file executable — no installer, no admin rights, no runtime dependency.
 
-[Unreleased]: https://github.com/Real-Fruit-Snacks/certapi/compare/v1.100.2...HEAD
+[Unreleased]: https://github.com/Real-Fruit-Snacks/certapi/compare/v1.101.0...HEAD
+[1.101.0]: https://github.com/Real-Fruit-Snacks/certapi/compare/v1.100.2...v1.101.0
 [1.100.2]: https://github.com/Real-Fruit-Snacks/certapi/compare/v1.100.1...v1.100.2
 [1.100.1]: https://github.com/Real-Fruit-Snacks/certapi/compare/v1.100.0...v1.100.1
 [1.100.0]: https://github.com/Real-Fruit-Snacks/certapi/compare/v1.99.0...v1.100.0
