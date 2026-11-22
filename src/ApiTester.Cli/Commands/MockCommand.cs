@@ -73,7 +73,10 @@ public static class MockCommand
                             Get CORS wrong on purpose: double-origin (two
                             Access-Control-Allow-Origin values), preflight-401,
                             preflight-redirect, preflight-only (headers on the preflight, none
-                            on the response) or no-vary (the origin echoed without Vary)
+                            on the response), no-vary (the origin echoed without Vary),
+                            star-with-credentials (* + Allow-Credentials: true), null-origin,
+                            missing-expose, bad-methods, bad-headers, preflight-no-pna, or
+                            preflight-require-cert (403 on OPTIONS without a client cert)
                             A --routes route can carry its own "cors": false, true, or an
                             object with origins, headers, methods, expose, maxAge, star and
                             fault; it replaces --cors for requests to that route

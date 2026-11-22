@@ -267,7 +267,7 @@ public static class CompletionCommand
     }
 
     private static readonly string[] KnownChoices =
-        ["-X", "--method", "--store", "--revocation", "--tls-min", "--grant", "--client-auth", "--tls-mode", "--cert", "--ca", "--profile", "--env"];
+        ["-X", "--method", "--store", "--revocation", "--tls-min", "--grant", "--client-auth", "--tls-mode", "--cert", "--ca", "--profile", "--env", "--suggest", "--cors-fault"];
 
     private static IEnumerable<string> ValuesFor(string option, CliServices services) => option.ToLowerInvariant() switch
     {
@@ -278,6 +278,8 @@ public static class CompletionCommand
         "--grant" => ["client_credentials", "password", "refresh", "device"],
         "--client-auth" => ["body", "basic"],
         "--tls-mode" => ["valid", "expired", "wrong-host", "self-signed"],
+        "--suggest" => CorsSuggest.Frameworks,
+        "--cors-fault" => MockCors.FaultNames,
         "--cert" or "--ca" => Certificates(services),
         "--profile" => ProfileNames(services),
         "--env" => Safe(() => AppState.PeekFrom(services.LiveStatePath).Environments.Select(e => e.Name)),

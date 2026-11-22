@@ -711,6 +711,7 @@ so it refuses `--har`, `--junit`, `--md`, `--md-vault`, `--cookies`, `--cookie-j
 | `--repeat <n>` | `1` | Repeat the suite *n* times |
 | `--origin <origin>` | none | Check the suite's CORS too: every request is sent with `Origin: <origin>` and gets a `cors <origin> allowed` check alongside its own assertions, so the table, `--junit` and `--md` say which endpoints a page on that origin could read. The checks exist for the run only; nothing is written to the collection |
 | `--cors-credentials` | off | With `--origin`, require that the page could read each answer **with credentials** — what a mutual-TLS API needs, since a browser presents the client certificate only on a credentialed request |
+| `--cors-preflight` | off | With `--origin`, also send and verify the browser `OPTIONS` preflight for every non-simple request in the suite or chain |
 | `--diff-ignore <path>` | none | A JSON path to ignore when diffing. Repeatable |
 | `--diff-ignore-header <name>` | none | One more header to ignore when diffing. Repeatable |
 
@@ -1606,8 +1607,12 @@ URL the way a browser checks a cross-origin request, with your client certificat
 | `--actual` | off | Also send the request itself for a method other than GET or HEAD |
 | `--preflight-only` | off | Never send the request itself |
 | `--preflight-without-cert` | off | Send the preflight **without the client certificate**, as the Fetch standard sends it. A server that demands a certificate during the TLS handshake (nginx `ssl_verify_client on`, IIS *Require*) then refuses the preflight before its CORS policy runs — browsers differ on whether they present one for a preflight, so this is the case to make work |
-| `--suggest [<framework>]` | off | After the check, print the **server configuration** that grants exactly what was checked — the origins, the methods and headers that needed a preflight, the response headers a script could not see, credentials, Private Network Access — as an allow-list for `aspnet` (ASP.NET Core), `nginx`, `express`, `spring`, `iis` (IIS CORS Module) or `apigateway` (AWS HTTP API), or all of them when none is named. Works with `--audit` (an allow-list of the trusted origin) and `--from-har` too |
+| `--suggest [<framework>]` | off | After the check, print the **server configuration** that grants exactly what was checked — the origins, the methods and headers that needed a preflight, the response headers a script could not see, credentials, Private Network Access — as an allow-list for `aspnet`, `nginx`, `express`, `spring`, `iis`, `apigateway`, `apim` (Azure API Management), `yarp`, `cloudflare`, `caddy`, `traefik`, `apache`, `fastapi` or `go`, or all of them when none is named. Works with `--audit`, `--from-har`, `--from-openapi`, and `--json` |
+| `--max-age <seconds>` | `600` | Preflight `Access-Control-Max-Age` seconds emitted by `--suggest` |
+| `--diff <other-url>` | none | Compare the CORS policy of `<url>` against `<other-url>` across every `--origin` × `-X` combination (verdicts, preflight/response headers, readable headers); exit 0 when identical, 1 when they differ |
 | `--from-har <file>` | none | Check **every cross-origin request in a browser capture** instead of one URL — see below |
+| `--from-openapi <file>` | none | Sweep every operation in an OpenAPI 3.x / Swagger 2.0 JSON spec against `--origin` (GET/HEAD in full, unsafe methods preflighted unless `--actual`). Pair with `--base-url <url>` to override the spec's server |
+| `--base-url <url>` | spec server | With `--from-openapi`, override the spec's base server URL |
 | `--live` | off | With `--from-har`, also re-check each distinct request against the server now, as `cors` checks one: GET and HEAD in full, other methods by their preflight |
 | `--private-network` | off | Check **Private Network Access** too: the preflight carries `Access-Control-Request-Private-Network: true`, and the answer must say `Access-Control-Allow-Private-Network: true` — for a page on the internet calling an API on a private or loopback address. Without it, that case is pointed out in a note (current Chrome asks the user for permission to reach the local network instead of sending this preflight) |
 | `--audit` | off | **Probe for misconfigurations** instead of checking one request — see below |
@@ -1670,9 +1675,14 @@ header, and grades what was allowed:
 | prefix look-alike | `https://certapi-cors-audit` + the trusted host | the check only looks at the end of the name — high / medium |
 | suffix look-alike | the trusted host + `.certapi-cors-audit.example` | the check only looks at the start of the name — high / medium |
 | unescaped dot | the trusted host with its first dot replaced | the check is a regular expression with an unescaped `.` — high / medium |
+| port look-alike | the trusted host on a different port (`:8443` / `:8444`) | the origin check compares hostname without port — medium / low |
+| userinfo / underscore / backtick | `@`, `_.`, `%60.` look-alikes | parser/regex bypasses against unanchored checks — high / medium |
+| localhost dev origins | `http://localhost`, `http://localhost:3000` (non-local targets only) | forgotten development origins left in production — medium / low |
 | plain http | `http://` + the trusted host | anyone on the network path can inject a page there — medium / low |
 | subdomain | `https://certapi-cors-audit.` + the trusted host | every subdomain is trusted, so one taken over is enough — low / info |
 | trusted origin | the `--origin` given | (expected to be allowed; noted if it is not) |
+
+The audit also flags dynamic `Access-Control-Allow-Origin` responses missing `Vary: Origin` (shared-cache poisoning), credentialed preflight reflection, and—when paired with `--preflight-without-cert`—servers that reject unauthenticated `OPTIONS` preflights at the TLS/auth layer.
 
 The trusted origin is `--origin`, or the URL's own origin when none is given. A
 `Access-Control-Allow-Origin: *` is reported as information (with credentials it cannot work at

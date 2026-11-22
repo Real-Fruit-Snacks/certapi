@@ -27,20 +27,22 @@ of a large body left the window not responding until it finished.
 **CORS…**, beside **Discover…** above the request, checks the current request the way a browser on
 another origin would, with the request's own method, headers, body and certificate:
 
-- **Page origin** — where the page making the call lives (`https://app.example.com`). Several,
-  comma-separated, are checked one after another.
+- **Page origin** and **Method** — where the page making the call lives (`https://app.example.com`) and the method(s) (`GET` or `GET,PUT`). Several comma-separated origins or methods are checked as a matrix.
+- **Headers** — editable `Name: Value` request headers (pre-filled from the active request) so you can test adding custom headers without leaving the window.
 - **Check** sends the preflight a browser would send (when one is needed), then the request with the
   `Origin` header, follows each redirect as a browser does, and lists every rule that passed or
   failed, the verdict, and the headers a script could read. Methods other than GET and HEAD are only
-  preflighted unless **Send unsafe methods** is ticked.
-- **Audit** tries the origins attackers use — any origin, `null`, look-alike domains, plain http —
+  preflighted unless **Send unsafe methods** is ticked; **Preflight only** skips the actual request.
+- **Audit** tries the origins attackers use — any origin, `null`, look-alike domains, port/parser tricks, plain http, dev localhost origins —
   and grades each one the server lets in.
-- **With credentials**, **Private network** and **Preflight without the certificate** mean what
-  `--credentials`, `--private-network` and `--preflight-without-cert` mean on
+- **From HAR…** loads a browser HAR capture and checks every cross-origin request recorded in it.
+- **With credentials**, **Private network**, **Preflight only** and **Preflight without cert** match
+  `--credentials`, `--private-network`, `--preflight-only` and `--preflight-without-cert` on
   [`certapi cors`](21-CLI-Reference.md#cors). The first is ticked to begin with, because a browser
   presents a client certificate only on a credentialed request.
-- **Fix for** adds the server configuration that grants what was checked, for ASP.NET Core, nginx,
-  Express, Spring, IIS or AWS API Gateway.
+- **Fix** adds the server configuration that grants what was checked, for ASP.NET Core, nginx,
+  Express, Spring, IIS, AWS API Gateway, Azure APIM, YARP, Cloudflare, Caddy, Traefik, Apache, FastAPI or Go.
+- **Copy**, **Copy Fix** and **JSON…** copy the report or generated server config to the clipboard, or export the structured JSON result.
 
 A `ws://` or `wss://` URL is checked as a WebSocket: which origins the server accepts a handshake
 from, and with **Audit**, whether any site could open the socket.

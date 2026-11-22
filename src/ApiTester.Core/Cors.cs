@@ -38,6 +38,14 @@ public static class CorsRules
 {
     private static readonly HashSet<string> SimpleMethods = new(StringComparer.Ordinal) { "GET", "HEAD", "POST" };
 
+    /// <summary>Methods browsers forbid scripts from sending at all (Fetch §2.2.1).</summary>
+    private static readonly HashSet<string> ForbiddenMethods = new(StringComparer.OrdinalIgnoreCase) { "CONNECT", "TRACE", "TRACK" };
+
+    private static readonly HashSet<string> MethodOverrideHeaders = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "X-HTTP-Method", "X-HTTP-Method-Override", "X-Method-Override"
+    };
+
     private static readonly HashSet<string> SimpleContentTypes = new(StringComparer.OrdinalIgnoreCase)
     {
         "application/x-www-form-urlencoded", "multipart/form-data", "text/plain"
@@ -49,15 +57,30 @@ public static class CorsRules
         "Cache-Control", "Content-Language", "Content-Length", "Content-Type", "Expires", "Last-Modified", "Pragma"
     };
 
+    /// <summary>True when a browser forbids scripts from using <paramref name="method"/> (CONNECT, TRACE, TRACK).</summary>
+    public static bool ForbiddenMethod(string method) => ForbiddenMethods.Contains(method.Trim());
+
     /// <summary>Headers a page cannot set: the browser owns them.</summary>
     public static bool Forbidden(string name)
     {
         string n = name.ToLowerInvariant();
-        return n is "accept-charset" or "accept-encoding" or "access-control-request-headers" or "access-control-request-method"
+        return n is "accept-charset" or "accept-encoding" or "access-control-request-headers"
+                   or "access-control-request-method" or "access-control-request-private-network"
                    or "connection" or "content-length" or "cookie" or "cookie2" or "date" or "dnt" or "expect" or "host"
                    or "keep-alive" or "origin" or "referer" or "set-cookie" or "te" or "trailer" or "transfer-encoding"
                    or "upgrade" or "via"
                || n.StartsWith("proxy-", StringComparison.Ordinal) || n.StartsWith("sec-", StringComparison.Ordinal);
+    }
+
+    /// <summary>True when a header name/value pair is forbidden by Fetch (including method-override
+    /// headers carrying a forbidden method such as TRACE or CONNECT).</summary>
+    public static bool Forbidden(string name, string value)
+    {
+        if (Forbidden(name)) return true;
+        if (MethodOverrideHeaders.Contains(name))
+            return value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Any(ForbiddenMethod);
+        return false;
     }
 
     /// <summary>A request header a page may send without a preflight (the CORS-safelisted ones).</summary>
@@ -75,17 +98,34 @@ public static class CorsRules
             case "content-type":
                 return !value.Any(UnsafeByte) && SimpleContentTypes.Contains(value.Split(';')[0].Trim());
             case "range":
-                return System.Text.RegularExpressions.Regex.IsMatch(value.Trim(), @"^bytes=\d+-\d*$");
+            {
+                var m = System.Text.RegularExpressions.Regex.Match(value.Trim(), @"^bytes=(\d+)-(\d*)$");
+                if (!m.Success) return false;
+                if (m.Groups[2].Length == 0) return true;
+                return ulong.TryParse(m.Groups[1].Value, out var start) &&
+                       ulong.TryParse(m.Groups[2].Value, out var end) &&
+                       end >= start;
+            }
             default:
                 return false;
         }
     }
 
+    /// <summary>True when the combined byte/char length of CORS-safelisted request-header values
+    /// exceeds Fetch's 1024-byte cap, forcing a preflight.</summary>
+    public static bool ExceedsSafelistedTotal(CorsRequest r) =>
+        r.Headers.Where(h => !Forbidden(h.Key, h.Value) && SafelistedRequestHeader(h.Key, h.Value))
+            .Sum(h => h.Value.Length) > 1024;
+
     /// <summary>The header names a page's request carries that are not safelisted — what a
     /// preflight's Access-Control-Request-Headers lists: lower case, sorted, de-duplicated.</summary>
-    public static IReadOnlyList<string> UnsafeHeaderNames(CorsRequest r) =>
-        r.Headers.Where(h => !Forbidden(h.Key) && !SafelistedRequestHeader(h.Key, h.Value))
+    public static IReadOnlyList<string> UnsafeHeaderNames(CorsRequest r)
+    {
+        bool overTotal = ExceedsSafelistedTotal(r);
+        return r.Headers
+            .Where(h => !Forbidden(h.Key, h.Value) && (overTotal || !SafelistedRequestHeader(h.Key, h.Value)))
             .Select(h => h.Key.ToLowerInvariant()).Distinct().OrderBy(n => n, StringComparer.Ordinal).ToList();
+    }
 
     /// <summary>Why a browser would send a preflight first, or null when it would not.</summary>
     public static string? PreflightReason(CorsRequest r)
@@ -93,9 +133,12 @@ public static class CorsRules
         var reasons = new List<string>();
         string method = r.Method.ToUpperInvariant();
         if (!SimpleMethods.Contains(method)) reasons.Add($"the method is {method}");
+        bool overTotal = ExceedsSafelistedTotal(r);
+        if (overTotal) reasons.Add("combined CORS-safelisted request-header values exceed 1024 bytes");
         foreach (var name in UnsafeHeaderNames(r))
         {
             var header = r.Headers.Last(h => h.Key.Equals(name, StringComparison.OrdinalIgnoreCase));
+            if (overTotal && SafelistedRequestHeader(header.Key, header.Value)) continue;
             reasons.Add(name == "content-type"
                 ? $"Content-Type is {header.Value.Split(';')[0].Trim()} (only form, multipart and text/plain go without one)"
                 : $"the request sets {header.Key}");
@@ -150,8 +193,12 @@ public static class CorsRules
         }
         else if (!value.Equals(r.Origin, StringComparison.Ordinal))
         {
-            problems.Add($"{what} allows the origin {value}, not {r.Origin}" +
-                         (value.Equals(r.Origin, StringComparison.OrdinalIgnoreCase) ? " (the comparison is exact, letter case included)" : ""));
+            string hint = value.Equals(r.Origin, StringComparison.OrdinalIgnoreCase)
+                ? " (the comparison is exact, letter case included)"
+                : value.TrimEnd('/').Equals(r.Origin, StringComparison.Ordinal)
+                    ? " (drop the trailing slash — an Origin never has a path)"
+                    : "";
+            problems.Add($"{what} allows the origin {value}, not {r.Origin}{hint}");
             return;
         }
         else
@@ -223,14 +270,51 @@ public static class CorsRules
         notes.Add(maxAge.Count == 0
             ? "no Access-Control-Max-Age: a browser caches this preflight for 5 seconds"
             : int.TryParse(maxAge[0], out var seconds)
-                ? $"a browser caches this preflight for {Math.Min(seconds, 7200)} s (Access-Control-Max-Age: {seconds}; Chromium caps it at 2 hours, Firefox at 24 hours)"
+                ? seconds <= 0
+                    ? $"Access-Control-Max-Age: {seconds} disables preflight caching (browsers will preflight every request)"
+                    : $"a browser caches this preflight for {Math.Min(seconds, 7200)} s (Access-Control-Max-Age: {seconds}; Safari caps at 10 min, Chromium at 2 hours, Firefox at 24 hours)"
                 : $"Access-Control-Max-Age '{maxAge[0]}' is not a number, so it is ignored");
+
+        if (Values(headers, "Access-Control-Allow-Origin").Count > 0)
+        {
+            var vary = Tokens(headers, "Vary");
+            if (!vary.Any(v => v == "*"))
+            {
+                var missingVary = new List<string>();
+                if (!vary.Any(v => v.Equals("Access-Control-Request-Method", StringComparison.OrdinalIgnoreCase)))
+                    missingVary.Add("Access-Control-Request-Method");
+                if (UnsafeHeaderNames(r).Count > 0 &&
+                    !vary.Any(v => v.Equals("Access-Control-Request-Headers", StringComparison.OrdinalIgnoreCase)))
+                    missingVary.Add("Access-Control-Request-Headers");
+                if (missingVary.Count > 0)
+                    notes.Add($"preflight Vary omits {string.Join(", ", missingVary)}: a shared cache/CDN that caches OPTIONS may serve this preflight answer for another method or header set");
+            }
+        }
         return (problems, passed, notes);
+    }
+
+    /// <summary>True when two absolute URLs/origins share a registrable site (scheme + host/registrable domain),
+    /// used to judge whether a browser treats a cookie exchange as cross-site.</summary>
+    internal static bool IsSameSite(string origin, string? targetUrl)
+    {
+        if (targetUrl is null || origin == "null") return false;
+        if (!Uri.TryCreate(origin, UriKind.Absolute, out var a) || !Uri.TryCreate(targetUrl, UriKind.Absolute, out var b)) return false;
+        if (!a.Scheme.Equals(b.Scheme, StringComparison.OrdinalIgnoreCase)) return false;
+        string ha = a.Host.TrimEnd('.').ToLowerInvariant();
+        string hb = b.Host.TrimEnd('.').ToLowerInvariant();
+        if (ha == hb) return true;
+        if (System.Net.IPAddress.TryParse(ha, out _) || System.Net.IPAddress.TryParse(hb, out _)) return false;
+        static string SiteKey(string h)
+        {
+            var parts = h.Split('.');
+            return parts.Length >= 2 ? parts[^2] + "." + parts[^1] : h;
+        }
+        return SiteKey(ha) == SiteKey(hb);
     }
 
     /// <summary>Judge the actual response, and say which of its headers a script can read.</summary>
     public static (List<string> Problems, List<string> Passed, List<string> Notes, List<string> Readable, List<string> Hidden) CheckResponse(
-        CorsRequest r, IReadOnlyList<KeyValuePair<string, string>> headers)
+        CorsRequest r, IReadOnlyList<KeyValuePair<string, string>> headers, string? targetUrl = null)
     {
         var problems = new List<string>();
         var passed = new List<string>();
@@ -257,6 +341,54 @@ public static class CorsRules
         var setCookie = Values(headers, "Set-Cookie");
         if (setCookie.Count > 0 && !r.Credentials)
             notes.Add("the response sets a cookie, which a browser ignores unless the request is sent with credentials");
+        else if (setCookie.Count > 0 && r.Credentials)
+        {
+            bool sameSiteTarget = IsSameSite(r.Origin, targetUrl);
+            foreach (var rawCookie in setCookie)
+            {
+                var parts = rawCookie.Split(';').Select(p => p.Trim()).Where(p => p.Length > 0).ToList();
+                string cookieName = parts.Count > 0 ? parts[0].Split('=')[0].Trim() : "(cookie)";
+                string? sameSiteAttr = parts.Skip(1)
+                    .FirstOrDefault(p => p.StartsWith("SameSite=", StringComparison.OrdinalIgnoreCase))?[9..].Trim();
+                bool hasSecure = parts.Skip(1).Any(p => p.Equals("Secure", StringComparison.OrdinalIgnoreCase));
+                bool hasPartitioned = parts.Skip(1).Any(p => p.Equals("Partitioned", StringComparison.OrdinalIgnoreCase));
+
+                if (string.Equals(sameSiteAttr, "None", StringComparison.OrdinalIgnoreCase) && !hasSecure)
+                    notes.Add($"Set-Cookie '{cookieName}' has SameSite=None without Secure: modern browsers reject this cookie");
+                else if (!sameSiteTarget && !string.Equals(sameSiteAttr, "None", StringComparison.OrdinalIgnoreCase))
+                    notes.Add($"Set-Cookie '{cookieName}' has {(sameSiteAttr is null ? "no SameSite attribute (defaults to Lax)" : $"SameSite={sameSiteAttr}")}: cross-site credentialed fetches require SameSite=None; Secure");
+                else if (!sameSiteTarget && string.Equals(sameSiteAttr, "None", StringComparison.OrdinalIgnoreCase) && hasSecure && !hasPartitioned)
+                    notes.Add($"Set-Cookie '{cookieName}' is SameSite=None; Secure without Partitioned (CHIPS): browsers blocking unpartitioned third-party cookies may still reject it");
+            }
+        }
+
+        // Cross-Origin Resource Policy (CORP), COOP/COEP, and Timing-Allow-Origin.
+        var corp = Values(headers, "Cross-Origin-Resource-Policy");
+        if (corp.Count > 0)
+        {
+            string val = corp[0].ToLowerInvariant();
+            if (val == "same-origin")
+                notes.Add("Cross-Origin-Resource-Policy: same-origin blocks cross-origin no-cors subresource loads and COEP-isolated pages even when CORS allows the origin");
+            else if (val == "same-site" && !IsSameSite(r.Origin, targetUrl))
+                notes.Add("Cross-Origin-Resource-Policy: same-site blocks cross-site subresource loads from " + r.Origin);
+            else if (val == "cross-origin")
+                passed.Add("the response: Cross-Origin-Resource-Policy: cross-origin (embeddable under COEP)");
+        }
+        var coep = Values(headers, "Cross-Origin-Embedder-Policy");
+        if (coep.Count > 0)
+            notes.Add($"Cross-Origin-Embedder-Policy: {coep[0]} (cross-origin subresources loaded by this document require CORS or CORP: cross-origin)");
+        var coop = Values(headers, "Cross-Origin-Opener-Policy");
+        if (coop.Count > 0)
+            notes.Add($"Cross-Origin-Opener-Policy: {coop[0]}");
+
+        var tao = Tokens(headers, "Timing-Allow-Origin");
+        if (tao.Count > 0)
+        {
+            bool allowedTiming = tao.Contains("*") || tao.Any(t => t.Equals(r.Origin, StringComparison.Ordinal));
+            notes.Add(allowedTiming
+                ? $"Timing-Allow-Origin allows {r.Origin} to read detailed PerformanceResourceTiming metrics"
+                : $"Timing-Allow-Origin ({string.Join(", ", tao)}) does not include {r.Origin}; PerformanceResourceTiming details are zeroed");
+        }
         return (problems, passed, notes, readable, hidden);
     }
 }
@@ -293,10 +425,22 @@ public static class CorsProbe
         var passed = new List<string>();
         var notes = new List<string>();
         var hops = new List<CorsHop>();
-        foreach (var h in request.Headers.Where(h => CorsRules.Forbidden(h.Key)))
+        foreach (var h in request.Headers.Where(h => CorsRules.Forbidden(h.Key, h.Value)))
             notes.Add(h.Key.Equals("Cookie", StringComparison.OrdinalIgnoreCase)
                 ? "a page cannot set Cookie; the browser sends its own cookies when the request has credentials (--credentials)"
-                : $"a page cannot set {h.Key}; the browser sets it, so it is left out of the check");
+                : $"a page cannot set {h.Key}{(CorsRules.Forbidden(h.Key) ? "" : $" to '{h.Value}'")}; the browser rejects or owns it, so it is left out of the check");
+
+        if (CorsRules.ForbiddenMethod(request.Method))
+            return new CorsProbeResult
+            {
+                NotSent = "forbidden browser method",
+                Verdict = new CorsVerdict
+                {
+                    Allowed = false,
+                    Problems = new[] { $"{request.Method.ToUpperInvariant()} is a forbidden method in browsers (CONNECT, TRACE, TRACK): fetch() throws a TypeError before sending any preflight or request" },
+                    Notes = notes
+                }
+            };
 
         if (Uri.TryCreate(request.Origin, UriKind.Absolute, out var pageOrigin) && SameOrigin(pageOrigin, new Uri(url)))
             return new CorsProbeResult
@@ -356,7 +500,7 @@ public static class CorsProbe
             }
 
             var headers = hopRequest.Headers
-                .Where(h => !CorsRules.Forbidden(h.Key) || h.Key.Equals("Cookie", StringComparison.OrdinalIgnoreCase) && hopRequest.Credentials)
+                .Where(h => !CorsRules.Forbidden(h.Key, h.Value) || h.Key.Equals("Cookie", StringComparison.OrdinalIgnoreCase) && hopRequest.Credentials)
                 .Where(h => !h.Key.Equals("Content-Type", StringComparison.OrdinalIgnoreCase))
                 .ToList();
             headers.Add(new("Origin", hopRequest.Origin));
@@ -379,7 +523,7 @@ public static class CorsProbe
 
             // A redirect is CORS-checked like any response: a browser refuses to follow one that
             // does not allow the origin.
-            var (rp, rok, rn, r, hdn) = CorsRules.CheckResponse(hopRequest, response.Headers);
+            var (rp, rok, rn, r, hdn) = CorsRules.CheckResponse(hopRequest, response.Headers, current.ToString());
             problems.AddRange(rp.Select(x => prefix + x));
             passed.AddRange(rok.Select(x => prefix + x));
             notes.AddRange(rn.Select(x => prefix + x));
@@ -537,32 +681,44 @@ public static class CorsAudit
     public const string Marker = "certapi-cors-audit";
 
     /// <summary>The probes for a trusted origin (scheme://host[:port]).</summary>
-    public static IReadOnlyList<(string Kind, string Origin)> ProbesFor(Uri trusted)
+    public static IReadOnlyList<(string Kind, string Origin)> ProbesFor(Uri trusted, bool includeDevOrigins = false)
     {
         string scheme = trusted.Scheme;
         string host = trusted.Host;
         string port = trusted.IsDefaultPort ? "" : ":" + trusted.Port;
+        int altPort = trusted.Port == 8443 ? 8444 : 8443;
         var list = new List<(string, string)>
         {
             ("arbitrary origin", $"https://{Marker}.example"),
             ("null origin", "null"),
             ("prefix look-alike", $"{scheme}://{Marker}{host}{port}"),
             ("suffix look-alike", $"{scheme}://{host}.{Marker}.example{port}"),
-            ("subdomain", $"{scheme}://{Marker}.{host}{port}")
+            ("subdomain", $"{scheme}://{Marker}.{host}{port}"),
+            ("port look-alike", $"{scheme}://{host}:{altPort}"),
+            ("userinfo look-alike", $"{scheme}://{host}@{Marker}.example"),
+            ("underscore look-alike", $"{scheme}://{host}_.{Marker}.example"),
+            ("backtick look-alike", $"{scheme}://{host}%60.{Marker}.example")
         };
         int dot = host.IndexOf('.');
         if (dot > 0 && !System.Net.IPAddress.TryParse(host, out _))
             list.Add(("unescaped dot", $"{scheme}://{host[..dot]}x{host[(dot + 1)..]}{port}"));
         if (scheme == "https") list.Add(("plain http", $"http://{host}{port}"));
+        if (includeDevOrigins && !AddressSpace.IsLocalOrigin($"{scheme}://{host}{port}"))
+        {
+            list.Add(("localhost origin", "http://localhost"));
+            list.Add(("localhost dev port", "http://localhost:3000"));
+        }
         list.Add(("trusted origin", $"{scheme}://{host}{port}"));
         return list;
     }
 
     public static async Task<CorsAuditResult> RunAsync(string url, Uri trusted, IReadOnlyList<KeyValuePair<string, string>> headers,
-        Func<ApiRequest, Task<ApiResponse>> send, TimeSpan timeout)
+        Func<ApiRequest, Task<ApiResponse>> send, TimeSpan timeout,
+        bool includeDevOrigins = false, Func<ApiRequest, Task<ApiResponse>>? sendWithoutCert = null)
     {
         var probes = new List<CorsAuditProbe>();
-        foreach (var (kind, origin) in ProbesFor(trusted))
+        bool missingVaryOnReflected = false;
+        foreach (var (kind, origin) in ProbesFor(trusted, includeDevOrigins))
         {
             var request = new ApiRequest
             {
@@ -579,6 +735,11 @@ public static class CorsAudit
             }
             string? allow = response.Headers.FirstOrDefault(h => h.Key.Equals("Access-Control-Allow-Origin", StringComparison.OrdinalIgnoreCase)).Value?.Trim();
             bool credentials = response.Headers.Any(h => h.Key.Equals("Access-Control-Allow-Credentials", StringComparison.OrdinalIgnoreCase) && h.Value.Trim() == "true");
+            if (allow is not null && allow != "*" &&
+                !response.Headers.Where(h => h.Key.Equals("Vary", StringComparison.OrdinalIgnoreCase))
+                    .SelectMany(h => h.Value.Split(',')).Select(v => v.Trim())
+                    .Any(v => v.Equals("Origin", StringComparison.OrdinalIgnoreCase) || v == "*"))
+                missingVaryOnReflected = true;
             probes.Add(new CorsAuditProbe(kind, origin, response.StatusCode, allow, credentials, allow == origin, null));
         }
 
@@ -599,8 +760,10 @@ public static class CorsAudit
 
         var findings = new List<CorsFinding>();
         CorsAuditProbe? Find(string kind) => probes.FirstOrDefault(p => p.Kind == kind);
-        void Grade(string kind, string title, string why, CorsSeverity withCredentials, CorsSeverity without)
+        bool ArbitraryReflected() => Find("arbitrary origin") is { Reflected: true };
+        void Grade(string kind, string title, string why, CorsSeverity withCredentials, CorsSeverity without, bool skipWhenArbitrary = false)
         {
+            if (skipWhenArbitrary && ArbitraryReflected()) return;
             if (Find(kind) is not { Reflected: true } p) return;
             findings.Add(p.AllowCredentials
                 ? new CorsFinding(withCredentials, title + ", with credentials", $"{why} The origin {p.Origin} was allowed with Access-Control-Allow-Credentials: true, so a page there can read responses sent with the user's cookies or client certificate.")
@@ -611,8 +774,18 @@ public static class CorsAudit
         Grade("prefix look-alike", "The origin check matches the end of the name", "A domain anyone can register that ends with the trusted name passes.", CorsSeverity.High, CorsSeverity.Medium);
         Grade("suffix look-alike", "The origin check matches the start of the name", "A domain anyone can register that starts with the trusted name passes.", CorsSeverity.High, CorsSeverity.Medium);
         Grade("unescaped dot", "The origin check is a regular expression with an unescaped dot", "A name with any character in place of a dot passes.", CorsSeverity.High, CorsSeverity.Medium);
+        Grade("userinfo look-alike", "The origin check is bypassed by a userinfo look-alike (@)", "A crafted origin containing the trusted host before '@' passes an unanchored check.", CorsSeverity.High, CorsSeverity.Medium, skipWhenArbitrary: true);
+        Grade("underscore look-alike", "The origin check is bypassed by an underscore look-alike", "A crafted origin with an underscore suffix passes naive prefix matching.", CorsSeverity.High, CorsSeverity.Medium, skipWhenArbitrary: true);
+        Grade("backtick look-alike", "The origin check is bypassed by a backtick look-alike", "A crafted origin with an encoded backtick passes naive parser checks.", CorsSeverity.High, CorsSeverity.Medium, skipWhenArbitrary: true);
+        Grade("port look-alike", "Non-standard ports on the trusted host are allowed", "The origin check compares hostname without port, so a service on another port passes.", CorsSeverity.Medium, CorsSeverity.Low, skipWhenArbitrary: true);
+        Grade("localhost origin", "Localhost development origin is trusted in production", "http://localhost is allowed on a non-local endpoint; a local service or DNS rebinding page can read responses.", CorsSeverity.Medium, CorsSeverity.Low, skipWhenArbitrary: true);
+        Grade("localhost dev port", "Localhost dev-server origin (:3000) is trusted in production", "http://localhost:3000 is allowed on a non-local endpoint; remove development origins from production policies.", CorsSeverity.Medium, CorsSeverity.Low, skipWhenArbitrary: true);
         Grade("plain http", "Plain http is trusted", "Anyone on the network path can inject a page into an http:// origin.", CorsSeverity.Medium, CorsSeverity.Low);
         Grade("subdomain", "Every subdomain is trusted", "One forgotten or taken-over subdomain, or one XSS on any of them, is enough.", CorsSeverity.Low, CorsSeverity.Info);
+
+        if (missingVaryOnReflected)
+            findings.Add(new CorsFinding(CorsSeverity.Low, "Dynamic Access-Control-Allow-Origin without Vary: Origin",
+                "The server returns a specific Access-Control-Allow-Origin without Vary: Origin, risking shared-cache / CDN poisoning across origins."));
 
         if (probes.Any(p => p.AllowOrigin == "*"))
             findings.Add(probes.Any(p => p.AllowOrigin == "*" && p.AllowCredentials)
@@ -623,9 +796,32 @@ public static class CorsAudit
             bool method = preflight.Headers.Any(h => h.Key.Equals("Access-Control-Allow-Methods", StringComparison.OrdinalIgnoreCase) && h.Value.Contains("PATCH", StringComparison.OrdinalIgnoreCase));
             bool header = preflight.Headers.Any(h => h.Key.Equals("Access-Control-Allow-Headers", StringComparison.OrdinalIgnoreCase) && h.Value.Contains("x-" + Marker, StringComparison.OrdinalIgnoreCase));
             bool origin = preflight.Headers.Any(h => h.Key.Equals("Access-Control-Allow-Origin", StringComparison.OrdinalIgnoreCase) && h.Value.Trim() == $"https://{Marker}.example");
+            bool preflightCreds = preflight.Headers.Any(h => h.Key.Equals("Access-Control-Allow-Credentials", StringComparison.OrdinalIgnoreCase) && h.Value.Trim() == "true");
             if (origin && method && header)
                 findings.Add(new CorsFinding(CorsSeverity.Info, "Preflights grant whatever they ask for",
                     "A preflight from an unknown origin asking for PATCH and an invented header got both; the preflight is not limiting anything."));
+            if (origin && preflightCreds && !ArbitraryReflected())
+                findings.Add(new CorsFinding(CorsSeverity.High, "Preflights reflect arbitrary origins with credentials",
+                    "OPTIONS preflight echoes an untrusted origin with Access-Control-Allow-Credentials: true even though GET did not."));
+        }
+
+        if (sendWithoutCert is not null)
+        {
+            string trustedOrigin = $"{trusted.Scheme}://{trusted.Authority}";
+            var noCertPreflight = await sendWithoutCert(new ApiRequest
+            {
+                Method = HttpMethod.Options,
+                Url = url,
+                Headers = new List<KeyValuePair<string, string>>
+                {
+                    new("Origin", trustedOrigin),
+                    new("Access-Control-Request-Method", "PUT")
+                },
+                Timeout = timeout
+            });
+            if (noCertPreflight.Error is not null || noCertPreflight.StatusCode is < 200 or >= 300)
+                findings.Add(new CorsFinding(CorsSeverity.Medium, "Preflight fails without a client certificate",
+                    $"An OPTIONS preflight from {trustedOrigin} without a client certificate {(noCertPreflight.Error is not null ? "failed at TLS/transport (" + noCertPreflight.Error.Message + ")" : $"returned {noCertPreflight.StatusCode}")}; Fetch sends preflights without credentials, so browsers may fail before CORS runs."));
         }
 
         return new CorsAuditResult(probes, findings.OrderByDescending(f => f.Severity).ToList(), $"{trusted.Scheme}://{trusted.Authority}");
@@ -802,7 +998,11 @@ public sealed record CorsNeeds(
 /// the frameworks people actually run — an allow-list, never a reflected origin.</summary>
 public static class CorsSuggest
 {
-    public static readonly IReadOnlyList<string> Frameworks = new[] { "aspnet", "nginx", "express", "spring", "iis", "apigateway" };
+    public static readonly IReadOnlyList<string> Frameworks = new[]
+    {
+        "aspnet", "nginx", "express", "spring", "iis", "apigateway",
+        "apim", "yarp", "cloudflare", "caddy", "traefik", "apache", "fastapi", "go"
+    };
 
     public static string For(CorsNeeds n, string? framework = null, int maxAge = 600)
     {
@@ -926,6 +1126,137 @@ public static class CorsSuggest
             sb.AppendLine($"    \"MaxAge\": {maxAge}");
             sb.AppendLine("  }");
         }
+        if (Want("apim"))
+        {
+            sb.AppendLine().AppendLine("Azure API Management (<inbound> policy XML):");
+            sb.AppendLine($"  <cors allow-credentials=\"{(n.Credentials ? "true" : "false")}\">");
+            sb.AppendLine("    <allowed-origins>");
+            foreach (var o in origins) sb.AppendLine($"      <origin>{o}</origin>");
+            sb.AppendLine("    </allowed-origins>");
+            sb.AppendLine($"    <allowed-methods preflight-result-max-age=\"{maxAge}\">");
+            foreach (var m in allMethods) sb.AppendLine($"      <method>{m}</method>");
+            sb.AppendLine("    </allowed-methods>");
+            if (n.Headers.Count > 0)
+            {
+                sb.AppendLine("    <allowed-headers>");
+                foreach (var h in n.Headers) sb.AppendLine($"      <header>{h}</header>");
+                sb.AppendLine("    </allowed-headers>");
+            }
+            if (n.Expose.Count > 0)
+            {
+                sb.AppendLine("    <expose-headers>");
+                foreach (var h in n.Expose) sb.AppendLine($"      <header>{h}</header>");
+                sb.AppendLine("    </expose-headers>");
+            }
+            sb.AppendLine("  </cors>");
+        }
+        if (Want("yarp"))
+        {
+            sb.AppendLine().AppendLine("ASP.NET Core YARP (Program.cs + appsettings.json route CorsPolicy):");
+            sb.AppendLine("  builder.Services.AddCors(o => o.AddPolicy(\"yarp-cors\", p => p");
+            sb.AppendLine($"      .WithOrigins({Q(origins)})");
+            sb.AppendLine($"      .WithMethods({Q(allMethods)})");
+            if (n.Headers.Count > 0) sb.AppendLine($"      .WithHeaders({Q(n.Headers)})");
+            if (n.Expose.Count > 0) sb.AppendLine($"      .WithExposedHeaders({Q(n.Expose)})");
+            if (n.Credentials) sb.AppendLine("      .AllowCredentials()");
+            sb.AppendLine($"      .SetPreflightMaxAge(TimeSpan.FromSeconds({maxAge}))));");
+            sb.AppendLine("  app.UseCors();");
+            sb.AppendLine("  app.MapReverseProxy();");
+            sb.AppendLine("  // In appsettings.json under ReverseProxy.Routes.<route>: \"CorsPolicy\": \"yarp-cors\"");
+        }
+        if (Want("cloudflare"))
+        {
+            sb.AppendLine().AppendLine("Cloudflare Worker (JS/TS):");
+            sb.AppendLine($"  const ALLOWED = new Set([{string.Join(", ", origins.Select(o => $"'{o}'"))}]);");
+            sb.AppendLine("  const origin = request.headers.get('Origin') ?? '';");
+            sb.AppendLine("  if (ALLOWED.has(origin)) {");
+            sb.AppendLine("    headers.set('Access-Control-Allow-Origin', origin);");
+            sb.AppendLine("    headers.append('Vary', 'Origin');");
+            if (n.Credentials) sb.AppendLine("    headers.set('Access-Control-Allow-Credentials', 'true');");
+            sb.AppendLine($"    if (request.method === 'OPTIONS') {{");
+            sb.AppendLine($"      headers.set('Access-Control-Allow-Methods', '{string.Join(", ", allMethods)}');");
+            if (n.Headers.Count > 0) sb.AppendLine($"      headers.set('Access-Control-Allow-Headers', '{string.Join(", ", n.Headers)}');");
+            if (n.PrivateNetwork) sb.AppendLine("      headers.set('Access-Control-Allow-Private-Network', 'true');");
+            sb.AppendLine($"      headers.set('Access-Control-Max-Age', '{maxAge}');");
+            sb.AppendLine("      return new Response(null, { status: 204, headers });");
+            sb.AppendLine("    }");
+            if (n.Expose.Count > 0) sb.AppendLine($"    headers.set('Access-Control-Expose-Headers', '{string.Join(", ", n.Expose)}');");
+            sb.AppendLine("  }");
+        }
+        if (Want("caddy"))
+        {
+            sb.AppendLine().AppendLine("Caddy (Caddyfile):");
+            sb.AppendLine($"  @cors header_regexp origin Origin ^({string.Join("|", origins.Select(System.Text.RegularExpressions.Regex.Escape))})$");
+            sb.AppendLine("  handle @cors {");
+            sb.AppendLine("      header Access-Control-Allow-Origin {header.Origin}");
+            if (n.Credentials) sb.AppendLine("      header Access-Control-Allow-Credentials true");
+            if (n.Expose.Count > 0) sb.AppendLine($"      header Access-Control-Expose-Headers \"{string.Join(", ", n.Expose)}\"");
+            sb.AppendLine("      header Vary Origin");
+            sb.AppendLine("      @preflight method OPTIONS");
+            sb.AppendLine("      handle @preflight {");
+            sb.AppendLine($"          header Access-Control-Allow-Methods \"{string.Join(", ", allMethods)}\"");
+            if (n.Headers.Count > 0) sb.AppendLine($"          header Access-Control-Allow-Headers \"{string.Join(", ", n.Headers)}\"");
+            if (n.PrivateNetwork) sb.AppendLine("          header Access-Control-Allow-Private-Network true");
+            sb.AppendLine($"          header Access-Control-Max-Age {maxAge}");
+            sb.AppendLine("          respond 204");
+            sb.AppendLine("      }");
+            sb.AppendLine("  }");
+        }
+        if (Want("traefik"))
+        {
+            sb.AppendLine().AppendLine("Traefik (dynamic config YAML middleware):");
+            sb.AppendLine("  http:");
+            sb.AppendLine("    middlewares:");
+            sb.AppendLine("      cors-policy:");
+            sb.AppendLine("        headers:");
+            sb.AppendLine($"          accessControlAllowOriginList: [{Q(origins)}]");
+            sb.AppendLine($"          accessControlAllowMethods: [{Q(allMethods)}]");
+            if (n.Headers.Count > 0) sb.AppendLine($"          accessControlAllowHeaders: [{Q(n.Headers)}]");
+            if (n.Expose.Count > 0) sb.AppendLine($"          accessControlExposeHeaders: [{Q(n.Expose)}]");
+            sb.AppendLine($"          accessControlAllowCredentials: {(n.Credentials ? "true" : "false")}");
+            sb.AppendLine($"          accessControlMaxAge: {maxAge}");
+            sb.AppendLine("          addVaryHeader: true");
+        }
+        if (Want("apache"))
+        {
+            sb.AppendLine().AppendLine("Apache httpd (mod_headers in VirtualHost or .htaccess):");
+            sb.AppendLine($"  SetEnvIf Origin \"^({string.Join("|", origins.Select(System.Text.RegularExpressions.Regex.Escape))})$\" CORS_ORIGIN=$0");
+            sb.AppendLine("  Header always set Access-Control-Allow-Origin \"%{CORS_ORIGIN}e\" env=CORS_ORIGIN");
+            if (n.Credentials) sb.AppendLine("  Header always set Access-Control-Allow-Credentials \"true\" env=CORS_ORIGIN");
+            sb.AppendLine($"  Header always set Access-Control-Allow-Methods \"{string.Join(", ", allMethods)}\" env=CORS_ORIGIN");
+            if (n.Headers.Count > 0) sb.AppendLine($"  Header always set Access-Control-Allow-Headers \"{string.Join(", ", n.Headers)}\" env=CORS_ORIGIN");
+            if (n.Expose.Count > 0) sb.AppendLine($"  Header always set Access-Control-Expose-Headers \"{string.Join(", ", n.Expose)}\" env=CORS_ORIGIN");
+            if (n.PrivateNetwork) sb.AppendLine("  Header always set Access-Control-Allow-Private-Network \"true\" env=CORS_ORIGIN");
+            sb.AppendLine($"  Header always set Access-Control-Max-Age \"{maxAge}\" env=CORS_ORIGIN");
+            sb.AppendLine("  Header always merge Vary \"Origin\"");
+        }
+        if (Want("fastapi"))
+        {
+            sb.AppendLine().AppendLine("FastAPI (Python):");
+            sb.AppendLine("  from fastapi.middleware.cors import CORSMiddleware");
+            sb.AppendLine("  app.add_middleware(");
+            sb.AppendLine("      CORSMiddleware,");
+            sb.AppendLine($"      allow_origins=[{Q(origins)}],");
+            sb.AppendLine($"      allow_methods=[{Q(allMethods)}],");
+            if (n.Headers.Count > 0) sb.AppendLine($"      allow_headers=[{Q(n.Headers)}],");
+            if (n.Expose.Count > 0) sb.AppendLine($"      expose_headers=[{Q(n.Expose)}],");
+            sb.AppendLine($"      allow_credentials={(n.Credentials ? "True" : "False")},");
+            sb.AppendLine($"      max_age={maxAge},");
+            sb.AppendLine("  )");
+        }
+        if (Want("go"))
+        {
+            sb.AppendLine().AppendLine("Go (github.com/rs/cors):");
+            sb.AppendLine("  handler := cors.New(cors.Options{");
+            sb.AppendLine($"      AllowedOrigins:   []string{{{Q(origins)}}},");
+            sb.AppendLine($"      AllowedMethods:   []string{{{Q(allMethods)}}},");
+            if (n.Headers.Count > 0) sb.AppendLine($"      AllowedHeaders:   []string{{{Q(n.Headers)}}},");
+            if (n.Expose.Count > 0) sb.AppendLine($"      ExposedHeaders:   []string{{{Q(n.Expose)}}},");
+            sb.AppendLine($"      AllowCredentials: {(n.Credentials ? "true" : "false")},");
+            if (n.PrivateNetwork) sb.AppendLine("      AllowPrivateNetwork: true,");
+            sb.AppendLine($"      MaxAge:           {maxAge},");
+            sb.AppendLine("  }).Handler(mux)");
+        }
         sb.AppendLine();
         sb.Append("note       A server that demands the client certificate during the TLS handshake can refuse the preflight before " +
                   "its CORS policy runs: the Fetch standard sends a preflight without credentials, and browsers differ on whether " +
@@ -996,6 +1327,86 @@ public static class WebSocketOrigins
                 sb.AppendLine("note       every origin was accepted; that is only harmless when the socket needs no cookie, token or certificate");
         }
         sb.Append("note       WebSockets ignore CORS: a browser opens the socket from any page and sends its cookies and client certificate; only the server's Origin check decides");
+        return sb.ToString();
+    }
+}
+
+/// <summary>One policy difference between two endpoints for a given origin and method.</summary>
+public sealed record CorsDiffEntry(string Origin, string Method, string Field, string? Left, string? Right);
+
+/// <summary>Compares the CORS behavior of two endpoints (for example staging vs production, or
+/// before vs after a deployment) across verdicts, preflight/response headers, and exposed headers.</summary>
+public static class CorsDiff
+{
+    private static readonly string[] ComparedHeaders =
+    {
+        "Access-Control-Allow-Origin",
+        "Access-Control-Allow-Credentials",
+        "Access-Control-Allow-Methods",
+        "Access-Control-Allow-Headers",
+        "Access-Control-Expose-Headers",
+        "Access-Control-Max-Age",
+        "Access-Control-Allow-Private-Network",
+        "Vary",
+        "Cross-Origin-Resource-Policy"
+    };
+
+    private static string? Header(ApiResponse? r, string name)
+    {
+        if (r is null || r.Error is not null) return null;
+        var vals = r.Headers.Where(h => h.Key.Equals(name, StringComparison.OrdinalIgnoreCase))
+            .Select(h => h.Value.Trim()).ToList();
+        return vals.Count == 0 ? null : string.Join(", ", vals);
+    }
+
+    public static IReadOnlyList<CorsDiffEntry> Compare(CorsRequest request, CorsProbeResult left, CorsProbeResult right)
+    {
+        var diffs = new List<CorsDiffEntry>();
+        void Add(string field, string? a, string? b)
+        {
+            if (!string.Equals(a, b, StringComparison.Ordinal))
+                diffs.Add(new CorsDiffEntry(request.Origin, request.Method, field, a, b));
+        }
+
+        Add("verdict", left.Verdict.Allowed ? "allowed" : "blocked", right.Verdict.Allowed ? "allowed" : "blocked");
+        if (left.Preflight is not null || right.Preflight is not null)
+        {
+            Add("preflight.status", left.Preflight?.StatusCode?.ToString() ?? left.Preflight?.Error?.Message,
+                right.Preflight?.StatusCode?.ToString() ?? right.Preflight?.Error?.Message);
+            foreach (var h in ComparedHeaders)
+                Add("preflight." + h, Header(left.Preflight, h), Header(right.Preflight, h));
+        }
+        if (left.Response is not null || right.Response is not null)
+        {
+            Add("response.status", left.Response?.StatusCode?.ToString() ?? left.Response?.Error?.Message,
+                right.Response?.StatusCode?.ToString() ?? right.Response?.Error?.Message);
+            foreach (var h in ComparedHeaders)
+                Add("response." + h, Header(left.Response, h), Header(right.Response, h));
+            Add("readable", string.Join(", ", left.Verdict.Readable.OrderBy(x => x, StringComparer.OrdinalIgnoreCase)),
+                string.Join(", ", right.Verdict.Readable.OrderBy(x => x, StringComparer.OrdinalIgnoreCase)));
+        }
+        return diffs;
+    }
+
+    public static string Describe(string leftUrl, string rightUrl, IReadOnlyList<CorsDiffEntry> diffs)
+    {
+        var sb = new StringBuilder();
+        sb.Append("left       ").AppendLine(leftUrl);
+        sb.Append("right      ").AppendLine(rightUrl);
+        if (diffs.Count == 0)
+        {
+            sb.Append("diff       none: both endpoints behave identically for every checked origin and method");
+            return sb.ToString();
+        }
+        foreach (var g in diffs.GroupBy(d => (d.Origin, d.Method)))
+        {
+            sb.AppendLine().Append("  ").Append(g.Key.Method).Append("  from ").AppendLine(g.Key.Origin);
+            int width = g.Max(d => d.Field.Length) + 2;
+            foreach (var d in g)
+                sb.Append("    ").Append(d.Field.PadRight(width))
+                  .Append(d.Left ?? "(absent)").Append("  →  ").AppendLine(d.Right ?? "(absent)");
+        }
+        sb.AppendLine().Append($"diff       {diffs.Count} difference(s) found");
         return sb.ToString();
     }
 }

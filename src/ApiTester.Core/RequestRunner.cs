@@ -48,6 +48,11 @@ public sealed class RequestRunContext
     /// request's own headers, and only for names the request does not set itself.</summary>
     public IReadOnlyList<KeyValuePair<string, string>> StandingHeaders { get; init; } =
         Array.Empty<KeyValuePair<string, string>>();
+    /// <summary>When set (e.g. by <c>certapi run --origin &lt;o&gt; --cors-preflight</c>), also send
+    /// and verify the browser OPTIONS preflight for every non-simple cross-origin request.</summary>
+    public string? CorsPreflightOrigin { get; init; }
+    /// <summary>Whether the CORS preflight check requires <c>Access-Control-Allow-Credentials: true</c>.</summary>
+    public bool CorsPreflightCredentials { get; init; }
     public List<HarEntry>? HarEntries { get; init; }
     /// <summary>Per-request notes, already formatted, delivered synchronously at the moment they
     /// happen so a caller writing them to a stream keeps them in the order they occurred.</summary>
@@ -99,7 +104,7 @@ public static class RequestRunner
     public static async Task<RequestOutcome> RunAsync(
         string label, CollectionNode node, RequestRunContext ctx, RunVariables vars, CancellationToken ct)
     {
-        var (response, url) = await ExecuteAsync(label, node.Request!, ctx, vars.Current, ct).ConfigureAwait(false);
+        var (response, url, preflightCheck, extraCorsResponses) = await ExecuteAsync(label, node.Request!, ctx, vars.Current, ct).ConfigureAwait(false);
         bool tokensCaptured = false;
         if (!ctx.NoAutoToken && response.Error is null &&
             TokenService.Capture(ctx.State, response.FinalUrl(url), response.Body, response.ContentType, response.Headers) is { } captured)
@@ -109,13 +114,19 @@ public static class RequestRunner
         }
         if (ctx.Record) node.RecordResult(response.Error is null ? response.StatusCode : null, DateTime.UtcNow,
                                           KnownGoodSnapshot(response));
-        IReadOnlyList<AssertionResult>? evaluated = null;
+        List<AssertionResult>? evaluated = null;
         if (node.Request!.Assertions.Any(a => a.Enabled))
         {
-            evaluated = AssertionEvaluator.Evaluate(node.Request!.Assertions, response);
+            evaluated = AssertionEvaluator.Evaluate(node.Request!.Assertions, response, extraCorsResponses).ToList();
+        }
+        if (preflightCheck is not null)
+        {
+            evaluated ??= new List<AssertionResult>();
+            evaluated.Add(preflightCheck);
+        }
+        if (evaluated is not null)
             foreach (var ar in evaluated)
                 if (!ar.Passed) ctx.Note?.Invoke($"{label}: assertion failed — {ar.Description} (got {ar.Actual ?? "∅"})");
-        }
         var captures = new List<(string Variable, bool Ok, string? Error)>();
         if (response.Error is null && node.Request!.Captures.Count > 0)
         {
@@ -136,7 +147,7 @@ public static class RequestRunner
             passed, captures, tokensCaptured, evaluated);
     }
 
-    private static async Task<(ApiResponse Response, string Url)> ExecuteAsync(
+    private static async Task<(ApiResponse Response, string Url, AssertionResult? PreflightCheck, Dictionary<string, ApiResponse>? ExtraCors)> ExecuteAsync(
         string path, RequestModel m, RequestRunContext ctx, Dictionary<string, string> vars, CancellationToken ct)
     {
         var unresolved = new List<string>();
@@ -164,7 +175,7 @@ public static class RequestRunner
         string url = m.EffectiveUrl(R);
         var (winAuth, awsAuth, hmacAuth) = SavedAuth.For(m, R, url, out var authProblem);
         if (authProblem is not null)
-            return (new ApiResponse { Error = new ApiError(ApiErrorKind.Unknown, authProblem) }, url);
+            return (new ApiResponse { Error = new ApiError(ApiErrorKind.Unknown, authProblem) }, url, null, null);
         string host = TokenService.HostOf(url);
         string? body = string.IsNullOrEmpty(m.Body) ? null : R(m.Body!);
 
@@ -175,15 +186,15 @@ public static class RequestRunner
             var savedVars = baselineOf();
             string savedUrl = m.EffectiveUrl(t => VariableResolver.Resolve(t ?? "", savedVars).Result);
             if (RequestGuards.OriginChanged(savedUrl, url) is { } moved)
-                return (new ApiResponse { Error = new ApiError(ApiErrorKind.Unknown, moved) }, url);
+                return (new ApiResponse { Error = new ApiError(ApiErrorKind.Unknown, moved) }, url, null, null);
         }
 
         // Gated before the auto-token attach below, not just before the send: a captured token
         // must never even be offered to a host the gate refuses.
         if (ctx.AllowUrl?.Invoke(url) is { } refused)
-            return (new ApiResponse { Error = new ApiError(ApiErrorKind.Unknown, refused) }, url);
+            return (new ApiResponse { Error = new ApiError(ApiErrorKind.Unknown, refused) }, url, null, null);
         if (ctx.RefuseHostOverride && RequestGuards.HostHeaderMismatch(url, headers) is { } hostProblem)
-            return (new ApiResponse { Error = new ApiError(ApiErrorKind.Unknown, hostProblem) }, url);
+            return (new ApiResponse { Error = new ApiError(ApiErrorKind.Unknown, hostProblem) }, url, null, null);
 
         if (!ctx.NoAutoToken && m.AuthType == "Auto" &&
             TokenService.AutoAttach(ctx.State, url, headers, out _) is { } used)
@@ -196,7 +207,7 @@ public static class RequestRunner
         {
             var tokens = string.Join(", ", unresolved.Select(u => "{{" + u + "}}"));
             if (ctx.StrictVars)
-                return (new ApiResponse { Error = new ApiError(ApiErrorKind.Unknown, $"unresolved variables: {tokens}") }, url);
+                return (new ApiResponse { Error = new ApiError(ApiErrorKind.Unknown, $"unresolved variables: {tokens}") }, url, null, null);
             ctx.Note?.Invoke($"warning: unresolved variables: {tokens}");
         }
 
@@ -205,7 +216,7 @@ public static class RequestRunner
         {
             cert = ctx.FindCertificate?.Invoke(m.CertThumbprint!);
             if (cert is null)
-                return (new ApiResponse { Error = new ApiError(ApiErrorKind.Unknown, $"certificate {m.CertThumbprint} not found in the store") }, url);
+                return (new ApiResponse { Error = new ApiError(ApiErrorKind.Unknown, $"certificate {m.CertThumbprint} not found in the store") }, url, null, null);
         }
 
         // The saved request's own transport settings are the baseline; a command-line flag overrides
@@ -214,7 +225,7 @@ public static class RequestRunner
         var baseline = m.Transport.ToOptions(m.IgnoreServerCert);
         var transport = ctx.TransportOverride is { } apply ? apply(baseline) : baseline;
         if (ApiClient.ValidateTransport(transport, url) is { } transportProblem)
-            return (new ApiResponse { Error = new ApiError(ApiErrorKind.Unknown, transportProblem) }, url);
+            return (new ApiResponse { Error = new ApiError(ApiErrorKind.Unknown, transportProblem) }, url, null, null);
 
         // A CORS assertion asks how a page on its origin would see the answer, which needs the
         // request to come from that origin.
@@ -243,6 +254,39 @@ public static class RequestRunner
             Hmac = hmacAuth,
             Timeout = TimeSpan.FromSeconds(m.TimeoutSeconds)
         };
+        AssertionResult? preflightCheck = null;
+        if (ctx.CorsPreflightOrigin is { } pfOrigin &&
+            Uri.TryCreate(url, UriKind.Absolute, out var pfTarget) &&
+            !(Uri.TryCreate(pfOrigin, UriKind.Absolute, out var pfOriginUri) && CorsProbe.SameOrigin(pfOriginUri, pfTarget)))
+        {
+            var corsHeaders = headers.Where(h => !h.Key.Equals("Origin", StringComparison.OrdinalIgnoreCase)).ToList();
+            if (!m.IsMultipart && body is not null && m.ContentType != "(none)" &&
+                !corsHeaders.Any(h => h.Key.Equals("Content-Type", StringComparison.OrdinalIgnoreCase)))
+                corsHeaders.Add(new("Content-Type", m.ContentType));
+            var corsReq = new CorsRequest(pfOrigin, m.Method.ToUpperInvariant(), corsHeaders, ctx.CorsPreflightCredentials);
+            if (CorsRules.PreflightReason(corsReq) is not null)
+            {
+                var pfResp = await ctx.Client.SendAsync(new ApiRequest
+                {
+                    Method = HttpMethod.Options,
+                    Url = url,
+                    Headers = CorsRules.PreflightHeaders(corsReq).ToList(),
+                    Timeout = TimeSpan.FromSeconds(m.TimeoutSeconds)
+                }, cert, transport with { FollowRedirects = false }, ctx.Predicates.For(host), cancellationToken: ct).ConfigureAwait(false);
+                if (pfResp.Error is { } pfErr)
+                    preflightCheck = new AssertionResult(false, $"CORS preflight for {pfOrigin}", "preflight error: " + pfErr.Message);
+                else if (pfResp.StatusCode is >= 300 and < 400)
+                    preflightCheck = new AssertionResult(false, $"CORS preflight for {pfOrigin}", $"redirect ({pfResp.StatusCode})");
+                else
+                {
+                    var (pfProblems, _, _) = CorsRules.CheckPreflight(corsReq, pfResp.StatusCode ?? 0, pfResp.Headers);
+                    preflightCheck = pfProblems.Count == 0
+                        ? new AssertionResult(true, $"CORS preflight for {pfOrigin}", $"allowed ({pfResp.StatusCode})")
+                        : new AssertionResult(false, $"CORS preflight for {pfOrigin}", pfProblems[0]);
+                }
+            }
+        }
+
         // Attach any browser-captured session cookies for this origin, on top of the optional
         // shared --cookies jar (honors --no-auto-token and the workspace's AutoCookies switch).
         var effectiveJar = ctx.Cookies ?? CookieJarFile.NewContainer();
@@ -265,7 +309,33 @@ public static class RequestRunner
         if (ctx.ShowRedirects && response.Redirects.Count > 0)
             foreach (var line in RedirectReport.Lines(response.Redirects).Split('\n'))
                 ctx.Note?.Invoke($"{path}:{line}");
-        return (response, url);
+
+        Dictionary<string, ApiResponse>? extraCors = null;
+        string? sentOrigin = headers.LastOrDefault(h => h.Key.Equals("Origin", StringComparison.OrdinalIgnoreCase)).Value;
+        bool isSafeMethod = m.Method.Equals("GET", StringComparison.OrdinalIgnoreCase) || m.Method.Equals("HEAD", StringComparison.OrdinalIgnoreCase);
+        if (response.Error is null && isSafeMethod &&
+            AssertionEvaluator.ExtraCorsOrigins(m.Assertions, sentOrigin) is { Count: > 0 } extraOrigins)
+        {
+            extraCors = new Dictionary<string, ApiResponse>(StringComparer.Ordinal);
+            foreach (var extraOrigin in extraOrigins)
+            {
+                var probeHeaders = headers.Where(h => !h.Key.Equals("Origin", StringComparison.OrdinalIgnoreCase))
+                    .Append(new KeyValuePair<string, string>("Origin", extraOrigin)).ToList();
+                var probeReq = new ApiRequest
+                {
+                    Method = new HttpMethod(m.Method),
+                    Url = url,
+                    Headers = probeHeaders,
+                    WindowsAuth = winAuth,
+                    AwsSigV4 = awsAuth,
+                    Hmac = hmacAuth,
+                    Timeout = TimeSpan.FromSeconds(m.TimeoutSeconds)
+                };
+                extraCors[extraOrigin] = await ctx.Client.SendAsync(probeReq, cert, transport: transport,
+                    trustServerCertificate: ctx.Predicates.For(host), cookies: effectiveJar, cancellationToken: ct).ConfigureAwait(false);
+            }
+        }
+        return (response, url, preflightCheck, extraCors);
     }
 
     /// <summary>The snapshot to keep as this request's known-good baseline, or null when the body is too

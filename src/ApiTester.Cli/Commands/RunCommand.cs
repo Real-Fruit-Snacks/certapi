@@ -51,6 +51,8 @@ public static class RunCommand
                                   report and its markdown note cover the API's CORS policy too
           --cors-credentials      With --origin, require that the page could read each answer
                                   with credentials too (cookies, the client certificate)
+          --cors-preflight        With --origin, also send and verify the browser OPTIONS
+                                  preflight for every non-simple request in the suite/chain
           --junit <file>          Also write the results as JUnit XML, which CI systems (Azure
                                   DevOps, GitLab, Jenkins, GitHub test reporters) show as a test
                                   report: one case per request, failed assertions as failures,
@@ -181,7 +183,9 @@ public static class RunCommand
         string? repeatRaw = args.Value("--repeat");
         string? corsOriginRaw = args.Value("--origin");
         bool corsCredentials = args.Flag("--cors-credentials");
+        bool corsPreflight = args.Flag("--cors-preflight");
         if (corsCredentials && corsOriginRaw is null) throw new CliUsageException("--cors-credentials needs --origin <origin>.");
+        if (corsPreflight && corsOriginRaw is null) throw new CliUsageException("--cors-preflight needs --origin <origin>.");
         string? corsOrigin = corsOriginRaw is null ? null : CorsCommand.NormalizeOrigin(corsOriginRaw);
         bool mdIncludeSecrets = args.Flag("--md-include-secrets");
         if (mdFile is not null && mdVault is not null)
@@ -411,6 +415,8 @@ public static class RunCommand
             Cookies = jar,
             TransportOverride = options => transportOverrides.ApplyTo(options),
             StandingHeaders = services.Profile?.Headers ?? Array.Empty<KeyValuePair<string, string>>(),
+            CorsPreflightOrigin = corsPreflight ? corsOrigin : null,
+            CorsPreflightCredentials = corsCredentials,
             HarEntries = harEntries,
             Note = line => stderr.WriteLine(line),
             Debug = line => services.Log.Debug(line)

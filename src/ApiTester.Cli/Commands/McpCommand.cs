@@ -589,36 +589,76 @@ public static class McpCommand
 
         // ---- cors_check ----
         var corsCheck = new ToolDef("cors_check",
-            "Check whether a browser page on `origin` may make this request to an allowed host and read the response: sends the preflight a browser would (when one is needed) and the request itself with an Origin header, with the pinned certificate, and judges both against the CORS rules. Returns the verdict, each rule that passed or failed, and which response headers a script can read. An unsafe method (not GET/HEAD) is only preflighted unless sendActual is true. Redirects are followed as a browser follows them. With audit, probes for a loose policy instead (any origin, null, look-alikes, plain http) and grades each finding.",
+            "Check whether a browser page on `origin` (or `origins`) may make this request to an allowed host and read the response: sends the preflight a browser would (when one is needed) and the request itself with an Origin header, with the pinned certificate, and judges both against the CORS rules (including cross-site Set-Cookie, CORP/COEP/COOP, and Timing-Allow-Origin). Supports http(s):// and ws(s):// (WebSocket Origin / CSWSH checks), multi-origin × multi-method matrices, preflightOnly, preflightWithoutCert, diffUrl policy comparison, server config suggestions (`suggest`), and security auditing (`audit`).",
             JsonNode.Parse("""
-                {"type":"object","additionalProperties":false,"required":["url","origin"],"properties":{
-                  "url":{"type":"string","description":"Absolute http(s):// URL on an allowed host"},
-                  "origin":{"type":"string","description":"The page's origin, e.g. https://app.example.com"},
+                {"type":"object","additionalProperties":false,"required":["url"],"properties":{
+                  "url":{"type":"string","description":"Absolute http(s):// or ws(s):// URL on an allowed host"},
+                  "origin":{"type":"string","description":"The page's origin, e.g. https://app.example.com (optional when origins is given or audit is true)"},
+                  "origins":{"type":"array","items":{"type":"string"},"description":"Multiple origins to check as a matrix"},
                   "method":{"type":"string","description":"The method the page's script uses (default GET)"},
+                  "methods":{"type":"array","items":{"type":"string"},"description":"Multiple methods to check as a matrix"},
                   "headers":{"type":"object","additionalProperties":{"type":"string"},"description":"Headers the script sets"},
                   "body":{"type":"string"},
                   "contentType":{"type":"string","description":"The body's type (default application/json when there is a body)"},
                   "credentials":{"type":"boolean","description":"The page sends cookies / credentials: 'include' (default false)"},
                   "sendActual":{"type":"boolean","description":"Also send the request itself for an unsafe method (default false)"},
+                  "preflightOnly":{"type":"boolean","description":"Never send the request itself (default false)"},
+                  "preflightWithoutCert":{"type":"boolean","description":"Send preflights without the client certificate, as Fetch does (default false)"},
                   "privateNetwork":{"type":"boolean","description":"Also check Private Network Access, for a public page calling a private address (default false)"},
-                  "audit":{"type":"boolean","description":"Probe for misconfigurations instead (arbitrary origin, null, look-alikes of origin, plain http); only GET and OPTIONS are sent"}}}
+                  "audit":{"type":"boolean","description":"Probe for misconfigurations instead (arbitrary origin, null, look-alikes, plain http, dev origins, missing Vary); only GET and OPTIONS are sent"},
+                  "suggest":{"type":"string","description":"Include server CORS config fix for one framework (aspnet, nginx, express, spring, iis, apigateway, apim, yarp, cloudflare, caddy, traefik, apache, fastapi, go) or 'all'"},
+                  "maxAge":{"type":"integer","description":"Preflight max-age seconds for suggest (default 600)"},
+                  "diffUrl":{"type":"string","description":"Second allowed http(s):// URL to compare CORS policies against"}}}
                 """)!,
             a =>
             {
                 string? url = Str(a, "url");
-                string? originArg = Str(a, "origin");
                 if (string.IsNullOrWhiteSpace(url)) return Err("url is required");
-                if (string.IsNullOrWhiteSpace(originArg)) return Err("origin is required");
-                if (!Uri.TryCreate(url, UriKind.Absolute, out var target) || target.Scheme is not ("http" or "https"))
-                    return Err("url must be an absolute http:// or https:// URL");
-                if (Gate(url!) is { } refused) return Err(refused);
-                string origin;
-                try { origin = CorsCommand.NormalizeOrigin(originArg!); }
-                catch (CliUsageException ex) { return Err(ex.Message); }
-                string method = (Str(a, "method") ?? "GET").ToUpperInvariant();
-                if (method.Length == 0 || method.Any(char.IsWhiteSpace)) return Err(MethodOption.Describe("method", method));
+                if (!Uri.TryCreate(url, UriKind.Absolute, out var target) || target.Scheme is not ("http" or "https" or "ws" or "wss"))
+                    return Err("url must be an absolute http://, https://, ws:// or wss:// URL");
+                bool webSocket = target.Scheme is "ws" or "wss";
+                if ((webSocket ? StreamGate(url!) : Gate(url!)) is { } refused) return Err(refused);
+
+                var origins = new List<string>();
+                if (Str(a, "origin") is { } singleOrigin && !string.IsNullOrWhiteSpace(singleOrigin))
+                {
+                    try { origins.Add(CorsCommand.NormalizeOrigin(singleOrigin)); }
+                    catch (CliUsageException ex) { return Err(ex.Message); }
+                }
+                if (a.TryGetProperty("origins", out var originsEl) && originsEl.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (var item in originsEl.EnumerateArray())
+                    {
+                        if (item.ValueKind != JsonValueKind.String || string.IsNullOrWhiteSpace(item.GetString())) continue;
+                        try
+                        {
+                            var norm = CorsCommand.NormalizeOrigin(item.GetString()!);
+                            if (!origins.Contains(norm, StringComparer.Ordinal)) origins.Add(norm);
+                        }
+                        catch (CliUsageException ex) { return Err(ex.Message); }
+                    }
+                }
+                bool audit = a.TryGetProperty("audit", out var au) && au.ValueKind == JsonValueKind.True;
+                if (!audit && origins.Count == 0) return Err("origin (or origins) is required unless audit is true");
+
+                var methods = new List<string>();
+                if (Str(a, "method") is { } singleMethod && !string.IsNullOrWhiteSpace(singleMethod))
+                    methods.Add(singleMethod.ToUpperInvariant());
+                if (a.TryGetProperty("methods", out var methodsEl) && methodsEl.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (var item in methodsEl.EnumerateArray())
+                        if (item.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(item.GetString()))
+                        {
+                            var m = item.GetString()!.Trim().ToUpperInvariant();
+                            if (!methods.Contains(m, StringComparer.Ordinal)) methods.Add(m);
+                        }
+                }
+                if (methods.Count == 0) methods.Add("GET");
+                foreach (var m in methods)
+                    if (m.Length == 0 || m.Any(char.IsWhiteSpace)) return Err(MethodOption.Describe("method", m));
+
                 var headerList = ObjPairs(a, "headers").ToList();
-                if (RequestGuards.HostHeaderMismatch(url!, headerList) is { } hostProblem) return Err(hostProblem);
+                if (!webSocket && RequestGuards.HostHeaderMismatch(url!, headerList) is { } hostProblem) return Err(hostProblem);
                 foreach (var h in headerList)
                     if (HeaderValues.Problem(h.Key, h.Value) is { } valueProblem) return Err(valueProblem);
                 string? body = Str(a, "body");
@@ -630,27 +670,141 @@ public static class McpCommand
                 }
                 else if (body is not null && !headerList.Any(h => h.Key.Equals("Content-Type", StringComparison.OrdinalIgnoreCase)))
                     headerList.Add(new("Content-Type", "application/json"));
+
                 bool credentials = a.TryGetProperty("credentials", out var cr) && cr.ValueKind == JsonValueKind.True;
                 bool sendActual = a.TryGetProperty("sendActual", out var sa) && sa.ValueKind == JsonValueKind.True;
+                bool preflightOnly = a.TryGetProperty("preflightOnly", out var po) && po.ValueKind == JsonValueKind.True;
+                if (sendActual && preflightOnly) return Err("sendActual and preflightOnly contradict each other");
+                bool preflightWithoutCert = a.TryGetProperty("preflightWithoutCert", out var pwc) && pwc.ValueKind == JsonValueKind.True;
                 bool privateNetwork = a.TryGetProperty("privateNetwork", out var pn) && pn.ValueKind == JsonValueKind.True;
-                bool audit = a.TryGetProperty("audit", out var au) && au.ValueKind == JsonValueKind.True;
+                string? suggestArg = Str(a, "suggest");
+                string? suggestFor = null;
+                bool wantSuggest = false;
+                if (!string.IsNullOrWhiteSpace(suggestArg))
+                {
+                    wantSuggest = true;
+                    if (!suggestArg.Equals("all", StringComparison.OrdinalIgnoreCase))
+                    {
+                        if (!CorsSuggest.Frameworks.Contains(suggestArg, StringComparer.OrdinalIgnoreCase))
+                            return Err($"suggest must be 'all' or one of {string.Join(", ", CorsSuggest.Frameworks)}");
+                        suggestFor = suggestArg;
+                    }
+                }
+                int maxAge = a.TryGetProperty("maxAge", out var ma) && ma.TryGetInt32(out var maVal) && maVal >= 0 ? maVal : 600;
+                string? diffUrl = Str(a, "diffUrl");
+                if (diffUrl is not null)
+                {
+                    if (webSocket || audit) return Err("diffUrl only applies to standard http(s) CORS checks");
+                    if (!Uri.TryCreate(diffUrl, UriKind.Absolute, out var diffTarget) || diffTarget.Scheme is not ("http" or "https"))
+                        return Err("diffUrl must be an absolute http:// or https:// URL");
+                    if (Gate(diffUrl) is { } diffRefused) return Err(diffRefused);
+                }
+
                 var transport = McpTransport(new TransportOptions()) with { FollowRedirects = false };
+
+                if (webSocket)
+                {
+                    async Task<(bool, int?, string?)> ConnectWs(string o)
+                    {
+                        await using var session = new WebSocketSession();
+                        var sent = headerList.Where(h => !h.Key.Equals("Origin", StringComparison.OrdinalIgnoreCase))
+                            .Append(new KeyValuePair<string, string>("Origin", o)).ToList();
+                        try
+                        {
+                            using var limit = CancellationTokenSource.CreateLinkedTokenSource(CallCt());
+                            limit.CancelAfter(TimeSpan.FromSeconds(timeout));
+                            await session.ConnectAsync(url!, cert, sent, transport.IgnoreServerCertificateErrors, transport, predicates.For(target.Host), limit.Token);
+                            await session.CloseAsync(CancellationToken.None);
+                            return (true, 101, null);
+                        }
+                        catch (Exception ex) when (ex is System.Net.WebSockets.WebSocketException or HttpRequestException or OperationCanceledException or InvalidOperationException)
+                        {
+                            return (false, session.HandshakeStatus, ex.Message);
+                        }
+                    }
+                    var trustedWs = origins.FirstOrDefault(o => o != "null") is { } wsO
+                        ? new Uri(wsO)
+                        : new Uri((target.Scheme == "wss" ? "https://" : "http://") + target.Authority);
+                    var probeList = audit ? CorsAudit.ProbesFor(trustedWs) : origins.Select(o => ("origin", o)).ToList();
+                    var wsProbes = WebSocketOrigins.ProbeAsync(probeList, ConnectWs).GetAwaiter().GetResult();
+                    var wsFindings = audit ? WebSocketOrigins.Grade(wsProbes) : null;
+                    return new ToolResult(JsonSerializer.Serialize(new
+                    {
+                        url = MarkdownSecrets.RedactUrl(url!),
+                        worst = wsFindings is null || wsFindings.Count == 0 ? null : wsFindings.Max(f => f.Severity).ToString().ToLowerInvariant(),
+                        findings = wsFindings?.Select(f => new { severity = f.Severity.ToString().ToLowerInvariant(), title = f.Title, detail = f.Detail }),
+                        probes = wsProbes.Select(p => new { kind = p.Kind, origin = p.Origin, accepted = p.Accepted, status = p.Status, error = p.Error })
+                    }, new JsonSerializerOptions { WriteIndented = true }), false);
+                }
+
                 if (ApiClient.ValidateTransport(transport, url!) is { } transportProblem) return Err(transportProblem);
                 // Every hop is checked against the allowlist too: a redirect must not walk the
                 // certificate to a host the agent was never allowed to reach.
-                Task<ApiResponse> CorsSend(ApiRequest r) => Gate(r.Url) is { } hopRefused
+                Task<ApiResponse> CorsSend(ApiRequest r)
+                {
+                    if (Gate(r.Url) is { } hopRefused)
+                        return Task.FromResult(new ApiResponse { Error = new ApiError(ApiErrorKind.Unknown, hopRefused) });
+                    bool isPreflight = r.Method == HttpMethod.Options && r.Headers.Any(h => h.Key.Equals("Access-Control-Request-Method", StringComparison.OrdinalIgnoreCase));
+                    return services.Client.SendAsync(r, preflightWithoutCert && isPreflight ? null : cert, transport,
+                        predicates.For(TokenService.HostOf(r.Url)), cancellationToken: CallCt());
+                }
+                Task<ApiResponse> CorsSendNoCert(ApiRequest r) => Gate(r.Url) is { } hopRefused
                     ? Task.FromResult(new ApiResponse { Error = new ApiError(ApiErrorKind.Unknown, hopRefused) })
-                    : services.Client.SendAsync(r, cert, transport, predicates.For(TokenService.HostOf(r.Url)), cancellationToken: CallCt());
+                    : services.Client.SendAsync(r, null, transport, predicates.For(TokenService.HostOf(r.Url)), cancellationToken: CallCt());
+
                 if (audit)
                 {
-                    var auditResult = CorsAudit.RunAsync(url!, new Uri(origin == "null" ? target.GetLeftPart(UriPartial.Authority) : origin),
-                        headerList, CorsSend, TimeSpan.FromSeconds(timeout)).GetAwaiter().GetResult();
-                    return new ToolResult(CorsCommand.AuditJson(auditResult, MarkdownSecrets.RedactUrl(url!)), false);
+                    string baseOrigin = origins.FirstOrDefault(o => o != "null") ?? target.GetLeftPart(UriPartial.Authority);
+                    bool includeDev = !CorsCommand.TargetIsPrivate(target);
+                    Func<ApiRequest, Task<ApiResponse>>? auditNoCert = preflightWithoutCert ? CorsSendNoCert : null;
+                    var auditResult = CorsAudit.RunAsync(url!, new Uri(baseOrigin), headerList, CorsSend,
+                        TimeSpan.FromSeconds(timeout), includeDev, auditNoCert).GetAwaiter().GetResult();
+                    string? suggestion = wantSuggest
+                        ? CorsSuggest.For(new CorsNeeds(new[] { auditResult.BaseOrigin }, new[] { "GET" }, Array.Empty<string>(), Array.Empty<string>(), true, false), suggestFor, maxAge)
+                        : null;
+                    return new ToolResult(CorsCommand.AuditJson(auditResult, MarkdownSecrets.RedactUrl(url!), suggestion), false);
                 }
-                var corsRequest = new CorsRequest(origin, method, headerList, credentials) { PrivateNetwork = privateNetwork };
-                var result = CorsProbe.RunAsync(url!, corsRequest, body, type, sendActual ? true : null,
-                    CorsSend, TimeSpan.FromSeconds(timeout)).GetAwaiter().GetResult();
-                return new ToolResult(CorsCommand.Json(result, corsRequest, MarkdownSecrets.RedactUrl(url!)), false);
+
+                bool? actualMode = preflightOnly ? false : sendActual ? true : null;
+                if (diffUrl is not null)
+                {
+                    var allDiffs = new List<CorsDiffEntry>();
+                    foreach (var o in origins)
+                        foreach (var m in methods)
+                        {
+                            var req = new CorsRequest(o, m, headerList, credentials) { PrivateNetwork = privateNetwork };
+                            var left = CorsProbe.RunAsync(url!, req, body, type, actualMode, CorsSend, TimeSpan.FromSeconds(timeout)).GetAwaiter().GetResult();
+                            var right = CorsProbe.RunAsync(diffUrl, req, body, type, actualMode, CorsSend, TimeSpan.FromSeconds(timeout)).GetAwaiter().GetResult();
+                            allDiffs.AddRange(CorsDiff.Compare(req, left, right));
+                        }
+                    return new ToolResult(JsonSerializer.Serialize(new
+                    {
+                        leftUrl = MarkdownSecrets.RedactUrl(url!),
+                        rightUrl = MarkdownSecrets.RedactUrl(diffUrl),
+                        identical = allDiffs.Count == 0,
+                        differences = allDiffs.Select(d => new { origin = d.Origin, method = d.Method, field = d.Field, left = d.Left, right = d.Right })
+                    }, new JsonSerializerOptions { WriteIndented = true }), false);
+                }
+
+                var matrix = new List<(CorsRequest Req, CorsProbeResult Res)>();
+                foreach (var o in origins)
+                    foreach (var m in methods)
+                    {
+                        var corsRequest = new CorsRequest(o, m, headerList, credentials) { PrivateNetwork = privateNetwork };
+                        var result = CorsProbe.RunAsync(url!, corsRequest, body, type, actualMode,
+                            CorsSend, TimeSpan.FromSeconds(timeout)).GetAwaiter().GetResult();
+                        matrix.Add((corsRequest, result));
+                    }
+                string? suggestText = wantSuggest
+                    ? CorsSuggest.For(CorsNeeds.From(matrix.Select(x => (x.Req, (CorsProbeResult?)x.Res))), suggestFor, maxAge)
+                    : null;
+                if (matrix.Count == 1)
+                    return new ToolResult(CorsCommand.Json(matrix[0].Res, matrix[0].Req, MarkdownSecrets.RedactUrl(url!), suggestText), false);
+                return new ToolResult(JsonSerializer.Serialize(new
+                {
+                    results = matrix.Select(x => JsonSerializer.Deserialize<JsonElement>(CorsCommand.Json(x.Res, x.Req, MarkdownSecrets.RedactUrl(url!)))),
+                    suggestion = suggestText
+                }, new JsonSerializerOptions { WriteIndented = true }), false);
             })
         { Annotations = new ToolAnnotations(ReadOnlyHint: false, DestructiveHint: true, IdempotentHint: false, OpenWorldHint: true) };
 

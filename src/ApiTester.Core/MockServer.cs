@@ -28,7 +28,21 @@ public enum MockCorsFault
     /// <summary>CORS headers on the preflight only, none on the response itself.</summary>
     PreflightOnly,
     /// <summary>The origin echoed without Vary: Origin.</summary>
-    NoVary
+    NoVary,
+    /// <summary>Access-Control-Allow-Origin: * alongside Access-Control-Allow-Credentials: true (always rejected by browsers for credentialed requests).</summary>
+    StarWithCredentials,
+    /// <summary>Access-Control-Allow-Origin: null instead of the requested origin.</summary>
+    NullOrigin,
+    /// <summary>Omits Access-Control-Expose-Headers on responses so custom headers stay hidden from scripts.</summary>
+    MissingExpose,
+    /// <summary>Preflight answers 204 with only GET allowed, rejecting PUT/PATCH/DELETE.</summary>
+    BadMethods,
+    /// <summary>Preflight answers 204 without Access-Control-Allow-Headers, rejecting custom headers.</summary>
+    BadHeaders,
+    /// <summary>Omits Access-Control-Allow-Private-Network: true even when Private Network Access was requested.</summary>
+    PreflightNoPna,
+    /// <summary>Refuses preflights with 403 when no client certificate was presented (simulates mTLS preflight rejection).</summary>
+    PreflightRequireCert
 }
 
 /// <summary>`mock --cors`: answer preflights and put CORS headers on every response, as a server
@@ -57,30 +71,51 @@ public sealed record MockCors(IReadOnlyList<string>? Origins)
 
     /// <summary>The answer to a preflight: 204 with the grants, or 403 for an origin not allowed.</summary>
     public (int Status, IReadOnlyList<KeyValuePair<string, string>> Headers) Preflight(string origin, string method, string? requestHeaders,
-        bool privateNetwork = false, string path = "/")
+        bool privateNetwork = false, string path = "/", bool hasClientCert = false)
     {
         if (Off) return (405, new[] { new KeyValuePair<string, string>("Allow", "GET, HEAD, POST, PUT, PATCH, DELETE") });
         if (!Allows(origin)) return (403, new[] { new KeyValuePair<string, string>("Vary", "Origin") });
         if (Fault == MockCorsFault.PreflightUnauthorized)
             return (401, new[] { new KeyValuePair<string, string>("WWW-Authenticate", "Bearer realm=\"certapi mock\"") });
+        if (Fault == MockCorsFault.PreflightRequireCert && !hasClientCert)
+            return (403, new[] { new KeyValuePair<string, string>("Vary", "Origin") });
         if (Fault == MockCorsFault.PreflightRedirect)
             return (302, new[] { new KeyValuePair<string, string>("Location", "/login?next=" + Uri.EscapeDataString(path)) });
         var headers = new List<KeyValuePair<string, string>>();
         AddOrigin(headers, origin);
-        headers.Add(new("Access-Control-Allow-Methods", string.Join(", ", AllowMethods ??
-            new[] { method.ToUpperInvariant(), "GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS" }.Distinct())));
-        if (AllowHeaders is { } fixedHeaders)
+        if (Fault == MockCorsFault.BadMethods)
+            headers.Add(new("Access-Control-Allow-Methods", "GET"));
+        else
+            headers.Add(new("Access-Control-Allow-Methods", string.Join(", ", AllowMethods ??
+                new[] { method.ToUpperInvariant(), "GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS" }.Distinct())));
+        if (Fault != MockCorsFault.BadHeaders)
         {
-            if (fixedHeaders.Count > 0) headers.Add(new("Access-Control-Allow-Headers", string.Join(", ", fixedHeaders)));
+            if (AllowHeaders is { } fixedHeaders)
+            {
+                if (fixedHeaders.Count > 0) headers.Add(new("Access-Control-Allow-Headers", string.Join(", ", fixedHeaders)));
+            }
+            else if (!string.IsNullOrWhiteSpace(requestHeaders)) headers.Add(new("Access-Control-Allow-Headers", requestHeaders));
         }
-        else if (!string.IsNullOrWhiteSpace(requestHeaders)) headers.Add(new("Access-Control-Allow-Headers", requestHeaders));
-        if (privateNetwork) headers.Add(new("Access-Control-Allow-Private-Network", "true"));
+        if (privateNetwork && Fault != MockCorsFault.PreflightNoPna) headers.Add(new("Access-Control-Allow-Private-Network", "true"));
         headers.Add(new("Access-Control-Max-Age", MaxAge.ToString(System.Globalization.CultureInfo.InvariantCulture)));
         return (204, headers);
     }
 
     private void AddOrigin(List<KeyValuePair<string, string>> headers, string origin)
     {
+        if (Fault == MockCorsFault.StarWithCredentials)
+        {
+            headers.Add(new("Access-Control-Allow-Origin", "*"));
+            headers.Add(new("Access-Control-Allow-Credentials", "true"));
+            return;
+        }
+        if (Fault == MockCorsFault.NullOrigin)
+        {
+            headers.Add(new("Access-Control-Allow-Origin", "null"));
+            if (!Star) headers.Add(new("Access-Control-Allow-Credentials", "true"));
+            if (!Star && Fault != MockCorsFault.NoVary) headers.Add(new("Vary", "Origin"));
+            return;
+        }
         if (Star) headers.Add(new("Access-Control-Allow-Origin", "*"));
         else
         {
@@ -115,8 +150,11 @@ public sealed record MockCors(IReadOnlyList<string>? Origins)
         {
             var headers = new List<KeyValuePair<string, string>>();
             AddOrigin(headers, origin);
-            var expose = Expose ?? names;
-            if (expose.Count > 0) headers.Add(new("Access-Control-Expose-Headers", string.Join(", ", expose)));
+            if (Fault != MockCorsFault.MissingExpose)
+            {
+                var expose = Expose ?? names;
+                if (expose.Count > 0) headers.Add(new("Access-Control-Expose-Headers", string.Join(", ", expose)));
+            }
             kept.AddRange(headers.Select(h => $"{h.Key}: {h.Value}"));
         }
         return string.Join("\r\n", kept) + "\r\n\r\n";
@@ -160,7 +198,12 @@ public sealed record MockCors(IReadOnlyList<string>? Origins)
     }
 
     public static readonly IReadOnlyList<string> FaultNames =
-        new[] { "double-origin", "preflight-401", "preflight-redirect", "preflight-only", "no-vary" };
+        new[]
+        {
+            "double-origin", "preflight-401", "preflight-redirect", "preflight-only", "no-vary",
+            "star-with-credentials", "null-origin", "missing-expose", "bad-methods", "bad-headers",
+            "preflight-no-pna", "preflight-require-cert"
+        };
 
     public static bool TryParseFault(string name, out MockCorsFault fault)
     {
@@ -171,6 +214,13 @@ public sealed record MockCors(IReadOnlyList<string>? Origins)
             "preflight-redirect" => MockCorsFault.PreflightRedirect,
             "preflight-only" => MockCorsFault.PreflightOnly,
             "no-vary" => MockCorsFault.NoVary,
+            "star-with-credentials" => MockCorsFault.StarWithCredentials,
+            "null-origin" => MockCorsFault.NullOrigin,
+            "missing-expose" => MockCorsFault.MissingExpose,
+            "bad-methods" => MockCorsFault.BadMethods,
+            "bad-headers" => MockCorsFault.BadHeaders,
+            "preflight-no-pna" => MockCorsFault.PreflightNoPna,
+            "preflight-require-cert" => MockCorsFault.PreflightRequireCert,
             _ => (MockCorsFault)(-1)
         };
         return fault != (MockCorsFault)(-1);
@@ -729,7 +779,8 @@ public sealed class MockServer : IAsyncDisposable
                 {
                     var (preflightStatus, preflightHeaders) = corsPolicy.Preflight(corsOrigin, headers["Access-Control-Request-Method"],
                         headers.TryGetValue("Access-Control-Request-Headers", out var asked) ? asked : null,
-                        headers.TryGetValue("Access-Control-Request-Private-Network", out var pna) && pna.Trim() == "true", path);
+                        headers.TryGetValue("Access-Control-Request-Private-Network", out var pna) && pna.Trim() == "true", path,
+                        hasClientCert: clientCertSubject is not null);
                     var head = new StringBuilder();
                     head.Append("HTTP/1.1 ").Append(preflightStatus).Append(' ').Append(ReasonPhrase(preflightStatus)).Append("\r\n");
                     foreach (var h in preflightHeaders) head.Append(h.Key).Append(": ").Append(h.Value).Append("\r\n");

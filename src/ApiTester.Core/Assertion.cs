@@ -47,16 +47,39 @@ public sealed record AssertionResult(bool Passed, string Description, string? Ac
 public static class AssertionEvaluator
 {
     /// <summary>Evaluate every enabled rule against the response, in order.</summary>
-    public static IReadOnlyList<AssertionResult> Evaluate(IEnumerable<AssertionRule> rules, ApiResponse response)
+    public static IReadOnlyList<AssertionResult> Evaluate(IEnumerable<AssertionRule> rules, ApiResponse response) =>
+        Evaluate(rules, response, null);
+
+    /// <summary>Evaluate every enabled rule against <paramref name="response"/>, routing any
+    /// <see cref="AssertTarget.Cors"/> rule whose origin appears in <paramref name="corsResponsesByOrigin"/>
+    /// to that origin's own response so multi-origin CORS assertions catch reflecting servers.</summary>
+    public static IReadOnlyList<AssertionResult> Evaluate(
+        IEnumerable<AssertionRule> rules,
+        ApiResponse response,
+        IReadOnlyDictionary<string, ApiResponse>? corsResponsesByOrigin)
     {
         var results = new List<AssertionResult>();
         foreach (var rule in rules)
         {
             if (!rule.Enabled) continue;
-            results.Add(EvaluateOne(rule, response));
+            var targetResponse = rule.Target == AssertTarget.Cors &&
+                corsResponsesByOrigin is not null &&
+                corsResponsesByOrigin.TryGetValue(rule.Path.Trim(), out var originResp)
+                ? originResp
+                : response;
+            results.Add(EvaluateOne(rule, targetResponse));
         }
         return results;
     }
+
+    /// <summary>Distinct origins named by enabled <see cref="AssertTarget.Cors"/> rules beyond
+    /// <paramref name="sentOrigin"/>, for probing additional origins on safe requests.</summary>
+    public static IReadOnlyList<string> ExtraCorsOrigins(IEnumerable<AssertionRule> rules, string? sentOrigin) =>
+        rules.Where(r => r.Enabled && r.Target == AssertTarget.Cors && r.Path.Trim().Length > 0)
+            .Select(r => r.Path.Trim())
+            .Where(o => !string.Equals(o, sentOrigin, StringComparison.Ordinal))
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
 
     /// <summary>True when every enabled rule passes (vacuously true when there are none).</summary>
     public static bool AllPass(IEnumerable<AssertionRule> rules, ApiResponse response) =>
@@ -144,7 +167,31 @@ public static class AssertionEvaluator
     private static AssertionResult EvaluateCors(AssertionRule rule, ApiResponse response)
     {
         string origin = rule.Path.Trim();
-        string expected = rule.Value.Trim().ToLowerInvariant();
+        string rawExpected = rule.Value.Trim();
+        if (rawExpected.StartsWith("exposes ", StringComparison.OrdinalIgnoreCase))
+        {
+            string headerName = rawExpected[8..].Trim();
+            if (response.Error is not null)
+                return new AssertionResult(rule.Op == AssertOp.NotEquals, Describe(rule), "no response");
+            var req = new CorsRequest(origin, "GET", Array.Empty<KeyValuePair<string, string>>(), Credentials: false);
+            var (problems, _, _, readable, hidden) = CorsRules.CheckResponse(req, response.Headers);
+            bool exposed = problems.Count == 0 &&
+                (readable.Contains(headerName, StringComparer.OrdinalIgnoreCase) ||
+                 (CorsRules.SafelistedResponse.Contains(headerName) &&
+                  !headerName.Equals("Set-Cookie", StringComparison.OrdinalIgnoreCase) &&
+                  !headerName.Equals("Set-Cookie2", StringComparison.OrdinalIgnoreCase)) ||
+                 response.Headers.Any(h => h.Key.Equals("Access-Control-Expose-Headers", StringComparison.OrdinalIgnoreCase) &&
+                     h.Value.Split(',').Select(t => t.Trim()).Any(t => t == "*" || t.Equals(headerName, StringComparison.OrdinalIgnoreCase))));
+            bool ok = rule.Op == AssertOp.NotEquals ? !exposed : exposed;
+            string detail = problems.Count > 0 ? problems[0]
+                : exposed ? $"exposes {headerName}"
+                : hidden.Contains(headerName, StringComparer.OrdinalIgnoreCase)
+                    ? $"{headerName} is present on the response but hidden (not in Access-Control-Expose-Headers)"
+                    : $"{headerName} is not exposed to scripts on {origin}";
+            return new AssertionResult(ok, Describe(rule), detail);
+        }
+
+        string expected = rawExpected.ToLowerInvariant();
         string actual = CorsOutcome(origin, response);
         // "allowed" is met by a response that also allows credentials; the other two are exact.
         bool met = expected switch

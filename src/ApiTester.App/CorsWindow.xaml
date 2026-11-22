@@ -35,8 +35,8 @@
                 <StackPanel Grid.Row="0">
                     <DockPanel Margin="0,0,0,6">
                         <TextBlock Text="URL" Width="90" Foreground="{DynamicResource Text.Muted}" VerticalAlignment="Center"/>
-                        <TextBox x:Name="MethodBox" Width="80" DockPanel.Dock="Left" Margin="0,0,6,0" VerticalContentAlignment="Center"
-                                 ToolTip="The method the page's script uses"/>
+                        <TextBox x:Name="MethodBox" Width="110" DockPanel.Dock="Left" Margin="0,0,6,0" VerticalContentAlignment="Center"
+                                 ToolTip="HTTP method(s) the page's script uses, e.g. GET or GET,PUT"/>
                         <TextBox x:Name="UrlBox" VerticalContentAlignment="Center"
                                  ToolTip="The API the page calls: http(s)://, or ws(s):// for a WebSocket"/>
                     </DockPanel>
@@ -45,38 +45,43 @@
                         <TextBox x:Name="OriginBox" VerticalContentAlignment="Center"
                                  ToolTip="The origin of the page making the request, e.g. https://app.example.com. Several, comma-separated, make a table"/>
                     </DockPanel>
-                    <TextBlock x:Name="HeadersNote" Margin="90,0,0,6" Foreground="{DynamicResource Text.Muted}" TextWrapping="Wrap"/>
+                    <DockPanel Margin="0,0,0,6">
+                        <TextBlock Text="HEADERS" Width="90" Foreground="{DynamicResource Text.Muted}" VerticalAlignment="Top" Margin="0,4,0,0"/>
+                        <TextBox x:Name="HeadersBox" Height="44" AcceptsReturn="True" VerticalScrollBarVisibility="Auto"
+                                 ToolTip="Request headers sent by the script, one 'Name: Value' per line (pre-filled from the active request)"/>
+                    </DockPanel>
                 </StackPanel>
 
                 <WrapPanel Grid.Row="1" Margin="90,0,0,8">
-                    <CheckBox x:Name="CredentialsCheck" Content="With credentials" Margin="0,0,14,0" IsChecked="True"
+                    <CheckBox x:Name="CredentialsCheck" Content="With credentials" Margin="0,0,14,4" IsChecked="True"
                               ToolTip="The page sends cookies / credentials: 'include'. A browser presents a client certificate only on such a request"/>
-                    <CheckBox x:Name="PrivateNetworkCheck" Content="Private network" Margin="0,0,14,0"
+                    <CheckBox x:Name="PrivateNetworkCheck" Content="Private network" Margin="0,0,14,4"
                               ToolTip="Check Private Network Access: a public page calling a private or loopback address"/>
-                    <CheckBox x:Name="ActualCheck" Content="Send unsafe methods" Margin="0,0,14,0"
+                    <CheckBox x:Name="ActualCheck" Content="Send unsafe methods" Margin="0,0,14,4" Checked="ActualCheck_Checked"
                               ToolTip="Also send the request itself when the method is not GET or HEAD (by default it is only preflighted)"/>
-                    <CheckBox x:Name="NoCertPreflightCheck" Content="Preflight without the certificate"
+                    <CheckBox x:Name="PreflightOnlyCheck" Content="Preflight only" Margin="0,0,14,4" Checked="PreflightOnlyCheck_Checked"
+                              ToolTip="Never send the actual request, only check the browser preflight"/>
+                    <CheckBox x:Name="NoCertPreflightCheck" Content="Preflight without cert" Margin="0,0,0,4"
                               ToolTip="Send the preflight without the client certificate, as the Fetch standard does"/>
                 </WrapPanel>
 
                 <DockPanel Grid.Row="2" Margin="90,0,0,10" LastChildFill="False">
-                    <Button x:Name="CheckButton" Content="Check" Width="90" Click="Check_Click" IsDefault="True"
+                    <Button x:Name="CheckButton" Content="Check" Width="76" Click="Check_Click" IsDefault="True"
                             ToolTip="The preflight and the request a browser on the page origin would make, every redirect followed"/>
-                    <Button x:Name="AuditButton" Content="Audit" Width="90" Margin="6,0,0,0" Click="Audit_Click"
-                            ToolTip="Try the origins attackers use (any origin, null, look-alikes, plain http) and grade what gets in"/>
-                    <TextBlock Text="Fix for" Foreground="{DynamicResource Text.Muted}" VerticalAlignment="Center" Margin="18,0,6,0"/>
-                    <ComboBox x:Name="FrameworkCombo" Width="130" SelectedIndex="0"
-                              ToolTip="Server configuration that grants what was checked">
-                        <ComboBoxItem Content="(none)"/>
-                        <ComboBoxItem Content="all"/>
-                        <ComboBoxItem Content="aspnet"/>
-                        <ComboBoxItem Content="nginx"/>
-                        <ComboBoxItem Content="express"/>
-                        <ComboBoxItem Content="spring"/>
-                        <ComboBoxItem Content="iis"/>
-                        <ComboBoxItem Content="apigateway"/>
-                    </ComboBox>
-                    <TextBlock x:Name="BusyText" Foreground="{DynamicResource Text.Muted}" VerticalAlignment="Center" Margin="14,0,0,0"/>
+                    <Button x:Name="AuditButton" Content="Audit" Width="72" Margin="6,0,0,0" Click="Audit_Click"
+                            ToolTip="Try the origins attackers use (any origin, null, look-alikes, plain http, dev origins) and grade what gets in"/>
+                    <Button x:Name="HarButton" Content="From HAR…" Width="88" Margin="6,0,0,0" Click="Har_Click"
+                            ToolTip="Inspect every cross-origin request in a browser HAR capture"/>
+                    <TextBlock Text="Fix" Foreground="{DynamicResource Text.Muted}" VerticalAlignment="Center" Margin="14,0,6,0"/>
+                    <ComboBox x:Name="FrameworkCombo" Width="120" SelectedIndex="0"
+                              ToolTip="Server configuration that grants what was checked"/>
+                    <Button x:Name="CopyButton" Content="Copy" Width="62" Margin="10,0,0,0" Click="Copy_Click"
+                            ToolTip="Copy full output to clipboard"/>
+                    <Button x:Name="CopyFixButton" Content="Copy Fix" Width="74" Margin="6,0,0,0" Click="CopyFix_Click" IsEnabled="False"
+                            ToolTip="Copy the suggested server CORS configuration to clipboard"/>
+                    <Button x:Name="ExportJsonButton" Content="JSON…" Width="66" Margin="6,0,0,0" Click="ExportJson_Click" IsEnabled="False"
+                            ToolTip="Save the last check/audit result as JSON"/>
+                    <TextBlock x:Name="BusyText" Foreground="{DynamicResource Text.Muted}" VerticalAlignment="Center" Margin="10,0,0,0"/>
                 </DockPanel>
 
                 <TextBox Grid.Row="3" x:Name="ResultBox" IsReadOnly="True" AcceptsReturn="True" TextWrapping="NoWrap"

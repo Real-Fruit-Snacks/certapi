@@ -65,8 +65,10 @@ public static class AssertionParser
     private static AssertionRule ParseCors(string expr, string[] parts)
     {
         // cors <origin> [==|!=] allowed|credentials|blocked
+        // cors <origin> [!=] exposes <Header-Name>
+        // cors <origin> !exposes <Header-Name>
         if (parts.Length < 3)
-            throw new FormatException($"'{expr}': write cors <origin> allowed, cors <origin> credentials or cors <origin> blocked");
+            throw new FormatException($"'{expr}': write cors <origin> allowed, cors <origin> credentials, cors <origin> blocked or cors <origin> exposes <header>");
         string origin = parts[1];
         if (origin != "null" && (!Uri.TryCreate(origin, UriKind.Absolute, out var u) || u.Scheme is not ("http" or "https")))
             throw new FormatException($"'{expr}': '{origin}' is not an origin (scheme://host[:port], or null)");
@@ -75,11 +77,20 @@ public static class AssertionParser
         var op = AssertOp.Equals;
         if (parts[i] is "==" or "=" or "is") i++;
         else if (parts[i] is "!=" or "not") { op = AssertOp.NotEquals; i++; }
-        if (i >= parts.Length || parts.Length > i + 1)
-            throw new FormatException($"'{expr}': the outcome is allowed, credentials or blocked");
+        if (i >= parts.Length)
+            throw new FormatException($"'{expr}': the outcome is allowed, credentials, blocked or exposes <header>");
         string outcome = parts[i].ToLowerInvariant();
+        if (outcome is "exposes" or "!exposes")
+        {
+            if (outcome == "!exposes") op = op == AssertOp.NotEquals ? AssertOp.Equals : AssertOp.NotEquals;
+            if (parts.Length != i + 2 || string.IsNullOrWhiteSpace(parts[i + 1]))
+                throw new FormatException($"'{expr}': write cors <origin> exposes <Header-Name>");
+            return new AssertionRule { Enabled = true, Target = AssertTarget.Cors, Path = origin, Op = op, Value = "exposes " + parts[i + 1].Trim() };
+        }
+        if (parts.Length > i + 1)
+            throw new FormatException($"'{expr}': the outcome is allowed, credentials, blocked or exposes <header>");
         if (outcome is not ("allowed" or "credentials" or "blocked"))
-            throw new FormatException($"'{expr}': '{parts[i]}' is not an outcome; use allowed, credentials or blocked");
+            throw new FormatException($"'{expr}': '{parts[i]}' is not an outcome; use allowed, credentials, blocked or exposes <header>");
         return new AssertionRule { Enabled = true, Target = AssertTarget.Cors, Path = origin, Op = op, Value = outcome };
     }
 

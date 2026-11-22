@@ -1121,7 +1121,32 @@ public static class SendCommand
         if (responseChecks is not null) assertRules.AddRange(responseChecks(response));
         if (assertRules.Count > 0)
         {
-            var results = AssertionEvaluator.Evaluate(assertRules, response);
+            Dictionary<string, ApiResponse>? extraCors = null;
+            string? sentOrigin = headerPairs.LastOrDefault(h => h.Key.Equals("Origin", StringComparison.OrdinalIgnoreCase)).Value;
+            if ((request.Method == HttpMethod.Get || request.Method == HttpMethod.Head) &&
+                AssertionEvaluator.ExtraCorsOrigins(assertRules, sentOrigin) is { Count: > 0 } extraOrigins)
+            {
+                extraCors = new Dictionary<string, ApiResponse>(StringComparer.Ordinal);
+                foreach (var extraOrigin in extraOrigins)
+                {
+                    var probeHeaders = headerPairs.Where(h => !h.Key.Equals("Origin", StringComparison.OrdinalIgnoreCase))
+                        .Append(new KeyValuePair<string, string>("Origin", extraOrigin)).ToList();
+                    var probeReq = new ApiRequest
+                    {
+                        Method = request.Method,
+                        Url = url,
+                        Headers = probeHeaders,
+                        WindowsAuth = request.WindowsAuth,
+                        AwsSigV4 = request.AwsSigV4,
+                        Hmac = request.Hmac,
+                        Timeout = request.Timeout
+                    };
+                    extraCors[extraOrigin] = services.Client.SendAsync(probeReq, cert,
+                        transport: transport, trustServerCertificate: trustCert,
+                        cookies: cookieJar, cancellationToken: services.Cancel).GetAwaiter().GetResult();
+                }
+            }
+            var results = AssertionEvaluator.Evaluate(assertRules, response, extraCors);
             foreach (var r in results)
             {
                 stderr.WriteLine(r.Passed

@@ -6,6 +6,28 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.103.0] - 2026-11-22
+
+### Added
+- **Fetch spec & browser CORS accuracy**:
+  - Forbidden browser method checks (`CONNECT`, `TRACE`, `TRACK`) and forbidden method-override headers (`X-HTTP-Method*`, `Access-Control-Request-Private-Network`), blocked before any network call as `fetch()` does.
+  - Fetch 1,024-byte combined safelisted request-header cap and inverted `Range` bound detection (`bytes=100-50`).
+  - Cross-site `Set-Cookie` validation under `--credentials` (`SameSite=None`, `Secure`, and third-party `Partitioned`/CHIPS notes, with same-site awareness).
+  - Response inspection for `Cross-Origin-Resource-Policy` (CORP), `Cross-Origin-Embedder-Policy` (COEP), `Cross-Origin-Opener-Policy` (COOP), and `Timing-Allow-Origin`.
+  - Preflight `Vary` completeness notes (`Access-Control-Request-Method`, `Access-Control-Request-Headers`), trailing-slash `Access-Control-Allow-Origin` hint, Safari 10-minute cap note, and proper `Access-Control-Max-Age <= 0` ("disables preflight caching") reporting.
+- **Expanded `certapi cors --audit` probes & findings**:
+  - Port look-alike (`:8443`/`:8444`), userinfo (`@`), underscore (`_.`), and encoded backtick (`%60.`) bypass probes, plus `http://localhost` / `http://localhost:3000` dev-origin checks against non-local targets.
+  - Findings for dynamic `Access-Control-Allow-Origin` without `Vary: Origin`, credentialed preflight reflection, and (with `--preflight-without-cert`) unauthenticated mTLS preflight rejection.
+- **CLI CORS workflows & `--suggest` expansion**:
+  - `certapi cors --diff <other-url>` to compare CORS verdicts, preflight/response headers, and readable headers across two endpoints.
+  - `certapi cors --from-openapi <spec.json> [--base-url <url>]` to sweep every operation in an OpenAPI 3.x / Swagger 2.0 JSON spec.
+  - `--max-age <seconds>` for `--suggest`, `"suggestion"` included in `--json` output, and 8 new config targets (`apim`, `yarp`, `cloudflare`, `caddy`, `traefik`, `apache`, `fastapi`, `go`) with shell tab completion.
+  - `cors <origin> exposes <Header>` / `!exposes <Header>` assertions, multi-origin CORS assertion probing on `GET`/`HEAD` (catches reflecting servers), and `certapi run --origin <o> --cors-preflight`.
+- **Desktop `CorsWindow` & MCP `cors_check` parity**:
+  - Desktop `CorsWindow` adds multi-method matrix input, editable request headers, **Preflight only**, **From HAR…** inspection, all 14 `--suggest` frameworks, automatic Private Network Access notice, and **Copy**, **Copy Fix**, and **JSON…** export buttons.
+  - MCP `cors_check` adds `ws://`/`wss://` WebSocket origin checks & audits, `origins`/`methods` matrix arrays, `preflightOnly`, `preflightWithoutCert`, `suggest`/`maxAge`, and `diffUrl`.
+- **Mock server `--cors-fault` additions**: `star-with-credentials`, `null-origin`, `missing-expose`, `bad-methods`, `bad-headers`, `preflight-no-pna`, and `preflight-require-cert` (plus tab completion).
+
 ## [1.102.0] - 2026-11-21
 
 ### Added
@@ -3676,7 +3698,8 @@ Initial release.
 - Save any response (including binary) to a file.
 - Self-contained single-file executable — no installer, no admin rights, no runtime dependency.
 
-[Unreleased]: https://github.com/Real-Fruit-Snacks/certapi/compare/v1.102.0...HEAD
+[Unreleased]: https://github.com/Real-Fruit-Snacks/certapi/compare/v1.103.0...HEAD
+[1.103.0]: https://github.com/Real-Fruit-Snacks/certapi/compare/v1.102.0...v1.103.0
 [1.102.0]: https://github.com/Real-Fruit-Snacks/certapi/compare/v1.101.0...v1.102.0
 [1.101.0]: https://github.com/Real-Fruit-Snacks/certapi/compare/v1.100.2...v1.101.0
 [1.100.2]: https://github.com/Real-Fruit-Snacks/certapi/compare/v1.100.1...v1.100.2

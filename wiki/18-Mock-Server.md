@@ -230,8 +230,10 @@ certapi cors http://127.0.0.1:8770/orders --origin https://evil.example      # b
 `--cors-headers`, `--cors-methods`, `--cors-expose` and `--cors-max-age` fix what a preflight grants
 instead of granting whatever it asks; `--cors-star` answers `*` without credentials, which is what a
 request with a client certificate or a cookie fails against. `--cors-fault` gets it wrong on
-purpose — `double-origin`, `preflight-401`, `preflight-redirect`, `preflight-only` or `no-vary` —
-to see how a client, or a check, copes with a server that is broken in a known way:
+purpose — `double-origin`, `preflight-401`, `preflight-redirect`, `preflight-only`, `no-vary`,
+`star-with-credentials`, `null-origin`, `missing-expose`, `bad-methods`, `bad-headers`,
+`preflight-no-pna` or `preflight-require-cert` — to see how a client, or a check, copes with a
+server that is broken in a known way:
 
 ```powershell
 certapi mock --cors http://localhost:3000 --cors-headers Content-Type --cors-methods GET,POST
