@@ -27,9 +27,11 @@ public static class SelfTestCommand
         if (json)
             stdout.WriteLine(JsonSerializer.Serialize(
                 new { passed = result.Passed, detail = result.Detail },
-                new JsonSerializerOptions { WriteIndented = true }));
+                IndentedJson));
         else
             stdout.WriteLine(result.Detail);
         return result.Passed ? ExitCodes.Ok : ExitCodes.Failure;
     }
+
+    private static readonly JsonSerializerOptions IndentedJson = new() { WriteIndented = true };
 }

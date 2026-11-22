@@ -438,11 +438,15 @@ public sealed class ApiClient : IDisposable
                 using var response = await http.SendAsync(message, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
                 // Read before anything else looks at the response, as HttpClient did: a redirect's
                 // body too, so its connection goes back to the pool and its hop time includes it.
-                byte[]? body = transport.MaxResponseBytes is null
-                    ? await ReadBodyAsync(response.Content,
+                byte[]? body = request.DiscardBody
+                    ? await DrainBodyAsync(response.Content,
                         request.Timeout == Timeout.InfiniteTimeSpan ? Timeout.InfiniteTimeSpan : request.Timeout - Stopwatch.GetElapsedTime(hopSent),
                         cancellationToken)
-                    : null;
+                    : transport.MaxResponseBytes is null
+                        ? await ReadBodyAsync(response.Content,
+                            request.Timeout == Timeout.InfiniteTimeSpan ? Timeout.InfiniteTimeSpan : request.Timeout - Stopwatch.GetElapsedTime(hopSent),
+                            cancellationToken)
+                        : null;
 
                 // Applied before the redirect decision below, so the next hop carries what this one
                 // just set.
@@ -525,7 +529,12 @@ public sealed class ApiClient : IDisposable
 
                 bool truncated = false;
                 byte[] bytes;
-                if (transport.MaxResponseBytes is long cap)
+                if (request.DiscardBody)
+                {
+                    bytes = Array.Empty<byte>();
+                    stopwatch.Stop();
+                }
+                else if (transport.MaxResponseBytes is long cap)
                 {
                     stopwatch.Stop();
                     (bytes, truncated) = await ReadCappedAsync(response.Content, cap, cancellationToken);
@@ -537,10 +546,11 @@ public sealed class ApiClient : IDisposable
                     bytes = body!;
                     stopwatch.Stop();
                 }
-                var headers = response.Headers
-                    .Concat(response.Content.Headers)
-                    .SelectMany(h => h.Value.Select(v => new KeyValuePair<string, string>(h.Key, v)))
-                    .ToList();
+                var headers = new List<KeyValuePair<string, string>>();
+                foreach (var h in response.Headers)
+                    foreach (var v in h.Value) headers.Add(new(h.Key, v));
+                foreach (var h in response.Content.Headers)
+                    foreach (var v in h.Value) headers.Add(new(h.Key, v));
 
                 return new ApiResponse
                 {
@@ -1080,6 +1090,21 @@ public sealed class ApiClient : IDisposable
     /// copy when it is already the right size. Failures read as HttpClient's own would have:
     /// running out of <paramref name="remaining"/> (infinite for no limit) is a timeout, and a
     /// connection that ends mid-body is an <see cref="HttpRequestException"/>.</summary>
+    private static async Task<byte[]> DrainBodyAsync(HttpContent content, TimeSpan remaining, CancellationToken ct)
+    {
+        using var cts = remaining == Timeout.InfiniteTimeSpan ? null : CancellationTokenSource.CreateLinkedTokenSource(ct);
+        if (cts is not null) cts.CancelAfter(remaining > TimeSpan.Zero ? remaining : TimeSpan.Zero);
+        var token = cts?.Token ?? ct;
+        await using var stream = await content.ReadAsStreamAsync(token);
+        var buf = System.Buffers.ArrayPool<byte>.Shared.Rent(16 * 1024);
+        try
+        {
+            while (await stream.ReadAsync(buf.AsMemory(), token) > 0) { }
+        }
+        finally { System.Buffers.ArrayPool<byte>.Shared.Return(buf); }
+        return Array.Empty<byte>();
+    }
+
     private static async Task<byte[]> ReadBodyAsync(HttpContent content, TimeSpan remaining, CancellationToken ct)
     {
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);

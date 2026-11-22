@@ -200,6 +200,34 @@ public sealed class RequestModel : INotifyPropertyChanged
             FormParts.Add(new FormPart { Enabled = p.Enabled, Name = p.Name, IsFile = p.IsFile, Value = p.Value });
     }
 
+    internal RequestModel CloneForSave()
+    {
+        var copy = new RequestModel
+        {
+            _method = _method,
+            _baseUrl = _baseUrl,
+            _path = _path,
+            _body = _body,
+            _contentType = _contentType,
+            _authType = _authType,
+            _authUser = _authUser,
+            _authSecret = _authSecret,
+            _authScope = _authScope,
+            _certThumbprint = _certThumbprint,
+            _ignoreServerCert = _ignoreServerCert,
+            _timeoutSeconds = _timeoutSeconds,
+            _sourceCollectionId = _sourceCollectionId,
+            _isMultipart = _isMultipart,
+            Transport = Transport.Clone()
+        };
+        foreach (var h in Headers) copy.Headers.Add(new HeaderRow { Enabled = h.Enabled, Name = h.Name, Value = h.Value });
+        foreach (var p in QueryParams) copy.QueryParams.Add(new ParamRow { Enabled = p.Enabled, Key = p.Key, Value = p.Value });
+        foreach (var c in Captures) copy.Captures.Add(new CaptureRule { Enabled = c.Enabled, Variable = c.Variable, Source = c.Source, Path = c.Path });
+        foreach (var a in Assertions) copy.Assertions.Add(new AssertionRule { Enabled = a.Enabled, Target = a.Target, Op = a.Op, Path = a.Path, Value = a.Value });
+        foreach (var f in FormParts) copy.FormParts.Add(new FormPart { Enabled = f.Enabled, Name = f.Name, IsFile = f.IsFile, Value = f.Value });
+        return copy;
+    }
+
     public event PropertyChangedEventHandler? PropertyChanged;
     private void Raise(string n) => PropertyChanged?.Invoke(this, new(n));
 }

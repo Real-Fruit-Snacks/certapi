@@ -6,15 +6,25 @@ namespace ApiTester.Cli;
 /// <summary>Injectable seams so tests can run every command in-process.</summary>
 public sealed class CliServices
 {
-    public Func<bool, IReadOnlyList<CertificateInfo>> ListCertificates { get; init; } =
+    private static readonly Func<bool, IReadOnlyList<CertificateInfo>> DefaultListCertificates =
         includeLocalMachine => new CertificateStoreService().ListClientCertificates(includeLocalMachine);
 
-    public Func<bool> IsGuiRunning { get; init; } =
-        () => System.Diagnostics.Process.GetProcessesByName("ApiTester.App").Length > 0;
+    private ApiClient? _client;
+
+    public Func<bool, IReadOnlyList<CertificateInfo>> ListCertificates { get; init; } = DefaultListCertificates;
+
+    internal bool UsesDefaultListCertificates => ReferenceEquals(ListCertificates, DefaultListCertificates);
+
+    public Func<bool> IsGuiRunning { get; init; } = () =>
+    {
+        var procs = System.Diagnostics.Process.GetProcessesByName("ApiTester.App");
+        try { return procs.Length > 0; }
+        finally { foreach (var p in procs) p.Dispose(); }
+    };
 
     public string LiveStatePath { get; init; } = AppState.DefaultPath;
 
-    public ApiClient Client { get; init; } = new();
+    public ApiClient Client { get => _client ??= new(); init => _client = value; }
 
     /// <summary>Wired to Ctrl+C by Program.cs so in-flight requests cancel cleanly.</summary>
     public CancellationToken Cancel { get; init; } = CancellationToken.None;
@@ -211,24 +221,27 @@ public static class CliApp
                           Stream? bodyOut = null, CliServices? services = null)
     {
         services ??= new CliServices();
-        // Commands that read stdin (mcp/fuzz/ws/grpc) or stream to stdout (sse) run through here so
+        // Commands that read stdin (mcp/fuzz/ws/grpc/mqtt/signalr) or stream to stdout (sse) run through here so
         // they get the reader; everything else falls through to the reader-less overload below.
         // The command is the first word that is not a global option, wherever those sit: global
         // options work anywhere on the line, before the command included.
+        if (args.Length == 0 || args[0] == "__complete")
+            return Run(args, stdout, stderr, bodyOut, services);
+
         (string[] Remaining, bool Debug, string? LogFile, string? Config, string? Profile, bool NoConfig,
-         bool Trace, string? TraceFile, IReadOnlyList<string> TraceFilters, bool TraceVerbose, bool TraceIncludeSecrets) g =
-            (Array.Empty<string>(), false, null, null, null, false, false, null, Array.Empty<string>(), false, false);
-        bool streaming = false;
-        if (args.Length > 0 && args[0] != "__complete")
+         bool Trace, string? TraceFile, IReadOnlyList<string> TraceFilters, bool TraceVerbose, bool TraceIncludeSecrets) g;
+        try
         {
-            try
-            {
-                g = GlobalOptions.ExtractEverything(args);
-                streaming = g.Remaining.Length > 0 && IsStreamingCommand(g.Remaining[0]);
-            }
-            catch (CliUsageException) { /* the overload below reports it */ }
+            g = GlobalOptions.ExtractEverything(args);
         }
-        if (streaming)
+        catch (CliUsageException ex)
+        {
+            Commands.UpdateCommand.CleanUpPrevious(services.ExecutablePath);
+            stderr.WriteLine(ex.Message);
+            return ExitCodes.Usage;
+        }
+
+        if (g.Remaining.Length > 0 && IsStreamingCommand(g.Remaining[0]))
         {
             string cmd = g.Remaining[0].ToLowerInvariant();
             g.Remaining = g.Remaining[1..];
@@ -271,7 +284,7 @@ public static class CliApp
             catch (Exception ex) { err.WriteLine("error: " + log.Describe(ex)); return ExitCodes.Failure; }
             finally { services.DisposeOwned(); }
         }
-        return Run(args, stdout, stderr, bodyOut, services);
+        return RunNonStreaming(g, stdout, stderr, bodyOut, services);
     }
 
     /// <summary>The first diagnostic line: what is running, on what, and — through its timestamp —
@@ -306,7 +319,23 @@ public static class CliApp
          bool Trace, string? TraceFile, IReadOnlyList<string> TraceFilters, bool TraceVerbose, bool TraceIncludeSecrets) g;
         try { g = GlobalOptions.ExtractEverything(args); }
         catch (CliUsageException ex) { stderr.WriteLine(ex.Message); return ExitCodes.Usage; }
+        return RunNonStreamingCore(g, stdout, stderr, bodyOut, services);
+    }
 
+    private static int RunNonStreaming(
+        (string[] Remaining, bool Debug, string? LogFile, string? Config, string? Profile, bool NoConfig,
+         bool Trace, string? TraceFile, IReadOnlyList<string> TraceFilters, bool TraceVerbose, bool TraceIncludeSecrets) g,
+        TextWriter stdout, TextWriter stderr, Stream? bodyOut, CliServices services)
+    {
+        Commands.UpdateCommand.CleanUpPrevious(services.ExecutablePath);
+        return RunNonStreamingCore(g, stdout, stderr, bodyOut, services);
+    }
+
+    private static int RunNonStreamingCore(
+        (string[] Remaining, bool Debug, string? LogFile, string? Config, string? Profile, bool NoConfig,
+         bool Trace, string? TraceFile, IReadOnlyList<string> TraceFilters, bool TraceVerbose, bool TraceIncludeSecrets) g,
+        TextWriter stdout, TextWriter stderr, Stream? bodyOut, CliServices services)
+    {
         using var log = CliLog.Create(g.Debug, g.LogFile, stderr);
         services.Log = log;
         CliWorkspace.Debug = log.Active ? log.Debug : null;
@@ -322,7 +351,7 @@ public static class CliApp
             // configuration is reported before a command starts doing work with half of it.
             if (g.Remaining.Length == 0) { err.WriteLine(Usage); return ExitCodes.Usage; }
             string command = g.Remaining[0].ToLowerInvariant();
-            var rest = g.Remaining.Skip(1).ToArray();
+            var rest = g.Remaining.Length == 1 ? Array.Empty<string>() : g.Remaining[1..];
             // Before the profile is resolved: help must work even when the configuration is broken.
             if (PrintedHelp(command, rest, stdout)) return ExitCodes.Ok;
             // `config init` writes a configuration, so it must work when the current one is broken.
@@ -453,17 +482,18 @@ public static class CliApp
         catch (IOException ex) { throw new CliDataException($"could not read {source.Path}: {ex.Message}"); }
     }
 
-    /// <summary>The SemVer this build carries, without build metadata.</summary>
-    public static string ProductVersion
+    private static readonly string CachedProductVersion = ReadProductVersion();
+
+    private static string ReadProductVersion()
     {
-        get
-        {
-            var version = Assembly.GetExecutingAssembly()
-                .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "0.0.0";
-            int plus = version.IndexOf('+');                      // strip build metadata
-            return plus > 0 ? version[..plus] : version;
-        }
+        var version = Assembly.GetExecutingAssembly()
+            .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "0.0.0";
+        int plus = version.IndexOf('+');                      // strip build metadata
+        return plus > 0 ? version[..plus] : version;
     }
+
+    /// <summary>The SemVer this build carries, without build metadata.</summary>
+    public static string ProductVersion => CachedProductVersion;
 
     private static int Version(TextWriter stdout)
     {

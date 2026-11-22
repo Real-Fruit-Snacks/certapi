@@ -21,7 +21,7 @@ public static class HarReader
             if (doc.RootElement.ValueKind != JsonValueKind.Object || !doc.RootElement.TryGetProperty("log", out _))
                 throw new HarFormatException("The file is not a valid HAR archive: missing \"log\".");
 
-            har = JsonSerializer.Deserialize<Har>(json, HarWriter.Options);
+            har = doc.RootElement.Deserialize<Har>(HarWriter.Options);
         }
         catch (JsonException ex)
         {

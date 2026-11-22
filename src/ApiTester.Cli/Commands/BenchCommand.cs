@@ -26,11 +26,19 @@ public static class BenchCommand
           --warmup <seconds>      Send for this long first and discard every result, so the
                                   figures describe a warmed-up endpoint. Warm-up requests are
                                   extra — they do not come out of --count.
+          --rate <rps>            Pace requests to a constant arrival rate (requests/second)
           --bench-retries         Let the retry flags below apply during the bench (off by default)
           --pool                  Also report the connections this run actually used: how many
                                   were opened and how many requests each served. Turns the note
                                   below into a measurement — a server answering 'Connection:
                                   close' makes every request pay a fresh handshake
+
+        Thresholds & output:
+          --threshold <expr>      Fail (exit 1) if an SLO regresses (repeatable), e.g.
+                                  "p99 < 250ms", "p50 <= 50ms", "error-rate <= 1%", "rps >= 50"
+          --max-error-rate <v>    Fail (exit 1) if failed/sent exceeds this rate (e.g. 0.01 or 1%)
+          --histogram             Print an ASCII latency distribution histogram
+          --csv <file>            Write every measured request sample to a CSV file
 
         Request:
           -X, --method <m>        HTTP method (default GET, or POST with -d)
@@ -132,6 +140,11 @@ public static class BenchCommand
         string? concurrencyRaw = args.Value("-c", "--concurrency");
         string? durationRaw = args.Value("--duration");
         string? warmupRaw = args.Value("--warmup");
+        string? rateRaw = args.Value("--rate");
+        var thresholdSpecs = args.Values("--threshold");
+        string? maxErrorRateRaw = args.Value("--max-error-rate");
+        bool histogram = args.Flag("--histogram");
+        string? csvFile = args.Value("--csv");
         bool json = args.Flag("--json");
         bool benchRetries = args.Flag("--bench-retries");
         string store = args.Value("--store") ?? services.Profile?.Store ?? "CurrentUser";
@@ -169,6 +182,24 @@ public static class BenchCommand
         if (concurrencyRaw is null && durationRaw is null) concurrency = Math.Min(concurrency, count);
         var duration = ParsePositiveSeconds(durationRaw, "--duration");
         var warmUp = ParsePositiveSeconds(warmupRaw, "--warmup");
+        double? targetRps = null;
+        if (rateRaw is not null)
+        {
+            if (!double.TryParse(rateRaw, NumberStyles.Float, CultureInfo.InvariantCulture, out double rps) || rps <= 0)
+                throw new CliUsageException($"--rate expects a positive requests/second number, got '{rateRaw}'.");
+            targetRps = rps;
+        }
+        var thresholds = new List<BenchThreshold>();
+        foreach (var spec in thresholdSpecs)
+        {
+            try { thresholds.Add(BenchThreshold.Parse(spec)); }
+            catch (FormatException ex) { throw new CliUsageException($"--threshold: {ex.Message}"); }
+        }
+        if (maxErrorRateRaw is not null)
+        {
+            try { thresholds.Add(BenchThreshold.Parse($"error-rate <= {maxErrorRateRaw.Trim()}")); }
+            catch (FormatException ex) { throw new CliUsageException($"--max-error-rate: {ex.Message}"); }
+        }
         int timeout = ParsePositive(timeoutRaw, 100, "--timeout", "seconds");
         // Checked against the effective count (the default included), and only when there is a count:
         // with --duration there is nothing for the workers to outnumber.
@@ -308,7 +339,8 @@ public static class BenchCommand
         // A thumbprint pinned for this host lets the bench through without the blanket --insecure
         // bypass — the same courtesy `certapi send` extends.
         string host = TokenService.HostOf(request.Url);
-        var options = new BenchOptions(count, concurrency, duration, warmUp);
+        bool collectSamples = histogram || csvFile is not null;
+        var options = new BenchOptions(count, concurrency, duration, warmUp, targetRps, collectSamples);
 
         // The note this command has always printed — "connections are pooled and reused" — is a
         // claim about what happened. --pool measures it rather than asserting it, which matters
@@ -344,18 +376,61 @@ public static class BenchCommand
         if (json) stdout.WriteLine(BuildEnvelope(result, inspector is null ? null : pooled));
         else WriteReport(result, request, savedPath, options, stdout);
 
+        if (histogram && !json && result.Samples is { Count: > 0 } hSamples)
+        {
+            stdout.WriteLine();
+            stdout.WriteLine("  histogram:");
+            stdout.WriteLine(BenchHistogram.Format(hSamples));
+        }
+
         if (inspector is not null && !json)
         {
             stdout.WriteLine();
             stdout.Write(ConnectionInspector.Render(pooled));
         }
 
+        if (csvFile is not null && result.Samples is { } csvSamples)
+        {
+            if (Path.GetDirectoryName(Path.GetFullPath(csvFile)) is { Length: > 0 } dir)
+                Directory.CreateDirectory(dir);
+            var sb = new StringBuilder();
+            sb.AppendLine("index,elapsed_ms,status,error,ok");
+            for (int i = 0; i < csvSamples.Count; i++)
+            {
+                var s = csvSamples[i];
+                sb.Append(i + 1).Append(',')
+                  .Append(s.ElapsedMs.ToString("0.###", CultureInfo.InvariantCulture)).Append(',')
+                  .Append(s.StatusCode?.ToString(CultureInfo.InvariantCulture) ?? "").Append(',')
+                  .Append(s.Error ?? "").Append(',')
+                  .AppendLine(s.Succeeded ? "true" : "false");
+            }
+            File.WriteAllText(csvFile, sb.ToString(), new UTF8Encoding(false));
+            stderr.WriteLine($"wrote {csvSamples.Count} sample(s) to {csvFile}");
+        }
+
+        bool thresholdFailed = false;
+        if (thresholds.Count > 0)
+        {
+            foreach (var th in thresholds)
+            {
+                var (ok, actual) = th.Evaluate(result);
+                string formattedActual = th.Metric == "error-rate"
+                    ? $"{actual * 100:0.##}%"
+                    : th.Metric == "rps"
+                        ? $"{actual:0.0} req/s"
+                        : $"{actual:0.0} ms";
+                stderr.WriteLine(ok
+                    ? $"  PASS  {th.Raw}  (actual: {formattedActual})"
+                    : $"  FAIL  {th.Raw}  (actual: {formattedActual})");
+                if (!ok) thresholdFailed = true;
+            }
+        }
+
         // A bench reports numbers rather than passing judgement: an endpoint that answers 503 every time
-        // has still been measured, and its latencies still mean something, so a high failure rate exits 0.
-        // Exit 1 only when nothing answered at all — every attempt failed at the transport level, so there
-        // is no measurement here, only the news that the endpoint could not be reached.
+        // has still been measured, and its latencies still mean something, so a high failure rate exits 0
+        // unless a --threshold / --max-error-rate failed.
         bool anythingAnswered = result.StatusCounts.Count > 0;
-        return result.Sent > 0 && anythingAnswered ? ExitCodes.Ok : ExitCodes.Failure;
+        return result.Sent > 0 && anythingAnswered && !thresholdFailed ? ExitCodes.Ok : ExitCodes.Failure;
     }
 
     /// <summary>A progress counter on stderr, so a long bench is visibly alive. Suppressed under
@@ -455,8 +530,10 @@ public static class BenchCommand
             obj["reusing"] = connections.Count > 0 && connections.Sum(c => c.Requests) > connections.Count;
         }
 
-        return JsonSerializer.Serialize(obj, new JsonSerializerOptions { WriteIndented = true });
+        return JsonSerializer.Serialize(obj, IndentedJson);
     }
+
+    private static readonly JsonSerializerOptions IndentedJson = new() { WriteIndented = true };
 
     private static int ParsePositive(string? raw, int fallback, string flag, string unit)
     {

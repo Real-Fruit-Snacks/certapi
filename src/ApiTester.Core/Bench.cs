@@ -6,8 +6,18 @@ namespace ApiTester.Core;
 /// <summary>What to measure. <paramref name="Count"/> and <paramref name="Duration"/> are
 /// alternatives: with a duration set the count is ignored and the workers run until the deadline.
 /// <paramref name="WarmUp"/> requests are sent first and thrown away, so the figures describe a
-/// warmed-up endpoint rather than its first-connection cost.</summary>
-public sealed record BenchOptions(int Count, int Concurrency, TimeSpan? Duration = null, TimeSpan? WarmUp = null);
+/// warmed-up endpoint rather than its first-connection cost. <paramref name="TargetRps"/> paces
+/// requests to a constant arrival rate across all workers when positive.</summary>
+public sealed record BenchOptions(
+    int Count,
+    int Concurrency,
+    TimeSpan? Duration = null,
+    TimeSpan? WarmUp = null,
+    double? TargetRps = null,
+    bool CollectSamples = false);
+
+/// <summary>One measured request exported when <see cref="BenchOptions.CollectSamples"/> is set.</summary>
+public sealed record BenchSample(double ElapsedMs, int? StatusCode, string? Error, bool Succeeded);
 
 /// <summary>Progress while a bench runs, for a caller that wants to show a counter.
 /// <paramref name="Total"/> is 0 when the run is bounded by a duration rather than a count — there
@@ -21,12 +31,120 @@ public sealed record BenchResult(
     TimeSpan Elapsed, double RequestsPerSecond,
     double MinMs, double P50Ms, double P90Ms, double P99Ms, double MaxMs,
     IReadOnlyDictionary<int, int> StatusCounts,
-    IReadOnlyDictionary<string, int> ErrorCounts)
+    IReadOnlyDictionary<string, int> ErrorCounts,
+    IReadOnlyList<BenchSample>? Samples = null)
 {
     /// <summary>Responses that came back with <c>Connection: close</c>: each one ended its
     /// connection, so the request after it paid a new connect (and TLS handshake) that pooling would
     /// otherwise have saved. Zero is the normal case.</summary>
     public int ClosedByServer { get; init; }
+}
+
+/// <summary>A latency/error/throughput SLO threshold checked against a <see cref="BenchResult"/>
+/// (e.g. <c>p99 &lt; 250ms</c>, <c>error-rate &lt;= 1%</c>, <c>rps &gt;= 50</c>).</summary>
+public sealed record BenchThreshold(string Raw, string Metric, string Op, double Limit)
+{
+    public static BenchThreshold Parse(string spec)
+    {
+        if (string.IsNullOrWhiteSpace(spec))
+            throw new FormatException("Threshold cannot be empty. Examples: 'p99 < 250ms', 'error-rate <= 1%', 'rps >= 50'.");
+        var parts = spec.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length != 3)
+            throw new FormatException($"Threshold must be '<metric> <op> <value>', got '{spec}'.");
+        string metric = parts[0].ToLowerInvariant();
+        string op = parts[1];
+        string rawVal = parts[2].Trim();
+
+        if (metric is not ("min" or "p50" or "p90" or "p99" or "max" or "rps" or "error-rate"))
+            throw new FormatException($"Unknown threshold metric '{parts[0]}'. Use min, p50, p90, p99, max, rps, or error-rate.");
+        if (op is not ("<" or "<=" or ">" or ">="))
+            throw new FormatException($"Unknown threshold operator '{op}'. Use <, <=, >, or >=.");
+
+        double multiplier = 1.0;
+        if (metric == "error-rate" && rawVal.EndsWith('%'))
+        {
+            rawVal = rawVal[..^1];
+            multiplier = 0.01;
+        }
+        else if (metric is "min" or "p50" or "p90" or "p99" or "max")
+        {
+            if (rawVal.EndsWith("ms", StringComparison.OrdinalIgnoreCase)) rawVal = rawVal[..^2];
+            else if (rawVal.EndsWith("s", StringComparison.OrdinalIgnoreCase)) { rawVal = rawVal[..^1]; multiplier = 1000.0; }
+        }
+
+        if (!double.TryParse(rawVal, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double v) || v < 0)
+            throw new FormatException($"Invalid threshold value '{parts[2]}' in '{spec}'.");
+
+        return new BenchThreshold(spec.Trim(), metric, op, v * multiplier);
+    }
+
+    public (bool Passed, double Actual) Evaluate(BenchResult r)
+    {
+        double actual = Metric switch
+        {
+            "min" => r.MinMs,
+            "p50" => r.P50Ms,
+            "p90" => r.P90Ms,
+            "p99" => r.P99Ms,
+            "max" => r.MaxMs,
+            "rps" => r.RequestsPerSecond,
+            "error-rate" => r.Sent == 0 ? 0.0 : (double)r.Failed / r.Sent,
+            _ => 0
+        };
+        bool ok = Op switch
+        {
+            "<" => actual < Limit,
+            "<=" => actual <= Limit,
+            ">" => actual > Limit,
+            ">=" => actual >= Limit,
+            _ => false
+        };
+        return (ok, actual);
+    }
+}
+
+/// <summary>Builds a compact ASCII latency histogram from measured samples.</summary>
+public static class BenchHistogram
+{
+    public static string Format(IReadOnlyList<BenchSample> samples, int buckets = 10, int barWidth = 30)
+    {
+        if (samples.Count == 0) return "";
+        double min = double.MaxValue, max = double.MinValue;
+        foreach (var s in samples)
+        {
+            if (s.ElapsedMs < min) min = s.ElapsedMs;
+            if (s.ElapsedMs > max) max = s.ElapsedMs;
+        }
+        buckets = Math.Clamp(buckets, 1, 20);
+        var counts = new int[buckets];
+        double span = max - min;
+        if (span <= 0)
+        {
+            counts[0] = samples.Count;
+        }
+        else
+        {
+            foreach (var s in samples)
+            {
+                int idx = (int)Math.Floor((s.ElapsedMs - min) / span * buckets);
+                if (idx >= buckets) idx = buckets - 1;
+                counts[idx]++;
+            }
+        }
+        int peak = counts.Max();
+        var sb = new System.Text.StringBuilder();
+        double step = span <= 0 ? 0 : span / buckets;
+        for (int i = 0; i < buckets; i++)
+        {
+            double lo = min + i * step;
+            double hi = i == buckets - 1 ? max : min + (i + 1) * step;
+            int width = peak == 0 ? 0 : (int)Math.Round((double)counts[i] / peak * barWidth);
+            sb.AppendFormat(System.Globalization.CultureInfo.InvariantCulture,
+                "  {0,7:F1} - {1,7:F1} ms | {2,-30} ({3})\n",
+                lo, hi, new string('#', width), counts[i]);
+        }
+        return sb.ToString().TrimEnd();
+    }
 }
 
 /// <summary>Latency and load measurement over the ordinary certificate-authenticated send path: the
@@ -77,13 +195,14 @@ public static class Bench
         // Every worker task is awaited (Task.WhenAll below) before this method returns, so disposing
         // it here, once every send it could ever issue has finished, is safe.
         using var client = new ApiClient();
+        var benchRequest = request with { DiscardBody = true };
 
         async Task<Sample?> SendOnceAsync()
         {
-            var started = System.Diagnostics.Stopwatch.StartNew();
+            long started = Stopwatch.GetTimestamp();
             try
             {
-                var response = await client.SendAsync(request, certificate, transport,
+                var response = await client.SendAsync(benchRequest, certificate, transport,
                     trustServerCertificate, cookies: null, cancellationToken: ct);
                 // A send this bench itself aborted measured the interruption, not the endpoint.
                 if (ct.IsCancellationRequested && response.Error is { Kind: ApiErrorKind.None }) return null;
@@ -99,51 +218,57 @@ public static class Bench
             catch (OperationCanceledException) { return null; }
             catch (Exception ex)
             {
-                // A send that throws instead of returning an ApiResponse must not tear down the bench:
-                // it is one failed request, named by the exception that caused it.
-                // Timed to the throw, so it neither drags the latency figures toward zero nor
-                // pretends to be instant.
-                return new Sample(started.Elapsed.TotalMilliseconds, null, ex.GetType().Name, false, false);
+                return new Sample(Stopwatch.GetElapsedTime(started).TotalMilliseconds, null, ex.GetType().Name, false, false);
             }
         }
 
         if (options.WarmUp is { } warmUp && warmUp > TimeSpan.Zero)
         {
-            // Warm-up requests are extra rather than deducted from Count: -n 20 has to still mean
-            // twenty measured requests, or the number the user typed is not the number they get.
             var warmClock = Stopwatch.StartNew();
             var warming = new Task[concurrency];
             for (int w = 0; w < concurrency; w++)
                 warming[w] = Task.Run(async () =>
                 {
                     while (!ct.IsCancellationRequested && warmClock.Elapsed < warmUp)
-                        await SendOnceAsync();          // every result discarded, by design
+                        await SendOnceAsync();
                 }, CancellationToken.None);
             await Task.WhenAll(warming);
         }
 
-        // Per-worker lists, concatenated at the end: no lock on the hot path, and nothing to contend
-        // for while the thing being measured is the request.
         var samples = new List<Sample>[concurrency];
         int claimed = 0, completed = 0;
+        double? targetRps = options.TargetRps is { } rps && rps > 0 ? rps : null;
+        long pacedSlot = 0;
         var clock = Stopwatch.StartNew();
         var workers = new Task[concurrency];
+        int initialCap = duration is null ? Math.Max(4, (total / concurrency) + 4) : 256;
         for (int w = 0; w < concurrency; w++)
         {
             int index = w;
-            samples[index] = new List<Sample>();
+            samples[index] = new List<Sample>(initialCap);
             workers[index] = Task.Run(async () =>
             {
                 var mine = samples[index];
                 while (!ct.IsCancellationRequested)
                 {
                     if (duration is { } deadline) { if (clock.Elapsed >= deadline) return; }
-                    // The shared counter is what makes "exactly Count requests" true however unevenly
-                    // the workers happen to be scheduled.
                     else if (Interlocked.Increment(ref claimed) > total) return;
 
+                    if (targetRps is { } rate)
+                    {
+                        long slot = Interlocked.Increment(ref pacedSlot) - 1;
+                        var scheduled = TimeSpan.FromSeconds(slot / rate);
+                        var wait = scheduled - clock.Elapsed;
+                        if (wait > TimeSpan.Zero)
+                        {
+                            if (duration is { } d2 && scheduled >= d2) return;
+                            try { await Task.Delay(wait, ct); }
+                            catch (OperationCanceledException) { return; }
+                        }
+                    }
+
                     var sample = await SendOnceAsync();
-                    if (sample is null) return;         // cancelled mid-send
+                    if (sample is null) return;
                     mine.Add(sample.Value);
                     int done = Interlocked.Increment(ref completed);
                     Report(progress, done, total, clock.Elapsed);
@@ -153,43 +278,63 @@ public static class Bench
         await Task.WhenAll(workers);
         clock.Stop();
 
-        return Summarize(samples.SelectMany(s => s).ToList(), clock.Elapsed);
+        return Summarize(samples, clock.Elapsed, options.CollectSamples);
     }
 
-    /// <summary>One measured request: how long it took, what it answered, and whether that counts as
-    /// the endpoint working. A struct because a bench of thousands allocates one of these per request
-    /// and none of them outlive the run.</summary>
     private readonly record struct Sample(double Ms, int? Status, string? ErrorKind, bool Succeeded, bool Closed);
 
-    private static BenchResult Summarize(List<Sample> samples, TimeSpan elapsed)
+    private static BenchResult Summarize(List<Sample>[] perWorker, TimeSpan elapsed, bool collectSamples)
     {
-        if (samples.Count == 0) return Empty() with { Elapsed = elapsed };
+        int sent = 0;
+        foreach (var list in perWorker) sent += list.Count;
+        if (sent == 0) return Empty() with { Elapsed = elapsed, Samples = collectSamples ? Array.Empty<BenchSample>() : null };
 
-        var sorted = samples.Select(s => s.Ms).ToArray();
+        var sorted = new double[sent];
+        var exported = collectSamples ? new List<BenchSample>(sent) : null;
+        int pos = 0, succeeded = 0, closedCount = 0;
+        var statusRaw = new Dictionary<int, int>();
+        var errorRaw = new Dictionary<string, int>(StringComparer.Ordinal);
+
+        foreach (var list in perWorker)
+        {
+            foreach (var s in list)
+            {
+                sorted[pos++] = s.Ms;
+                exported?.Add(new BenchSample(s.Ms, s.Status, s.ErrorKind, s.Succeeded));
+                if (s.Succeeded) succeeded++;
+                if (s.Closed) closedCount++;
+                if (s.Status is { } st)
+                    statusRaw[st] = statusRaw.TryGetValue(st, out int c) ? c + 1 : 1;
+                if (s.ErrorKind is { } err)
+                    errorRaw[err] = errorRaw.TryGetValue(err, out int c) ? c + 1 : 1;
+            }
+        }
         Array.Sort(sorted);
-        int sent = samples.Count;
-        int succeeded = samples.Count(s => s.Succeeded);
+
+        var statusCounts = statusRaw.Count <= 1
+            ? statusRaw
+            : statusRaw.OrderBy(kv => kv.Key).ToDictionary(kv => kv.Key, kv => kv.Value);
+        var errorCounts = errorRaw.Count <= 1
+            ? errorRaw
+            : errorRaw.OrderByDescending(kv => kv.Value).ThenBy(kv => kv.Key, StringComparer.Ordinal)
+                      .ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.Ordinal);
 
         return new BenchResult(
             Sent: sent,
             Succeeded: succeeded,
             Failed: sent - succeeded,
             Elapsed: elapsed,
-            // Never NaN and never infinity: a report that prints ∞ req/s has told the reader nothing.
             RequestsPerSecond: elapsed.TotalSeconds > 0 ? sent / elapsed.TotalSeconds : 0,
             MinMs: sorted[0],
             P50Ms: Percentile(sorted, 50),
             P90Ms: Percentile(sorted, 90),
             P99Ms: Percentile(sorted, 99),
             MaxMs: sorted[^1],
-            StatusCounts: samples.Where(s => s.Status is not null)
-                .GroupBy(s => s.Status!.Value).OrderBy(g => g.Key)
-                .ToDictionary(g => g.Key, g => g.Count()),
-            ErrorCounts: samples.Where(s => s.ErrorKind is not null)
-                .GroupBy(s => s.ErrorKind!).OrderByDescending(g => g.Count()).ThenBy(g => g.Key, StringComparer.Ordinal)
-                .ToDictionary(g => g.Key, g => g.Count(), StringComparer.Ordinal))
+            StatusCounts: statusCounts,
+            ErrorCounts: errorCounts,
+            Samples: exported)
         {
-            ClosedByServer = samples.Count(s => s.Closed)
+            ClosedByServer = closedCount
         };
     }
 

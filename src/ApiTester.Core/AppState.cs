@@ -1,4 +1,5 @@
 using System;
+using System.Buffers;
 using System.Collections.Generic;
 using System.IO;
 using System.Text.Json;
@@ -81,6 +82,11 @@ public sealed class AppState
 
     public const int CurrentSchemaVersion = 3;
 
+    /// <summary>The <see cref="SchemaVersion"/> that was on disk when this state was loaded,
+    /// before <see cref="Migrate"/> bumped it to <see cref="CurrentSchemaVersion"/>. Lets callers
+    /// know whether the file still needs an encrypted rewrite without re-reading the file.</summary>
+    [JsonIgnore] public int LoadedSchemaVersion { get; private set; } = CurrentSchemaVersion;
+
     /// <summary>Secrets that could not be decrypted on this load, described for the user. In-memory
     /// only: hosts print these (the CLI on stderr, the app in its status line) and the values they
     /// name have been treated as absent.</summary>
@@ -136,7 +142,24 @@ public sealed class AppState
     /// <summary>The file as stored, its secrets left encrypted: for a caller that needs only names
     /// or settings (the app's theme at start, tab completion), and never saves it. Decrypting is a
     /// call into lsass per secret, and a workspace can hold hundreds. Throws on missing/corrupt files.</summary>
-    public static AppState PeekFrom(string path) => FromJson(File.ReadAllText(path)) ?? new AppState();
+    public static AppState PeekFrom(string path)
+    {
+        using var fs = File.OpenRead(path);
+        return JsonSerializer.Deserialize(fs, AppStateJson.Default.AppState) ?? new AppState();
+    }
+
+    /// <summary>Read only the root <c>Theme</c> property from a workspace file without deserializing
+    /// collections, history, or response bodies. Returns null if absent or unreadable.</summary>
+    public static string? PeekTheme(string path)
+    {
+        try
+        {
+            if (!File.Exists(path)) return null;
+            using var fs = File.OpenRead(path);
+            return ScanRoot(fs, stopOnTheme: true, out string? theme, out _) ? theme : null;
+        }
+        catch { return null; }
+    }
 
     /// <summary>The workspace read from its JSON, through the source-generated serializer: the same
     /// result as reflection, without building the reflection metadata on every start — a cold load
@@ -147,18 +170,35 @@ public sealed class AppState
     public string ToJson(bool indented = false) =>
         JsonSerializer.Serialize(this, indented ? AppStateJsonIndented.Default.AppState : AppStateJson.Default.AppState);
 
-    /// <summary>A deep copy, by a round trip through JSON: what an export or a save writes from.</summary>
-    public AppState DeepClone() => FromJson(ToJson())!;
+    /// <summary>A deep copy of the workspace: what an export or a save writes from.</summary>
+    public AppState DeepClone() => CloneForSave(stripWindowGeometry: false);
 
     /// <summary>Load with an explicit protector — the seam the tests use to prove the degraded paths.</summary>
     public static AppState LoadFrom(string path, ISecretProtector protector)
     {
-        var state = FromJson(File.ReadAllText(path)) ?? new AppState();
+        AppState state;
+        using (var fs = File.OpenRead(path))
+            state = JsonSerializer.Deserialize(fs, AppStateJson.Default.AppState) ?? new AppState();
+        state.LoadedSchemaVersion = state.SchemaVersion;
         // Remembered, so a save writes back what was read for every value that has not changed.
         var reusing = new ReusingProtector(protector);
         StateSecrets.Unprotect(state, reusing, state.SecretWarnings);   // before Migrate, so migrations see plaintext
         state._protector = reusing;
         state.Migrate();
+        return state;
+    }
+
+    /// <summary>Fast read-only load for one-off sends: decrypts only session tokens, session cookies,
+    /// and environment variables, skipping Tabs, History, and Collections DPAPI decryption. Never
+    /// save a state returned from this method directly — reload via <see cref="LoadFrom(string)"/>
+    /// if persisting changes.</summary>
+    public static AppState LoadLightFrom(string path, ISecretProtector? protector = null)
+    {
+        AppState state;
+        using (var fs = File.OpenRead(path))
+            state = JsonSerializer.Deserialize(fs, AppStateJson.Default.AppState) ?? new AppState();
+        state.LoadedSchemaVersion = state.SchemaVersion;
+        StateSecrets.UnprotectLight(state, protector ?? SecretProtection.Default, state.SecretWarnings);
         return state;
     }
 
@@ -204,10 +244,34 @@ public sealed class AppState
     /// first rewrite in the encrypted format, then serializes a deep clone with its secrets
     /// encrypted — the live object graph (data-bound in the desktop application) never holds
     /// ciphertext, even briefly.</summary>
-    public StateSaveResult SaveTo(string path, ISecretProtector protector)
+    public StateSaveResult SaveTo(string path, ISecretProtector protector) =>
+        SaveTo(path, protector, stripWindowGeometry: false);
+
+    /// <summary>Like <see cref="SaveTo(string, ISecretProtector)"/>, optionally omitting window
+    /// bounds (used by workspace export so the export shares this instance's protector cache without
+    /// mutating the live window geometry).</summary>
+    public StateSaveResult SaveTo(string path, ISecretProtector protector, bool stripWindowGeometry)
     {
         SchemaVersion = CurrentSchemaVersion;   // a written file is by definition current
+        var clone = CloneForSave(stripWindowGeometry);
+        return WriteCloneTo(clone, path, protector);
+    }
 
+    /// <summary>Take an isolated snapshot of this workspace suitable for saving on a background
+    /// thread while the UI continues mutating live bound collections.</summary>
+    public AppState SnapshotForSave(bool stripWindowGeometry = false)
+    {
+        SchemaVersion = CurrentSchemaVersion;
+        return CloneForSave(stripWindowGeometry);
+    }
+
+    /// <summary>Encrypt and atomically write a snapshot produced by <see cref="SnapshotForSave"/>
+    /// using this instance's reusing protector cache.</summary>
+    public StateSaveResult SaveSnapshotTo(AppState snapshot, string path, ISecretProtector? protector = null) =>
+        WriteCloneTo(snapshot, path, protector ?? SecretProtection.Default);
+
+    private StateSaveResult WriteCloneTo(AppState clone, string path, ISecretProtector protector)
+    {
         string? backup = null;
         if (File.Exists(path) && NeedsSecretUpgrade(path))
         {
@@ -215,7 +279,6 @@ public sealed class AppState
             File.Copy(path, backup, overwrite: true);
         }
 
-        var clone = DeepClone();
         // The load's own protector when this is the protector it wraps, so unchanged values keep
         // their stored form; otherwise one that remembers from here on.
         if (_protector is null || !ReferenceEquals(_protector.Inner, protector)) _protector = new ReusingProtector(protector);
@@ -227,13 +290,149 @@ public sealed class AppState
             finally { _protector.EndPass(); }
         }
 
-        var json = clone.ToJson(indented: true);
         if (Path.GetDirectoryName(path) is { Length: > 0 } dir) Directory.CreateDirectory(dir);
         var tmp = path + ".tmp";
-        File.WriteAllText(tmp, json);
+        using (var fs = File.Create(tmp))
+            JsonSerializer.Serialize(fs, clone, AppStateJsonIndented.Default.AppState);
         File.Move(tmp, path, overwrite: true);
+        LoadedSchemaVersion = CurrentSchemaVersion;
 
         return new StateSaveResult { BackupPath = backup, SecretsEncrypted = encrypted };
+    }
+
+    private AppState CloneForSave(bool stripWindowGeometry)
+    {
+        var copy = new AppState
+        {
+            WindowWidth = stripWindowGeometry ? null : WindowWidth,
+            WindowHeight = stripWindowGeometry ? null : WindowHeight,
+            WindowLeft = stripWindowGeometry ? null : WindowLeft,
+            WindowTop = stripWindowGeometry ? null : WindowTop,
+            WindowMaximized = !stripWindowGeometry && WindowMaximized,
+            LastCertThumbprint = LastCertThumbprint,
+            IgnoreServerCertErrors = IgnoreServerCertErrors,
+            TimeoutSeconds = TimeoutSeconds,
+            LastBaseUrl = LastBaseUrl,
+            SavedBaseUrls = new List<string>(SavedBaseUrls),
+            ActiveTabIndex = ActiveTabIndex,
+            ActiveEnvironmentId = ActiveEnvironmentId,
+            TrustedServerCerts = new List<TrustedServerCert>(TrustedServerCerts),
+            AutoTokens = AutoTokens,
+            AutoCookies = AutoCookies,
+            Theme = Theme,
+            CheckForUpdatesOnStart = CheckForUpdatesOnStart,
+            LastUpdateCheckUtc = LastUpdateCheckUtc,
+            SchemaVersion = SchemaVersion
+        };
+
+        copy.History = new List<HistoryEntry>(History.Count);
+        foreach (var h in History) copy.History.Add(CloneHistoryEntry(h));
+
+        copy.Tabs = new List<RequestModel>(Tabs.Count);
+        foreach (var tab in Tabs) copy.Tabs.Add(tab.CloneForSave());
+
+        copy.Collections = new List<CollectionNode>(Collections.Count);
+        foreach (var root in Collections) copy.Collections.Add(CloneNode(root));
+
+        copy.Environments = new List<ApiEnvironment>(Environments.Count);
+        foreach (var env in Environments)
+        {
+            var envCopy = new ApiEnvironment { Id = env.Id, Name = env.Name };
+            lock (env.Variables)
+            {
+                foreach (var v in env.Variables)
+                    envCopy.Variables.Add(new Variable { Key = v.Key, Value = v.Value, Secret = v.Secret });
+            }
+            copy.Environments.Add(envCopy);
+        }
+
+        copy.Chains = new List<RequestChain>(Chains.Count);
+        foreach (var ch in Chains)
+        {
+            var chCopy = new RequestChain { Id = ch.Id, Name = ch.Name, EnvironmentName = ch.EnvironmentName, Steps = new List<ChainStep>(ch.Steps.Count) };
+            foreach (var s in ch.Steps) chCopy.Steps.Add(new ChainStep { RequestId = s.RequestId, StopOnFailure = s.StopOnFailure });
+            copy.Chains.Add(chCopy);
+        }
+
+        copy.SessionTokens = new List<SessionToken>(SessionTokens.Count);
+        foreach (var t in SessionTokens)
+            copy.SessionTokens.Add(new SessionToken { Origin = t.Origin, Token = t.Token, Source = t.Source, CapturedUtc = t.CapturedUtc, ExpiresUtc = t.ExpiresUtc });
+
+        copy.SessionCookies = new List<SessionCookie>(SessionCookies.Count);
+        foreach (var c in SessionCookies)
+            copy.SessionCookies.Add(new SessionCookie { Origin = c.Origin, Name = c.Name, Value = c.Value, Path = c.Path, Domain = c.Domain, ExpiresUtc = c.ExpiresUtc, Secure = c.Secure, HttpOnly = c.HttpOnly });
+
+        return copy;
+
+        static HistoryEntry CloneHistoryEntry(HistoryEntry h)
+        {
+            var e = new HistoryEntry
+            {
+                Timestamp = h.Timestamp,
+                Method = h.Method,
+                BaseUrl = h.BaseUrl,
+                Url = h.Url,
+                Params = new List<ParamRow>(h.Params.Count),
+                Headers = new List<HeaderRow>(h.Headers.Count),
+                Body = h.Body,
+                ContentType = h.ContentType,
+                AuthType = h.AuthType,
+                AuthUser = h.AuthUser,
+                AuthSecret = h.AuthSecret,
+                AuthScope = h.AuthScope,
+                CertThumbprint = h.CertThumbprint,
+                IgnoreServerCert = h.IgnoreServerCert,
+                TimeoutSeconds = h.TimeoutSeconds,
+                Transport = h.Transport.Clone(),
+                StatusCode = h.StatusCode,
+                Captures = new List<CaptureRule>(h.Captures.Count),
+                Assertions = new List<AssertionRule>(h.Assertions.Count),
+                IsMultipart = h.IsMultipart,
+                FormParts = new List<FormPart>(h.FormParts.Count)
+            };
+            foreach (var p in h.Params) e.Params.Add(new ParamRow { Enabled = p.Enabled, Key = p.Key, Value = p.Value });
+            foreach (var hr in h.Headers) e.Headers.Add(new HeaderRow { Enabled = hr.Enabled, Name = hr.Name, Value = hr.Value });
+            foreach (var c in h.Captures) e.Captures.Add(new CaptureRule { Enabled = c.Enabled, Variable = c.Variable, Source = c.Source, Path = c.Path });
+            foreach (var a in h.Assertions) e.Assertions.Add(new AssertionRule { Enabled = a.Enabled, Target = a.Target, Op = a.Op, Path = a.Path, Value = a.Value });
+            foreach (var f in h.FormParts) e.FormParts.Add(new FormPart { Enabled = f.Enabled, Name = f.Name, IsFile = f.IsFile, Value = f.Value });
+            if (h.Response is { } r)
+            {
+                var snap = new HistorySnapshot
+                {
+                    StatusCode = r.StatusCode,
+                    ReasonPhrase = r.ReasonPhrase,
+                    ElapsedMs = r.ElapsedMs,
+                    ContentType = r.ContentType,
+                    Body = r.Body,
+                    BodyTruncated = r.BodyTruncated,
+                    Headers = new List<HeaderRow>(r.Headers.Count),
+                    Diagnostics = r.Diagnostics,
+                    ErrorKind = r.ErrorKind,
+                    ErrorMessage = r.ErrorMessage
+                };
+                foreach (var hr in r.Headers) snap.Headers.Add(new HeaderRow { Enabled = hr.Enabled, Name = hr.Name, Value = hr.Value });
+                e.Response = snap;
+            }
+            return e;
+        }
+
+        static CollectionNode CloneNode(CollectionNode n)
+        {
+            var node = new CollectionNode
+            {
+                Id = n.Id,
+                IsFolder = n.IsFolder,
+                Name = n.Name,
+                Request = n.Request?.CloneForSave(),
+                DefaultBaseUrl = n.DefaultBaseUrl,
+                DefaultCertThumbprint = n.DefaultCertThumbprint,
+                LastStatusCode = n.LastStatusCode,
+                LastCheckedUtc = n.LastCheckedUtc,
+                KnownGood = n.KnownGood
+            };
+            foreach (var child in n.Children) node.Children.Add(CloneNode(child));
+            return node;
+        }
     }
 
     /// <summary>True when the file at <paramref name="path"/> still needs its secrets encrypted: it
@@ -244,13 +443,122 @@ public sealed class AppState
         if (!File.Exists(path)) return false;
         try
         {
-            using var doc = JsonDocument.Parse(File.ReadAllText(path));
-            if (!doc.RootElement.TryGetProperty(nameof(SchemaVersion), out var v) ||
-                v.ValueKind != JsonValueKind.Number || !v.TryGetInt32(out var version))
-                return true;
-            return version < CurrentSchemaVersion;
+            using var fs = File.OpenRead(path);
+            if (!ScanRoot(fs, stopOnTheme: false, out _, out int? version)) return true;
+            return version is null || version < CurrentSchemaVersion;
         }
         catch { return true; }
+    }
+
+    /// <summary>Streams top-level JSON properties using <see cref="Utf8JsonReader"/> with zero DOM
+    /// allocation, optionally stopping as soon as <c>Theme</c> is found, or reading to EOF to
+    /// validate syntax and extract <c>SchemaVersion</c>.</summary>
+    private static bool ScanRoot(FileStream fs, bool stopOnTheme, out string? theme, out int? schemaVersion)
+    {
+        theme = null;
+        schemaVersion = null;
+        byte[] buffer = ArrayPool<byte>.Shared.Rent(65536);
+        try
+        {
+            int validBytes = 0;
+            bool isFinalBlock = false;
+            bool strippedBom = false;
+            var state = new JsonReaderState();
+            int depth = 0;
+            bool seenRootObject = false;
+            string? currentProp = null;
+
+            while (true)
+            {
+                if (!isFinalBlock)
+                {
+                    if (validBytes == buffer.Length)
+                    {
+                        byte[] larger = ArrayPool<byte>.Shared.Rent(buffer.Length * 2);
+                        Buffer.BlockCopy(buffer, 0, larger, 0, validBytes);
+                        ArrayPool<byte>.Shared.Return(buffer);
+                        buffer = larger;
+                    }
+                    int read = fs.Read(buffer, validBytes, buffer.Length - validBytes);
+                    if (read == 0) isFinalBlock = true;
+                    else validBytes += read;
+                }
+
+                int start = 0;
+                if (!strippedBom)
+                {
+                    if (validBytes >= 3 && buffer[0] == 0xEF && buffer[1] == 0xBB && buffer[2] == 0xBF)
+                        start = 3;
+                    if (validBytes >= 3 || isFinalBlock) strippedBom = true;
+                    else continue;
+                }
+
+                int consumed = ProcessChunk(buffer.AsSpan(start, validBytes - start), isFinalBlock, ref state,
+                    ref depth, ref seenRootObject, ref currentProp, stopOnTheme, ref theme, ref schemaVersion,
+                    out bool done, out bool invalid);
+                if (invalid) return false;
+                if (done) return true;
+
+                int totalConsumed = start + consumed;
+                int leftover = validBytes - totalConsumed;
+                if (leftover > 0 && totalConsumed > 0)
+                    Buffer.BlockCopy(buffer, totalConsumed, buffer, 0, leftover);
+                validBytes = leftover;
+
+                if (isFinalBlock) return seenRootObject && depth == 0;
+            }
+        }
+        catch (JsonException) { return false; }
+        finally { ArrayPool<byte>.Shared.Return(buffer); }
+
+        static int ProcessChunk(ReadOnlySpan<byte> span, bool isFinalBlock, ref JsonReaderState state,
+            ref int depth, ref bool seenRootObject, ref string? currentProp, bool stopOnTheme,
+            ref string? theme, ref int? schemaVersion, out bool done, out bool invalid)
+        {
+            done = false;
+            invalid = false;
+            var reader = new Utf8JsonReader(span, isFinalBlock, state);
+            while (reader.Read())
+            {
+                if (!seenRootObject)
+                {
+                    if (reader.TokenType != JsonTokenType.StartObject) { invalid = true; return (int)reader.BytesConsumed; }
+                    seenRootObject = true;
+                    depth = 1;
+                    continue;
+                }
+                switch (reader.TokenType)
+                {
+                    case JsonTokenType.StartObject:
+                    case JsonTokenType.StartArray:
+                        depth++;
+                        break;
+                    case JsonTokenType.EndObject:
+                    case JsonTokenType.EndArray:
+                        depth--;
+                        break;
+                    case JsonTokenType.PropertyName when depth == 1:
+                        if (reader.ValueTextEquals(nameof(Theme))) currentProp = nameof(Theme);
+                        else if (reader.ValueTextEquals(nameof(SchemaVersion))) currentProp = nameof(SchemaVersion);
+                        else currentProp = null;
+                        break;
+                    case JsonTokenType.String when depth == 1 && currentProp == nameof(Theme):
+                        theme = reader.GetString();
+                        currentProp = null;
+                        if (stopOnTheme) { done = true; return (int)reader.BytesConsumed; }
+                        break;
+                    case JsonTokenType.Number when depth == 1 && currentProp == nameof(SchemaVersion):
+                        if (reader.TryGetInt32(out int v)) schemaVersion = v;
+                        currentProp = null;
+                        break;
+                    default:
+                        if (depth == 1) currentProp = null;
+                        break;
+                }
+            }
+            state = reader.CurrentState;
+            return (int)reader.BytesConsumed;
+        }
     }
 }
 

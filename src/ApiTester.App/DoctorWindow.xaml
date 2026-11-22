@@ -1,0 +1,54 @@
+<Window x:Class="ApiTester.App.DoctorWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Connection Doctor" Height="560" Width="760" MinHeight="420" MinWidth="600"
+        WindowStyle="None" ResizeMode="CanResizeWithGrip" WindowStartupLocation="CenterOwner"
+        Background="{DynamicResource Bg.Window}" Foreground="{DynamicResource Text.Soft}"
+        FontFamily="{StaticResource Mono}" FontSize="12.5"
+        TextOptions.TextFormattingMode="Ideal" UseLayoutRounding="True">
+    <WindowChrome.WindowChrome>
+        <WindowChrome CaptionHeight="0" ResizeBorderThickness="6" CornerRadius="0"
+                      GlassFrameThickness="0" UseAeroCaptionButtons="False"/>
+    </WindowChrome.WindowChrome>
+    <Border BorderBrush="{DynamicResource Border.Strong}" BorderThickness="1">
+        <DockPanel>
+            <Border DockPanel.Dock="Top" Height="40" Background="{DynamicResource Bg.Panel}"
+                    BorderBrush="{DynamicResource Border}" BorderThickness="0,0,0,1" MouseLeftButtonDown="Header_Drag">
+                <Grid>
+                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="14,0,0,0">
+                        <TextBlock Text="&#x276F;" FontWeight="Bold" FontSize="13" Foreground="{DynamicResource Accent}" VerticalAlignment="Center"/>
+                        <TextBlock Text="CONNECTION DOCTOR" FontWeight="Bold" FontSize="12" Margin="9,0,0,0"
+                                   Foreground="{DynamicResource Text.Normal}" VerticalAlignment="Center"/>
+                    </StackPanel>
+                    <Button Content="&#xE8BB;" HorizontalAlignment="Right" Style="{StaticResource CaptionClose}" Height="40" Click="Close_Click"/>
+                </Grid>
+            </Border>
+
+            <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" HorizontalAlignment="Right" Margin="12,0,12,12">
+                <Button x:Name="SaveCertButton" Content="Save Leaf PEM…" Height="26" FontSize="11" Padding="10,0" IsEnabled="False" Click="SaveLeafPem_Click"/>
+                <Button x:Name="SaveChainButton" Content="Save Chain PEM…" Height="26" FontSize="11" Padding="10,0" Margin="6,0,0,0" IsEnabled="False" Click="SaveChainPem_Click"/>
+                <Button x:Name="CopyMdButton" Content="Copy Markdown" Height="26" FontSize="11" Padding="10,0" Margin="6,0,0,0" IsEnabled="False" Click="CopyMarkdown_Click"/>
+                <Button Content="Close" Height="26" FontSize="11" Padding="10,0" Margin="6,0,0,0" Click="Close_Click"/>
+            </StackPanel>
+
+            <DockPanel Margin="12">
+                <DockPanel DockPanel.Dock="Top" Margin="0,0,0,8">
+                    <Button x:Name="RunButton" DockPanel.Dock="Right" Content="Diagnose" Style="{StaticResource PrimaryButton}"
+                            Width="96" Height="30" Margin="8,0,0,0" Click="Run_Click"/>
+                    <CheckBox x:Name="RevocationCheck" DockPanel.Dock="Right" Content="Check revocation"
+                              VerticalAlignment="Center" Margin="10,0,0,0"/>
+                    <TextBox x:Name="UrlBox" Height="30" VerticalContentAlignment="Center"
+                             Tag="https://internal-api.corp/health"/>
+                </DockPanel>
+                <TextBlock x:Name="SummaryText" DockPanel.Dock="Top" Margin="0,0,0,6"
+                           Foreground="{DynamicResource Text.Muted}" FontSize="11.5"
+                           Text="Tests URL, DNS, proxy/PAC decision, TCP, CONNECT tunnel, TLS handshake + accepted CAs, and HTTP."/>
+                <Border BorderBrush="{DynamicResource Border}" BorderThickness="1" CornerRadius="6">
+                    <TextBox x:Name="ReportBox" IsReadOnly="True" AcceptsReturn="True" BorderThickness="0"
+                             VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"
+                             FontFamily="Consolas" FontSize="12" Padding="10"/>
+                </Border>
+            </DockPanel>
+        </DockPanel>
+    </Border>
+</Window>

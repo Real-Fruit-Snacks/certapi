@@ -7,9 +7,11 @@ public static class TokenCommand
 {
     public const string Help = """
         Usage: certapi token [options]
+               certapi token inspect [<jwt-or-origin>] [--workspace <file>] [--json]
 
-        Fetch an OAuth 2.0 access token from a token endpoint. By default the access token is
-        printed to stdout; --save stores it so later `certapi send` calls attach it automatically.
+        Fetch an OAuth 2.0 access token from a token endpoint, or inspect a JWT offline without
+        sending it to an external decoder. By default the fetched access token is printed to
+        stdout; --save stores it so later `certapi send` calls attach it automatically.
 
         Grant (default client_credentials):
           --grant client_credentials   Machine-to-machine (client id + secret)
@@ -115,7 +117,11 @@ public static class TokenCommand
         // Resolve the certificate before Positionals()/validation so its options aren't leftovers.
         var cert = CliCert.Resolve(args, store, services, stderr);
 
-        if (args.Positionals().Count != 0)
+        var positionals = args.Positionals();
+        if (positionals.Count >= 1 && positionals[0].Equals("inspect", StringComparison.OrdinalIgnoreCase))
+            return RunInspect(positionals, workspace, json, stdout, stderr, services);
+
+        if (positionals.Count != 0)
             throw new CliUsageException("token takes no positional arguments — pass the endpoint with --token-url.\n" + Help);
         if (string.IsNullOrWhiteSpace(tokenUrl)) throw new CliUsageException("--token-url is required.");
 
@@ -265,10 +271,85 @@ public static class TokenCommand
                 scope = result.Scope,
                 expires_in = result.ExpiresInSeconds,
                 expires_utc = result.ExpiresUtc
-            }, new JsonSerializerOptions { WriteIndented = true }));
+            }, IndentedJson));
         else
             stdout.WriteLine(result.AccessToken);
 
+        return ExitCodes.Ok;
+    }
+
+    private static readonly JsonSerializerOptions IndentedJson = new() { WriteIndented = true };
+
+    private static int RunInspect(
+        List<string> positionals, string? workspace, bool json,
+        TextWriter stdout, TextWriter stderr, CliServices services)
+    {
+        if (positionals.Count > 2)
+            throw new CliUsageException("Usage: certapi token inspect [<jwt-or-origin>] [--workspace <file>] [--json]");
+
+        string? arg = positionals.Count == 2 ? positionals[1] : null;
+        if (arg is not null && JwtInspector.LooksLikeJwt(arg))
+        {
+            if (!JwtInspector.TryParse(arg, out var jwt, out var err))
+                throw new CliDataException(err ?? "Could not parse JWT.");
+            if (json) stdout.WriteLine(JsonSerializer.Serialize(jwt, IndentedJson));
+            else stdout.WriteLine(JwtInspector.FormatText(jwt!));
+            return ExitCodes.Ok;
+        }
+
+        var state = CliWorkspace.Load(workspace, services.LiveStatePath, stderr);
+        var tokens = state.SessionTokens;
+        if (arg is not null)
+        {
+            string? wantedOrigin = TokenService.OriginOf(arg);
+            var match = tokens.FirstOrDefault(t =>
+                (wantedOrigin is not null && t.Origin.Equals(wantedOrigin, StringComparison.OrdinalIgnoreCase)) ||
+                t.Origin.Equals(arg, StringComparison.OrdinalIgnoreCase) ||
+                t.Origin.Contains(arg, StringComparison.OrdinalIgnoreCase));
+            if (match is null)
+                throw new CliDataException($"No stored token matches '{arg}' (and it is not a JWT).");
+            if (!JwtInspector.TryParse(match.Token, out var jwt, out var err))
+                throw new CliDataException($"Stored token for {match.Origin} is opaque (not a JWT): {err}");
+            if (json)
+                stdout.WriteLine(JsonSerializer.Serialize(new { origin = match.Origin, source = match.Source, jwt }, IndentedJson));
+            else
+            {
+                stdout.WriteLine($"Origin:  {match.Origin}  (source: {match.Source})");
+                stdout.WriteLine(JwtInspector.FormatText(jwt!));
+            }
+            return ExitCodes.Ok;
+        }
+
+        if (tokens.Count == 0)
+        {
+            stderr.WriteLine("No captured session tokens in workspace.");
+            return ExitCodes.Ok;
+        }
+
+        if (json)
+        {
+            var items = tokens.Select(t => new
+            {
+                origin = t.Origin,
+                source = t.Source,
+                capturedUtc = t.CapturedUtc,
+                expiresUtc = t.ExpiresUtc,
+                jwt = JwtInspector.TryParse(t.Token, out var info, out _) ? info : null
+            });
+            stdout.WriteLine(JsonSerializer.Serialize(items, IndentedJson));
+            return ExitCodes.Ok;
+        }
+
+        for (int i = 0; i < tokens.Count; i++)
+        {
+            var t = tokens[i];
+            if (i > 0) stdout.WriteLine();
+            stdout.WriteLine($"=== {t.Origin}  ({t.Source}) ===");
+            if (JwtInspector.TryParse(t.Token, out var info, out _))
+                stdout.WriteLine(JwtInspector.FormatText(info!));
+            else
+                stdout.WriteLine($"Opaque token ({t.Token.Length} chars), captured {t.CapturedUtc:yyyy-MM-dd HH:mm:ss} UTC");
+        }
         return ExitCodes.Ok;
     }
 

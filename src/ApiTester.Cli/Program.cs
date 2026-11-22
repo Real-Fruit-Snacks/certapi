@@ -19,13 +19,17 @@ var (inputBefore, outputBefore) = (Console.InputEncoding, Console.OutputEncoding
 bool inputSwitched = false, outputSwitched = false;
 if (OperatingSystem.IsWindows())
 {
-    if (Console.IsInputRedirected)
+    var utf8 = new System.Text.UTF8Encoding(false);
+    if (Console.IsInputRedirected && (inputBefore.CodePage != 65001 || inputBefore.GetPreamble().Length != 0))
     {
-        try { Console.InputEncoding = new System.Text.UTF8Encoding(false); inputSwitched = true; }
+        try { Console.InputEncoding = utf8; inputSwitched = true; }
         catch (IOException) { /* no console to configure */ }
     }
-    try { Console.OutputEncoding = new System.Text.UTF8Encoding(false); outputSwitched = true; }
-    catch (IOException) { /* no console to configure */ }
+    if (outputBefore.CodePage != 65001 || outputBefore.GetPreamble().Length != 0)
+    {
+        try { Console.OutputEncoding = utf8; outputSwitched = true; }
+        catch (IOException) { /* no console to configure */ }
+    }
 }
 // Console.Out writes through a 256-byte buffer and flushes after every write, and on Windows each
 // flush is a system call: a 60 MB formatted body (--pretty, --json) going to a file or a pipe took

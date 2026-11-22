@@ -12,6 +12,7 @@ public static class ImportCommand
                certapi import insomnia <file>        [--into <folder>] [--workspace <file>]
                certapi import wsdl <file>            [--into <folder>] [--workspace <file>]
                certapi import bruno <folder|file>    [--into <folder>] [--workspace <file>]
+               certapi import http <file>            [--into <folder>] [--workspace <file>]
 
         Adds requests to your collections — the live GUI state by default, or a workspace
         file. --into names a root-level folder (created if needed).
@@ -184,6 +185,17 @@ public static class ImportCommand
                 add(result.Root);
                 foreach (var warning in result.Warnings) stderr.WriteLine("warning: " + warning);
                 added = CountRequests(result.Root); what = result.Root.Name;
+                break;
+            }
+            case "http":
+            {
+                if (!File.Exists(positionals[1])) throw new CliDataException($"File not found: {positionals[1]}");
+                ParsedCollection pc;
+                try { pc = HttpFileImporter.Parse(File.ReadAllText(positionals[1]), Path.GetFileNameWithoutExtension(positionals[1])); }
+                catch (FormatException ex) { throw new CliDataException($"Could not parse '{positionals[1]}': {ex.Message}"); }
+                var node = CollectionNode.FromParsed(pc);
+                add(node);
+                added = CountRequests(node); what = node.Name;
                 break;
             }
             default: throw new CliUsageException(Help);

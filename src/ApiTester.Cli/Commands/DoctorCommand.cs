@@ -51,6 +51,9 @@ public static class DoctorCommand
           --include-secrets       Keep credential-looking query values in the note (redacted by
                                   default — a vault syncs, so the note is likely to leave the
                                   machine)
+          --server-cert-out <p>   Save the server's leaf certificate to a PEM file
+          --chain-out <p>         Save the server's full presented certificate chain to a PEM file
+          --check-revocation      Run an online OCSP/CRL revocation check on the server certificate
 
         """ + "\n" + TransportFlags.StreamHelp + "\n" + """
 
@@ -76,6 +79,9 @@ public static class DoctorCommand
         string? mdVault = args.Value("--md-vault");
         bool mdOpen = args.Flag("--md-open");
         bool includeSecrets = args.Flag("--include-secrets");
+        string? serverCertOut = args.Value("--server-cert-out");
+        string? chainOut = args.Value("--chain-out");
+        bool checkRevocation = args.Flag("--check-revocation");
         string? corsOrigin = args.Value("--origin");
         if (corsOrigin is not null) corsOrigin = CorsCommand.NormalizeOrigin(corsOrigin);
         if (mdFile is not null && mdVault is not null)
@@ -83,6 +89,8 @@ public static class DoctorCommand
         if ((mdOpen || includeSecrets) && mdFile is null && mdVault is null)
             throw new CliUsageException("--md-open and --include-secrets only apply with --md or --md-vault.");
         var transport = TransportFlags.ParseStreamSubset(args, insecure, environment: null, services.Profile);
+        if (checkRevocation && transport.Revocation == RevocationMode.None)
+            transport = transport with { Revocation = RevocationMode.Online };
         var cert = CliCert.Resolve(args, store, services, stderr);
 
         var positionals = args.Positionals();
@@ -109,10 +117,40 @@ public static class DoctorCommand
         if (json) stdout.WriteLine(ToJson(report));
         else Render(report, stdout, quiet);
 
+        if (serverCertOut is not null)
+            WriteServerPem(report, serverCertOut, fullChain: false, stderr);
+        if (chainOut is not null)
+            WriteServerPem(report, chainOut, fullChain: true, stderr);
+
         if (mdFile is not null || mdVault is not null)
             WriteNote(report, mdFile, mdVault, mdOpen, includeSecrets, stderr, services);
 
         return report.Ok ? ExitCodes.Ok : ExitCodes.Failure;
+    }
+
+    private static void WriteServerPem(DoctorReport report, string path, bool fullChain, TextWriter stderr)
+    {
+        if (report.ServerChainPems is not { Count: > 0 } pems)
+        {
+            stderr.WriteLine($"warning: no server certificate was received to write to {path}.");
+            return;
+        }
+        try
+        {
+            if (Path.GetDirectoryName(Path.GetFullPath(path)) is { Length: > 0 } dir)
+                Directory.CreateDirectory(dir);
+            string content = fullChain
+                ? string.Join("\n", pems.Select(p => p.TrimEnd())) + "\n"
+                : pems[0].TrimEnd() + "\n";
+            File.WriteAllText(path, content, new System.Text.UTF8Encoding(false));
+            stderr.WriteLine(fullChain
+                ? $"wrote {pems.Count} chain certificate(s) to {path}"
+                : $"wrote server leaf certificate to {path}");
+        }
+        catch (Exception ex)
+        {
+            stderr.WriteLine($"warning: could not write PEM to {path}: {ex.Message}");
+        }
     }
 
     /// <summary>The cors stage: the request a page on <paramref name="origin"/> would make, judged

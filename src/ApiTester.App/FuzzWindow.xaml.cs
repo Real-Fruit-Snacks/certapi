@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Linq;
@@ -6,6 +7,7 @@ using System.Threading;
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Threading;
 using ApiTester.Core;
 
 namespace ApiTester.App;
@@ -148,12 +150,14 @@ public partial class FuzzWindow : Window
 
     private async void Run_Click(object sender, RoutedEventArgs e)
     {
+        string pasteText = PasteBox.Text;
+        string wordlistPath = WordlistPathBox.Text;
         string listText;
         try
         {
-            listText = !string.IsNullOrWhiteSpace(PasteBox.Text) ? PasteBox.Text
-                : !string.IsNullOrWhiteSpace(WordlistPathBox.Text) && System.IO.File.Exists(WordlistPathBox.Text)
-                    ? System.IO.File.ReadAllText(WordlistPathBox.Text)
+            listText = !string.IsNullOrWhiteSpace(pasteText) ? pasteText
+                : !string.IsNullOrWhiteSpace(wordlistPath) && System.IO.File.Exists(wordlistPath)
+                    ? await System.IO.File.ReadAllTextAsync(wordlistPath)
                     : BuiltInWordlist.Text;   // nothing supplied: fall back to the built-in starter list
         }
         catch (Exception ex) when (ex is System.IO.IOException or UnauthorizedAccessException)
@@ -162,7 +166,7 @@ public partial class FuzzWindow : Window
             StatusText.Text = $"Could not read the wordlist: {ex.Message}";
             return;
         }
-        var entries = EndpointList.Parse(listText);
+        var entries = await Task.Run(() => EndpointList.Parse(listText));
         if (entries.Count == 0) { StatusText.Text = "Add a wordlist file or paste some endpoints first."; return; }
 
         var methods = new List<string>();
@@ -186,36 +190,80 @@ public partial class FuzzWindow : Window
 
         var plan = new FuzzPlan { BaseUrl = baseUrl, Entries = entries, Methods = methods, Concurrency = concurrency };
         var captureLock = new object();
+        var transport = new TransportOptions { IgnoreServerCertificateErrors = _insecure, FollowRedirects = false };
+        var timeoutSpan = System.TimeSpan.FromSeconds(_timeout);
+
         async Task<ApiResponse> Send(ApiRequest request, CancellationToken ct)
         {
             var headers = request.Headers.ToList();
             lock (captureLock) TokenService.AutoAttach(_state, request.Url, headers, out _);
-            var probe = request with { Headers = headers, Timeout = System.TimeSpan.FromSeconds(_timeout) };
-            var transport = new TransportOptions { IgnoreServerCertificateErrors = _insecure, FollowRedirects = false };
-            // Off the UI thread: the proxy lookup before SendAsync's first await can take seconds.
-            var response = await Task.Run(() => _client.SendAsync(probe, cert, transport: transport, cancellationToken: ct));
-            if (response.Error is null) lock (captureLock) TokenService.Capture(_state, response.FinalUrl(request.Url), response.Body, response.ContentType, response.Headers);
+            var probe = request with { Headers = headers, Timeout = timeoutSpan };
+            // EndpointFuzzer already runs every worker on the thread pool, so no nested Task.Run.
+            var response = await _client.SendAsync(probe, cert, transport: transport, cancellationToken: ct).ConfigureAwait(false);
+            if (response.Error is null &&
+                TokenService.Detect(response.FinalUrl(request.Url), response.Body, response.ContentType, response.Headers) is { } detected)
+            {
+                lock (captureLock)
+                {
+                    _state.SessionTokens.RemoveAll(t => t.Origin == detected.Origin);
+                    _state.SessionTokens.Add(detected);
+                }
+            }
             return response;
         }
 
-        var progress = new Progress<FuzzProgress>(p =>
+        // Batch UI updates on a 50ms timer instead of posting a Dispatcher frame per probe, so
+        // high-concurrency discovery keeps the window and Stop button responsive.
+        var pending = new ConcurrentQueue<FuzzResult>();
+        int latestCompleted = 0;
+        int latestTotal = entries.Count * methods.Count;
+        var progress = new InlineFuzzProgress(p =>
         {
-            AddRow(p.Last);
-            StatusText.Text = $"probing {p.Completed}/{p.Total}…";
+            pending.Enqueue(p.Last);
+            Volatile.Write(ref latestCompleted, p.Completed);
+            Volatile.Write(ref latestTotal, p.Total);
         });
+
+        void DrainPending()
+        {
+            bool any = false;
+            while (pending.TryDequeue(out var item))
+            {
+                AddRow(item);
+                any = true;
+            }
+            if (any)
+                StatusText.Text = $"probing {Volatile.Read(ref latestCompleted)}/{Volatile.Read(ref latestTotal)}…";
+        }
+
+        var timer = new DispatcherTimer(TimeSpan.FromMilliseconds(50), DispatcherPriority.Background, (_, _) => DrainPending(), Dispatcher);
+        timer.Start();
 
         try
         {
             var report = await EndpointFuzzer.RunAsync(plan, Send, progress, _cts.Token);
+            timer.Stop();
+            DrainPending();
             StatusText.Text = $"{report.Total} probed · {report.Discovered} discovered.";
             SaveCollectionButton.IsEnabled = report.Discovered > 0;
         }
-        catch (System.OperationCanceledException) { StatusText.Text = $"Stopped. {_all.Count} probed."; }
+        catch (System.OperationCanceledException)
+        {
+            timer.Stop();
+            DrainPending();
+            StatusText.Text = $"Stopped. {_all.Count} probed.";
+        }
         finally
         {
+            timer.Stop();
             RunButton.IsEnabled = true; StopButton.IsEnabled = false; _cts?.Dispose(); _cts = null;
             if (_closeWhenStopped) _ = Dispatcher.BeginInvoke(Close);
         }
+    }
+
+    private sealed class InlineFuzzProgress(Action<FuzzProgress> report) : IProgress<FuzzProgress>
+    {
+        public void Report(FuzzProgress value) => report(value);
     }
 
     private void AddRow(FuzzResult r)

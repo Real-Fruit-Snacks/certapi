@@ -75,7 +75,8 @@ public sealed class RunVariables
 /// what it captured.</summary>
 public sealed record RequestOutcome(
     string Label, CollectionNode Node, RequestModel Request, string Url, ApiResponse Response,
-    bool Passed, IReadOnlyList<(string Variable, bool Ok, string? Error)> Captures, bool CapturedTokens)
+    bool Passed, IReadOnlyList<(string Variable, bool Ok, string? Error)> Captures, bool CapturedTokens,
+    IReadOnlyList<AssertionResult>? Assertions = null)
 {
     /// <summary>True when capture rules produced any outcome at all, successful or not — the signal
     /// a caller uses to decide the run changed saved state.</summary>
@@ -108,9 +109,13 @@ public static class RequestRunner
         }
         if (ctx.Record) node.RecordResult(response.Error is null ? response.StatusCode : null, DateTime.UtcNow,
                                           KnownGoodSnapshot(response));
+        IReadOnlyList<AssertionResult>? evaluated = null;
         if (node.Request!.Assertions.Any(a => a.Enabled))
-            foreach (var ar in AssertionEvaluator.Evaluate(node.Request!.Assertions, response).Where(a => !a.Passed))
-                ctx.Note?.Invoke($"{label}: assertion failed — {ar.Description} (got {ar.Actual ?? "∅"})");
+        {
+            evaluated = AssertionEvaluator.Evaluate(node.Request!.Assertions, response);
+            foreach (var ar in evaluated)
+                if (!ar.Passed) ctx.Note?.Invoke($"{label}: assertion failed — {ar.Description} (got {ar.Actual ?? "∅"})");
+        }
         var captures = new List<(string Variable, bool Ok, string? Error)>();
         if (response.Error is null && node.Request!.Captures.Count > 0)
         {
@@ -124,8 +129,11 @@ public static class RequestRunner
                 vars.Rebuild();
             }
         }
+        bool passed = evaluated is not null
+            ? response.Error is null && evaluated.All(a => a.Passed)
+            : response.Error is null && response.StatusCode is >= 200 and < 300;
         return new RequestOutcome(label, node, node.Request!, url, response,
-            AssertionEvaluator.RequestPassed(node.Request!, response), captures, tokensCaptured);
+            passed, captures, tokensCaptured, evaluated);
     }
 
     private static async Task<(ApiResponse Response, string Url)> ExecuteAsync(

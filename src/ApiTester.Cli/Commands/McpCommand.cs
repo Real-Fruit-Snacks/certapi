@@ -18,7 +18,7 @@ public static class McpCommand
         Runs a Model Context Protocol server on stdio so an AI agent can make mutual-TLS calls
         with a pinned Windows-store client certificate. Tools: send_request, run_saved, run_chain,
         list_saved, list_environments, list_certificates, grpc_list, grpc_call, ws_exchange,
-        sse_read, cors_check, self_test. Saved
+        sse_read, cors_check, self_test, doctor, inspect_cert, inspect_token, diff_known_good. Saved
         requests, environments, and chains are also published as read-only MCP resources.
         Configure your MCP host to launch this command.
 
@@ -670,10 +670,146 @@ public static class McpCommand
                 """)!
         };
 
+        // ---- doctor ----
+        var doctorTool = new ToolDef("doctor",
+            "Diagnose an mTLS/TLS connection stage by stage (URL, DNS, proxy, TCP, CONNECT tunnel, TLS handshake + server-accepted CAs, HTTP) for an allowed URL.",
+            JsonNode.Parse("""
+                {"type":"object","additionalProperties":false,"required":["url"],"properties":{
+                  "url":{"type":"string","description":"https:// or http:// URL on an allowed host"},
+                  "checkRevocation":{"type":"boolean","description":"Run online OCSP/CRL revocation check (default false)"}}}
+                """)!,
+            a =>
+            {
+                string? url = Str(a, "url");
+                if (string.IsNullOrWhiteSpace(url)) return Err("url is required");
+                if (Gate(url!) is { } refused) return Err(refused);
+                var opts = McpTransport(new TransportOptions { IgnoreServerCertificateErrors = insecure });
+                if (a.TryGetProperty("checkRevocation", out var revEl) && revEl.ValueKind == JsonValueKind.True && opts.Revocation == RevocationMode.None)
+                    opts = opts with { Revocation = RevocationMode.Online };
+                var storeCerts = new List<X509Certificate2>();
+                try
+                {
+                    foreach (var ci in services.ListCertificates(includeLocalMachine))
+                        if (services.FindCertificate(ci.Thumbprint) is { } found) storeCerts.Add(found);
+                }
+                catch { }
+                var report = ConnectionDoctor.RunAsync(url!, cert, storeCerts, opts, probe: null, CallCt()).GetAwaiter().GetResult();
+                var payload = new
+                {
+                    url = MarkdownSecrets.RedactUrl(report.Url),
+                    ok = report.Ok,
+                    failedStage = report.FirstFailure?.Name,
+                    stages = report.Stages.Select(s => new
+                    {
+                        name = s.Name, ok = s.Ok, summary = s.Summary, detail = s.Detail,
+                        advice = s.Advice, elapsedMs = (int)s.Elapsed.TotalMilliseconds
+                    })
+                };
+                return new ToolResult(JsonSerializer.Serialize(payload), !report.Ok);
+            })
+        { Annotations = new ToolAnnotations(ReadOnlyHint: true, IdempotentHint: true, OpenWorldHint: true) };
+
+        // ---- inspect_cert ----
+        var inspectCert = new ToolDef("inspect_cert",
+            "Inspect full X.509 certificate details (SANs, EKUs, key algorithm/size, CNG/hardware provider, expiry, chain) for a store certificate by thumbprint or subject.",
+            JsonNode.Parse("""
+                {"type":"object","additionalProperties":false,"required":["query"],"properties":{
+                  "query":{"type":"string","description":"Certificate thumbprint or subject substring"},
+                  "checkRevocation":{"type":"boolean"}}}
+                """)!,
+            a =>
+            {
+                string? query = Str(a, "query");
+                if (string.IsNullOrWhiteSpace(query)) return Err("query is required");
+                try
+                {
+                    var picked = CertPicker.Resolve(services.ListCertificates(includeLocalMachine), query!, TextWriter.Null);
+                    bool checkRev = a.TryGetProperty("checkRevocation", out var revEl) && revEl.ValueKind == JsonValueKind.True;
+                    var details = CertificateInspector.Inspect(picked.Certificate, checkRev);
+                    return new ToolResult(JsonSerializer.Serialize(details), false);
+                }
+                catch (CliDataException ex) { return Err(ex.Message); }
+            })
+        { Annotations = new ToolAnnotations(ReadOnlyHint: true, IdempotentHint: true, OpenWorldHint: false) };
+
+        // ---- inspect_token ----
+        var inspectToken = new ToolDef("inspect_token",
+            "Decode a JWT offline (header, claims, scopes, roles, issuer, audience, expiry) without verifying its signature or contacting any external service. Pass a JWT string or a stored workspace origin.",
+            JsonNode.Parse("""
+                {"type":"object","additionalProperties":false,"required":["token"],"properties":{
+                  "token":{"type":"string","description":"Raw JWT string (optional Bearer prefix) or workspace origin URL"}}}
+                """)!,
+            a =>
+            {
+                string? raw = Str(a, "token");
+                if (string.IsNullOrWhiteSpace(raw)) return Err("token is required");
+                string toParse = raw!;
+                if (!JwtInspector.LooksLikeJwt(toParse))
+                {
+                    string? wanted = TokenService.OriginOf(toParse);
+                    var found = state.SessionTokens.FirstOrDefault(t =>
+                        (wanted is not null && t.Origin.Equals(wanted, StringComparison.OrdinalIgnoreCase)) ||
+                        t.Origin.Contains(toParse, StringComparison.OrdinalIgnoreCase));
+                    if (found is null) return Err($"Not a JWT and no captured token matches '{toParse}'.");
+                    toParse = found.Token;
+                }
+                if (!JwtInspector.TryParse(toParse, out var info, out var err))
+                    return Err(err ?? "Could not parse JWT.");
+                return new ToolResult(JsonSerializer.Serialize(info), false);
+            })
+        { Annotations = new ToolAnnotations(ReadOnlyHint: true, IdempotentHint: true, OpenWorldHint: false) };
+
+        // ---- diff_known_good ----
+        var diffKnownGood = new ToolDef("diff_known_good",
+            "Run a saved request and compare its live response against its stored known-good baseline, returning structured status/header/JSON diffs.",
+            JsonNode.Parse("""
+                {"type":"object","additionalProperties":false,"required":["path"],"properties":{
+                  "path":{"type":"string","description":"Saved request path (e.g. 'api/Get user')"},
+                  "env":{"type":"string","description":"Optional environment name"},
+                  "ignorePaths":{"type":"array","items":{"type":"string"},"description":"Optional JSON paths to ignore"}}}
+                """)!,
+            a =>
+            {
+                string? path = Str(a, "path");
+                if (string.IsNullOrWhiteSpace(path)) return Err("path is required");
+                try
+                {
+                    var targets = CliWorkspace.ResolveTargets(state, path, all: false);
+                    if (targets.Count != 1) return Err($"'{path}' matched {targets.Count} requests; name one saved request.");
+                    var (label, node) = targets[0];
+                    if (node.KnownGood is null) return Err($"'{label}' has no stored known-good baseline.");
+                    var envName = Str(a, "env");
+                    var vars = new RunVariables(() => CliWorkspace.BuildVars(state, envName, Array.Empty<string>()));
+                    string resolvedUrl = node.Request!.EffectiveUrl(s => VariableResolver.Resolve(s, vars.Current).Result);
+                    if (Gate(resolvedUrl) is { } refused) return Err(refused);
+                    var ctx = new RequestRunContext
+                    {
+                        State = state, Client = services.Client, Predicates = predicates,
+                        FindCertificate = services.FindCertificate, DefaultCertificate = cert, AllowUrl = Gate,
+                        NoAutoToken = noAutoToken, StrictVars = false,
+                        Record = false, ShowRedirects = false, TransportOverride = McpTransport
+                    };
+                    var outcome = RequestRunner.RunAsync(label, node, ctx, vars, CallCt()).GetAwaiter().GetResult();
+                    if (outcome.Response.Error is { } reqErr) return Err(reqErr.Message);
+                    var ignorePaths = a.TryGetProperty("ignorePaths", out var ip) && ip.ValueKind == JsonValueKind.Array
+                        ? ip.EnumerateArray().Where(x => x.ValueKind == JsonValueKind.String).Select(x => x.GetString()!).ToList()
+                        : new List<string>();
+                    var diffOpts = new DiffOptions { IgnorePaths = ignorePaths, CompareHeaderValues = true };
+                    var diff = ResponseDiff.Compare(node.KnownGood, ResponseSnapshot.From(outcome.Response), diffOpts);
+                    return new ToolResult(JsonSerializer.Serialize(new
+                    {
+                        path = label, identical = diff.Identical, summary = DiffText.Format(diff)
+                    }), false);
+                }
+                catch (CliDataException ex) { return Err(ex.Message); }
+            })
+        { Annotations = new ToolAnnotations(ReadOnlyHint: true, IdempotentHint: true, OpenWorldHint: true) };
+
         var tools = new[]
         {
             sendRequest, runSaved, runChain, listSaved, listEnvironments, listCerts,
-            grpcList, grpcCall, wsExchange, sseRead, corsCheck, selfTest
+            grpcList, grpcCall, wsExchange, sseRead, corsCheck, selfTest,
+            doctorTool, inspectCert, inspectToken, diffKnownGood
         };
         return (tools, BuildResources(state));
     }
@@ -688,7 +824,7 @@ public static class McpCommand
         envelope["passed"] = outcome.Passed;
         if (outcome.Request.Assertions.Any(x => x.Enabled))
         {
-            var results = AssertionEvaluator.Evaluate(outcome.Request.Assertions, outcome.Response);
+            var results = outcome.Assertions ?? AssertionEvaluator.Evaluate(outcome.Request.Assertions, outcome.Response);
             envelope["assertions"] = new JsonArray(results.Select(r => (JsonNode)new JsonObject
             {
                 ["description"] = r.Description, ["passed"] = r.Passed, ["actual"] = r.Actual

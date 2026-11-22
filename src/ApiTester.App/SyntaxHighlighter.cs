@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using System.Text;
 using System.Windows;
 using System.Windows.Documents;
 using System.Windows.Media;
@@ -11,6 +13,8 @@ namespace ApiTester.App;
 /// light theme — and the active one is chosen per render from <see cref="App.CurrentTheme"/>.</summary>
 internal static class SyntaxHighlighter
 {
+    private static readonly FontFamily MonoFont = new("Consolas");
+
     private static SolidColorBrush B(string hex)
     {
         var brush = new SolidColorBrush((Color)ColorConverter.ConvertFromString(hex));
@@ -46,77 +50,130 @@ internal static class SyntaxHighlighter
 
         if (text.Length > MaxHighlightedChars || kind is not (BodyKind.Json or BodyKind.Xml))
             paragraph.Inlines.Add(new Run(text) { Foreground = pal.Default });
-        else if (kind == BodyKind.Json)
-            HighlightJson(paragraph, text, pal);
         else
-            HighlightXml(paragraph, text, pal);
+        {
+            var runs = new List<Run>(Math.Min(text.Length / 12 + 4, 4096));
+            if (kind == BodyKind.Json) HighlightJson(runs, text, pal);
+            else HighlightXml(runs, text, pal);
+            paragraph.Inlines.AddRange(runs);
+        }
 
         var doc = new FlowDocument(paragraph)
         {
             PagePadding = new Thickness(0),
-            FontFamily = new FontFamily("Consolas"),
+            FontFamily = MonoFont,
             FontSize = 12.5
         };
         return doc;
     }
 
-    private static void Add(Paragraph p, string s, SolidColorBrush brush) =>
-        p.Inlines.Add(new Run(s) { Foreground = brush });
-
-    private static void HighlightJson(Paragraph p, string s, Palette pal)
+    private sealed class RunBatcher
     {
+        private readonly List<Run> _runs;
+        private readonly StringBuilder _sb = new(128);
+        private SolidColorBrush? _brush;
+
+        public RunBatcher(List<Run> runs) => _runs = runs;
+
+        public void Append(string source, int start, int length, SolidColorBrush brush)
+        {
+            if (length <= 0) return;
+            if (_brush is not null && !ReferenceEquals(_brush, brush)) Flush();
+            _brush = brush;
+            _sb.Append(source, start, length);
+        }
+
+        /// <summary>Whitespace carries no visible ink, so merging it into the active run avoids
+        /// creating thousands of extra WPF Run elements for pretty-printed JSON indentation.</summary>
+        public void AppendWhitespace(string source, int start, int length, SolidColorBrush fallback)
+        {
+            if (length <= 0) return;
+            _brush ??= fallback;
+            _sb.Append(source, start, length);
+        }
+
+        public void Flush()
+        {
+            if (_sb.Length == 0 || _brush is null) return;
+            _runs.Add(new Run(_sb.ToString()) { Foreground = _brush });
+            _sb.Clear();
+            _brush = null;
+        }
+    }
+
+    private static void HighlightJson(List<Run> runs, string s, Palette pal)
+    {
+        var batch = new RunBatcher(runs);
         int i = 0, n = s.Length;
         while (i < n)
         {
             char c = s[i];
-            if (c == '"')
+            if (char.IsWhiteSpace(c))
+            {
+                int start = i++;
+                while (i < n && char.IsWhiteSpace(s[i])) i++;
+                batch.AppendWhitespace(s, start, i - start, pal.Default);
+            }
+            else if (c == '"')
             {
                 int start = i++;
                 while (i < n)
                 {
-                    if (s[i] == '\\') { i += 2; continue; }
+                    if (s[i] == '\\') { i = Math.Min(n, i + 2); continue; }
                     if (s[i] == '"') { i++; break; }
                     i++;
                 }
                 int j = i;
                 while (j < n && char.IsWhiteSpace(s[j])) j++;
                 bool isKey = j < n && s[j] == ':';
-                Add(p, s[start..i], isKey ? pal.Key : pal.String);
-            }
-            else if (char.IsDigit(c) || (c == '-' && i + 1 < n && char.IsDigit(s[i + 1])))
-            {
-                int start = i++;
-                while (i < n && (char.IsDigit(s[i]) || s[i] is '.' or 'e' or 'E' or '+' or '-')) i++;
-                Add(p, s[start..i], pal.Number);
-            }
-            else if (Matches(s, i, "true") || Matches(s, i, "false") || Matches(s, i, "null"))
-            {
-                string lit = s[i] == 't' ? "true" : s[i] == 'f' ? "false" : "null";
-                Add(p, lit, pal.Literal);
-                i += lit.Length;
+                batch.Append(s, start, i - start, isKey ? pal.Key : pal.String);
             }
             else if (c is '{' or '}' or '[' or ']' or ':' or ',')
             {
-                Add(p, c.ToString(), pal.Punct);
-                i++;
+                int start = i++;
+                while (i < n && s[i] is '{' or '}' or '[' or ']' or ':' or ',') i++;
+                batch.Append(s, start, i - start, pal.Punct);
+            }
+            else if ((uint)(c - '0') <= 9 || (c == '-' && i + 1 < n && (uint)(s[i + 1] - '0') <= 9))
+            {
+                int start = i++;
+                while (i < n && ((uint)(s[i] - '0') <= 9 || s[i] is '.' or 'e' or 'E' or '+' or '-')) i++;
+                batch.Append(s, start, i - start, pal.Number);
+            }
+            else if ((c == 't' && Matches(s, i, "true")) ||
+                     (c == 'f' && Matches(s, i, "false")) ||
+                     (c == 'n' && Matches(s, i, "null")))
+            {
+                int len = c == 'f' ? 5 : 4;
+                batch.Append(s, i, len, pal.Literal);
+                i += len;
             }
             else
             {
-                int start = i;
-                while (i < n && !"\"{}[]:,".Contains(s[i]) && !char.IsDigit(s[i]) && s[i] != '-'
-                       && !Matches(s, i, "true") && !Matches(s, i, "false") && !Matches(s, i, "null"))
+                int start = i++;
+                while (i < n)
+                {
+                    char x = s[i];
+                    if (char.IsWhiteSpace(x) || x is '"' or '{' or '}' or '[' or ']' or ':' or ',' or '-'
+                        || (uint)(x - '0') <= 9
+                        || (x == 't' && Matches(s, i, "true"))
+                        || (x == 'f' && Matches(s, i, "false"))
+                        || (x == 'n' && Matches(s, i, "null")))
+                        break;
                     i++;
-                if (i == start) i++;
-                Add(p, s[start..i], pal.Default);
+                }
+                batch.Append(s, start, i - start, pal.Default);
             }
         }
+        batch.Flush();
     }
 
     private static bool Matches(string s, int i, string word) =>
         i + word.Length <= s.Length && s.AsSpan(i, word.Length).SequenceEqual(word);
 
-    private static void HighlightXml(Paragraph p, string s, Palette pal)
+    private static void HighlightXml(List<Run> runs, string s, Palette pal)
     {
+        var batch = new RunBatcher(runs);
         int i = 0, n = s.Length;
         while (i < n)
         {
@@ -125,43 +182,43 @@ internal static class SyntaxHighlighter
                 int start = i++;
                 while (i < n && s[i] != '>') i++;
                 if (i < n) i++;
-                HighlightXmlTag(p, s[start..i], pal);
+                HighlightXmlTag(batch, s, start, i, pal);
             }
             else
             {
                 int start = i;
                 while (i < n && s[i] != '<') i++;
-                Add(p, s[start..i], pal.Default);
+                batch.Append(s, start, i - start, pal.Default);
             }
         }
+        batch.Flush();
     }
 
-    private static void HighlightXmlTag(Paragraph p, string tag, Palette pal)
+    private static void HighlightXmlTag(RunBatcher batch, string s, int i, int end, Palette pal)
     {
-        int i = 0, n = tag.Length;
-        while (i < n)
+        while (i < end)
         {
-            char c = tag[i];
+            char c = s[i];
             if (c is '"' or '\'')
             {
                 char quote = c;
                 int start = i++;
-                while (i < n && tag[i] != quote) i++;
-                if (i < n) i++;
-                Add(p, tag[start..i], pal.String);
+                while (i < end && s[i] != quote) i++;
+                if (i < end) i++;
+                batch.Append(s, start, i - start, pal.String);
             }
             else if (c is '<' or '>' or '/' or '?' or '!' or '=')
             {
-                Add(p, c.ToString(), pal.Tag);
-                i++;
+                int start = i++;
+                while (i < end && s[i] is '<' or '>' or '/' or '?' or '!' or '=') i++;
+                batch.Append(s, start, i - start, pal.Tag);
             }
             else
             {
                 int start = i;
-                while (i < n && tag[i] != '"' && tag[i] != '\'' && tag[i] != '>' && tag[i] != '<'
-                       && tag[i] != '=' && tag[i] != '/') i++;
+                while (i < end && s[i] is not ('"' or '\'' or '>' or '<' or '=' or '/')) i++;
                 if (i == start) i++;
-                Add(p, tag[start..i], pal.Attr);
+                batch.Append(s, start, i - start, pal.Attr);
             }
         }
     }

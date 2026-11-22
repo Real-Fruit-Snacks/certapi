@@ -1,3 +1,5 @@
+using System.Text.Json;
+
 namespace ApiTester.Core;
 
 /// <summary>Applies a request's capture rules to a response, writing extracted values into the
@@ -13,15 +15,42 @@ public static class CaptureApplier
         if (applicable.Count == 0) return results;
 
         ApiEnvironment? env = null;
-        foreach (var rule in applicable)
+        JsonDocument? parsedJson = null;
+        bool jsonAttempted = false;
+        try
         {
-            var (value, error) = ResponseCapture.Extract(rule.ToSpec(), body, contentType, headers);
-            if (value is null) { results.Add((rule.Variable.Trim(), false, error)); continue; }
-            env ??= ActiveEnvironment(state);
-            Upsert(env, rule.Variable.Trim(), value);
-            results.Add((rule.Variable.Trim(), true, null));
+            foreach (var rule in applicable)
+            {
+                var spec = rule.ToSpec();
+                (string? value, string? error) extracted;
+                if (spec.FromHeader)
+                {
+                    extracted = ResponseCapture.Extract(spec, body, contentType, headers);
+                }
+                else
+                {
+                    if (!jsonAttempted)
+                    {
+                        jsonAttempted = true;
+                        try { parsedJson = JsonDocument.Parse(Utf8Json.Body(body)); }
+                        catch (JsonException) { parsedJson = null; }
+                    }
+                    extracted = parsedJson is null
+                        ? (null, "response body is not JSON")
+                        : ResponseCapture.ExtractFromJson(spec, parsedJson.RootElement);
+                }
+
+                if (extracted.value is null) { results.Add((rule.Variable.Trim(), false, extracted.error)); continue; }
+                env ??= ActiveEnvironment(state);
+                Upsert(env, rule.Variable.Trim(), extracted.value);
+                results.Add((rule.Variable.Trim(), true, null));
+            }
+            return results;
         }
-        return results;
+        finally
+        {
+            parsedJson?.Dispose();
+        }
     }
 
     private static ApiEnvironment ActiveEnvironment(AppState state)

@@ -53,7 +53,7 @@ public partial class MockServerWindow : Window
         _ => MockTlsMode.Http
     };
 
-    private void Start_Click(object sender, RoutedEventArgs e)
+    private async void Start_Click(object sender, RoutedEventArgs e)
     {
         if (!int.TryParse(PortBox.Text.Trim(), out int port) || port is < 0 or > 65535)
         {
@@ -62,14 +62,21 @@ public partial class MockServerWindow : Window
         }
 
         var mode = Mode;
+        StartButton.IsEnabled = false;
+        ModeCombo.IsEnabled = false;
+        PortBox.IsEnabled = false;
+        HarButton.IsEnabled = false;
         try
         {
             if (mode != MockTlsMode.Http)
             {
-                _certDir = Path.Combine(
+                AppendLine("— generating TLS certificates…");
+                string certDir = Path.Combine(
                     Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
                     "CertApiTester", "mock-certs");
-                var generated = MockCertificates.Generate(mode, _certDir);
+                _certDir = certDir;
+                var generated = await Task.Run(() => MockCertificates.Generate(mode, certDir));
+                if (!IsLoaded) { generated.ServerCertificate.Dispose(); return; }
                 _serverCert = generated.ServerCertificate;
             }
 
@@ -80,17 +87,17 @@ public partial class MockServerWindow : Window
             AppendLine("! could not start: " + ex.Message);
             _serverCert?.Dispose();
             _serverCert = null;
+            StartButton.IsEnabled = true;
+            ModeCombo.IsEnabled = true;
+            PortBox.IsEnabled = true;
+            HarButton.IsEnabled = true;
             return;
         }
 
         UrlBox.Text = _server.BaseUrl;
         UrlBox.SetResourceReference(ForegroundProperty, "Signal"); // mint = live, muted = stopped
         CopyUrlButton.IsEnabled = true;
-        StartButton.IsEnabled = false;
         StopButton.IsEnabled = true;
-        ModeCombo.IsEnabled = false;
-        PortBox.IsEnabled = false;
-        HarButton.IsEnabled = false;
 
         if (mode != MockTlsMode.Http)
         {
@@ -141,7 +148,7 @@ public partial class MockServerWindow : Window
             catch { /* best effort */ }
     }
 
-    private void Har_Click(object sender, RoutedEventArgs e)
+    private async void Har_Click(object sender, RoutedEventArgs e)
     {
         var dialog = new Microsoft.Win32.OpenFileDialog
         {
@@ -150,17 +157,24 @@ public partial class MockServerWindow : Window
         };
         if (dialog.ShowDialog() != true) return;
 
+        string filePath = dialog.FileName;
+        HarButton.IsEnabled = false;
         try
         {
-            var har = HarReader.Parse(File.ReadAllText(dialog.FileName));
-            _replay = new HarReplaySource(har);
-            _replayFile = Path.GetFileName(dialog.FileName);
+            var replay = await Task.Run(() => new HarReplaySource(HarReader.Parse(File.ReadAllText(filePath))));
+            if (!IsLoaded) return;
+            _replay = replay;
+            _replayFile = Path.GetFileName(filePath);
             RoutesText.Text = $"replaying {_replay.Count} recorded responses from {_replayFile}";
             AppendLine($"— replaying {_replay.Count} recorded responses from {_replayFile}");
         }
         catch (Exception ex)
         {
-            AppendLine("! could not read that HAR: " + ex.Message);
+            if (IsLoaded) AppendLine("! could not read that HAR: " + ex.Message);
+        }
+        finally
+        {
+            if (IsLoaded && _server is null) HarButton.IsEnabled = true;
         }
     }
 

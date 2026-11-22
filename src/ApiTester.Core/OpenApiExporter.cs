@@ -59,8 +59,10 @@ public static class OpenApiExporter
             root["components"] = new JsonObject { ["securitySchemes"] = schemes };
         }
 
-        return root.ToJsonString(new JsonSerializerOptions { WriteIndented = true });
+        return root.ToJsonString(IndentedOptions);
     }
+
+    private static readonly JsonSerializerOptions IndentedOptions = new() { WriteIndented = true };
 
     private static void AddOperation(
         JsonObject paths, ParsedRequest r, string? tag, string? server, HashSet<string> authSchemes)

@@ -74,6 +74,12 @@ public static class MarkdownSecrets
         name.Contains("password", StringComparison.OrdinalIgnoreCase) ||
         name.Contains("secret", StringComparison.OrdinalIgnoreCase);
 
+    private static readonly System.Text.Json.JsonSerializerOptions RedactedJsonOptions = new()
+    {
+        WriteIndented = true,
+        Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+    };
+
     /// <summary>A request body safe to write into a note or a spec: in a JSON body or a form
     /// (application/x-www-form-urlencoded) body, every credential field's value is replaced. A
     /// value that is only a <c>{{variable}}</c> is a reference, not a secret, and stays. Any other
@@ -89,11 +95,7 @@ public static class MarkdownSecrets
             {
                 var node = System.Text.Json.Nodes.JsonNode.Parse(body);
                 if (node is not null && RedactJson(node))
-                    return node.ToJsonString(new System.Text.Json.JsonSerializerOptions
-                    {
-                        WriteIndented = true,
-                        Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping
-                    });
+                    return node.ToJsonString(RedactedJsonOptions);
                 return body;
             }
             catch (System.Text.Json.JsonException) { return body; }

@@ -53,15 +53,32 @@ public partial class ChainRunWindow : Window
         HeaderText.Text = string.IsNullOrWhiteSpace(chain.Name) ? "RUN CHAIN" : chain.Name.ToUpperInvariant();
         EnvironmentText.Text = string.IsNullOrWhiteSpace(chain.EnvironmentName) ? "(no environment)" : chain.EnvironmentName;
 
+        var byId = IndexRequests(state.Collections);
         for (int i = 0; i < chain.Steps.Count; i++)
         {
             var step = chain.Steps[i];
-            var node = FindRequest(state.Collections, step.RequestId);
+            byId.TryGetValue(step.RequestId ?? "", out var node);
             string label = node?.Name
                 ?? (string.IsNullOrEmpty(step.RequestId) ? "(missing request)" : $"(missing request: {step.RequestId})");
             _rows.Add(StepRow.Pending(i + 1, label));
         }
         ResultsGrid.ItemsSource = _rows;
+    }
+
+    private static Dictionary<string, CollectionNode> IndexRequests(IEnumerable<CollectionNode> roots)
+    {
+        var map = new Dictionary<string, CollectionNode>(StringComparer.OrdinalIgnoreCase);
+        void Walk(IEnumerable<CollectionNode> nodes)
+        {
+            foreach (var n in nodes)
+            {
+                if (!n.IsFolder && n.Request is not null && !string.IsNullOrEmpty(n.Id))
+                    map.TryAdd(n.Id, n);
+                if (n.Children.Count > 0) Walk(n.Children);
+            }
+        }
+        Walk(roots);
+        return map;
     }
 
     protected override void OnSourceInitialized(EventArgs e)
@@ -261,7 +278,8 @@ public partial class ChainRunWindow : Window
 
         var sb = new StringBuilder();
         foreach (var note in row.Notes) sb.AppendLine(note);
-        var failing = AssertionEvaluator.Evaluate(outcome.Request.Assertions, response).Where(a => !a.Passed).ToList();
+        var evaluated = outcome.Assertions ?? AssertionEvaluator.Evaluate(outcome.Request.Assertions, response);
+        var failing = evaluated.Where(a => !a.Passed).ToList();
         if (failing.Count > 0)
         {
             if (sb.Length > 0) sb.AppendLine();

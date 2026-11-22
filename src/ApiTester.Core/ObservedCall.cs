@@ -3,7 +3,8 @@ namespace ApiTester.Core;
 /// <summary>One request/response seen during a capture session, for the "save as requests" step.</summary>
 public sealed record ObservedCall(string Method, string Url, int StatusCode, string? ContentType)
 {
-    private string Key =>
+    /// <summary>Deduplication key: upper-case method plus URL path without query string.</summary>
+    public string Key =>
         Method.ToUpperInvariant() + " " +
         (Uri.TryCreate(Url, UriKind.Absolute, out var u) ? u.GetLeftPart(UriPartial.Path) : Url);
 
@@ -11,12 +12,15 @@ public sealed record ObservedCall(string Method, string Url, int StatusCode, str
     public static IReadOnlyList<ObservedCall> Dedup(IEnumerable<ObservedCall> calls)
     {
         var order = new List<string>();
-        var map = new Dictionary<string, ObservedCall>();
+        var map = new Dictionary<string, ObservedCall>(StringComparer.Ordinal);
         foreach (var c in calls)
         {
-            if (!map.ContainsKey(c.Key)) order.Add(c.Key);
-            map[c.Key] = c;
+            string key = c.Key;
+            if (!map.ContainsKey(key)) order.Add(key);
+            map[key] = c;
         }
-        return order.Select(k => map[k]).ToList();
+        var result = new List<ObservedCall>(order.Count);
+        foreach (var k in order) result.Add(map[k]);
+        return result;
     }
 }

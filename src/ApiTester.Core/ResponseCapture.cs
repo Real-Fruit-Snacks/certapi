@@ -27,14 +27,19 @@ public static class ResponseCapture
 
         using (doc)
         {
-            var found = JsonPath.Evaluate(doc.RootElement, rule.Path);
-            if (found is not { } el) return (null, $"no value at '{rule.Path}'");
-            return el.ValueKind switch
-            {
-                JsonValueKind.String => (el.GetString(), null),
-                JsonValueKind.Number or JsonValueKind.True or JsonValueKind.False => (el.GetRawText(), null),
-                _ => (null, $"no string value at '{rule.Path}'")
-            };
+            return ExtractFromJson(rule, doc.RootElement);
         }
+    }
+
+    internal static (string? Value, string? Error) ExtractFromJson(CaptureSpec rule, JsonElement root)
+    {
+        var found = JsonPath.Evaluate(root, rule.Path);
+        if (found is not { } el) return (null, $"no value at '{rule.Path}'");
+        return el.ValueKind switch
+        {
+            JsonValueKind.String => (el.GetString(), null),
+            JsonValueKind.Number or JsonValueKind.True or JsonValueKind.False => (el.GetRawText(), null),
+            _ => (null, $"no string value at '{rule.Path}'")
+        };
     }
 }

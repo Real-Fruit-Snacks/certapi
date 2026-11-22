@@ -58,8 +58,10 @@ public partial class MainWindow : Window
     // Whatever the Pretty view currently shows (response, error, or self-test detail), so a theme
     // toggle can re-highlight it with the new palette.
     private (string Text, BodyKind Kind)? _lastPretty;
-    private string _lastRawText = "";
+    private string? _lastRawText;
+    private bool _lastRawTruncated;
     private CancellationTokenSource? _cts;
+    private static readonly StatusToBrushConverter SharedStatusBrushConverter = new();
 
     /// <summary>A HAR baseline the user chose for the Diff view, and the file it came from. Null means
     /// compare against the saved request's own known-good response instead. Per window rather than per
@@ -108,7 +110,7 @@ public partial class MainWindow : Window
             StatusText.Text = _state.SecretWarnings[0] +
                 (_state.SecretWarnings.Count > 1 ? $" (+{_state.SecretWarnings.Count - 1} more)" : "");
         }
-        else if (AppState.NeedsSecretUpgrade(AppState.DefaultPath))
+        else if (_state.LoadedSchemaVersion < AppState.CurrentSchemaVersion && File.Exists(AppState.DefaultPath))
         {
             StatusText.Text = "Your workspace still stores secrets in the clear — they will be encrypted " +
                 "the next time it saves, and a timestamped backup of the current file will be kept beside it.";
@@ -154,7 +156,7 @@ public partial class MainWindow : Window
     {
         if (ActiveRequest is { } active) CaptureControlsInto(active);
         CaptureStateForSave();
-        SaveState();
+        SaveStateImmediate();
 
         _browserSession?.Dispose();
         _browserCts?.Cancel();
@@ -202,19 +204,52 @@ public partial class MainWindow : Window
         try { if (ActiveRequest is { } active) CaptureControlsInto(active); }
         catch { /* the controls may be what failed; the models still hold everything else */ }
         CaptureStateForSave();
-        SaveState();
+        SaveStateImmediate();
     }
 
-    /// <summary>Persist the workspace and surface anything the user needs to know about the write.</summary>
-    // Callers write a routine confirmation to StatusText BEFORE calling this, so a rare one-time
-    // notice about the user's secrets (below) wins the status line rather than losing it.
+    private readonly object _saveSync = new();
+    private Task _pendingSave = Task.CompletedTask;
+
+    /// <summary>Snapshot the workspace on the UI thread and perform DPAPI encryption + atomic file
+    /// write on a serialized background worker so large workspaces never stall the UI.</summary>
     private void SaveState()
     {
+        var snapshot = _state.SnapshotForSave();
+        lock (_saveSync)
+        {
+            _pendingSave = _pendingSave.ContinueWith(_ =>
+            {
+                try
+                {
+                    var result = _state.SaveSnapshotTo(snapshot, AppState.DefaultPath);
+                    ReportSaveNotice(result);
+                }
+                catch { /* best effort for routine background saves; OnClosing flushes synchronously */ }
+            }, TaskScheduler.Default);
+        }
+    }
+
+    /// <summary>Wait for any queued background save, then write synchronously (used on window close
+    /// and crash recovery so nothing is ever lost).</summary>
+    private void SaveStateImmediate()
+    {
+        Task inflight;
+        lock (_saveSync) inflight = _pendingSave;
+        try { inflight.Wait(TimeSpan.FromSeconds(5)); } catch { }
         var result = _state.Save();
-        if (result.BackupPath is not null)
-            StatusText.Text = $"Secrets are now encrypted — your previous workspace file was copied to {Path.GetFileName(result.BackupPath)} first.";
-        else if (!result.SecretsEncrypted)
-            StatusText.Text = "Per-user encryption is unavailable on this system, so secrets were saved in the clear.";
+        ReportSaveNotice(result);
+    }
+
+    private void ReportSaveNotice(StateSaveResult result)
+    {
+        string? notice = result.BackupPath is not null
+            ? $"Secrets are now encrypted — your previous workspace file was copied to {Path.GetFileName(result.BackupPath)} first."
+            : !result.SecretsEncrypted
+                ? "Per-user encryption is unavailable on this system, so secrets were saved in the clear."
+                : null;
+        if (notice is null) return;
+        if (Dispatcher.CheckAccess()) StatusText.Text = notice;
+        else Dispatcher.BeginInvoke(() => StatusText.Text = notice);
     }
 
     // The virtual screen can start left of or above the primary monitor (a second screen on that
@@ -616,7 +651,7 @@ public partial class MainWindow : Window
 
     private void ShowTabResponse(RequestTab tab)
     {
-        if (tab.LastResponse is { } r) RenderResponse(r);
+        if (tab.LastResponse is { } r) RenderResponse(r, tab.CachedPretty, tab.CachedDiagnostics);
         else if (tab.Snapshot is { } s) RenderSnapshot(s, fromHistory: false);
         else ClearResponse();
     }
@@ -821,8 +856,13 @@ public partial class MainWindow : Window
 
         // ShowDialog (modal) is deliberate: the runner mutates _state from a background thread, and
         // modality bounds that the same way the existing Discover window does.
+        var knownCerts = new System.Collections.Concurrent.ConcurrentDictionary<string, X509Certificate2?>(StringComparer.OrdinalIgnoreCase);
+        foreach (var opt in _allOptions)
+            if (!string.IsNullOrEmpty(opt.Thumbprint) && opt.Cert is not null)
+                knownCerts.TryAdd(opt.Thumbprint, opt.Cert);
         var win = new ChainRunWindow(_state, _apiClient, _trustPredicates, chain,
-                                     thumbprint => _certService.FindByThumbprint(thumbprint, includeLocalMachine: true))
+                                     thumbprint => knownCerts.GetOrAdd(thumbprint,
+                                         t => _certService.FindByThumbprint(t, includeLocalMachine: true)))
                   { Owner = this };
         win.ShowDialog();
 
@@ -1042,11 +1082,9 @@ public partial class MainWindow : Window
 
         try
         {
-            // Clone so the exported file carries no window geometry; SaveTo stamps the schema version.
-            var clone = _state.DeepClone();
-            clone.WindowWidth = clone.WindowHeight = clone.WindowLeft = clone.WindowTop = null;
-            clone.WindowMaximized = false;
-            clone.SaveTo(dialog.FileName);
+            // Export without window geometry while reusing _state's protector cache so unchanged
+            // secrets/bodies don't trigger fresh DPAPI lsass calls.
+            _state.SaveTo(dialog.FileName, SecretProtection.Default, stripWindowGeometry: true);
             StatusText.Text = $"Workspace exported to {System.IO.Path.GetFileName(dialog.FileName)} — secrets in it are encrypted for your Windows user, so another user or machine will not be able to read them.";
         }
         catch (Exception ex)
@@ -1824,17 +1862,23 @@ public partial class MainWindow : Window
 
     private string _networkClass = "All";
     private NetworkEntry? _networkDetailEntry;
+    private bool _networkUiPending;
 
     private void RecordNetwork(RequestTab? tab, NetworkEntry entry)
     {
         if (tab is null) return;
         tab.Network.Add(entry);
         while (tab.Network.Count > MaxNetworkEntries) tab.Network.RemoveAt(0);
-        if (ReferenceEquals(tab, ActiveTab))
+        if (ReferenceEquals(tab, ActiveTab) && !_networkUiPending)
         {
-            UpdateNetworkCount();
-            if (NetworkList.Items.Count > 0)
-                NetworkList.ScrollIntoView(NetworkList.Items[NetworkList.Items.Count - 1]);
+            _networkUiPending = true;
+            _ = Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Background, () =>
+            {
+                _networkUiPending = false;
+                UpdateNetworkCount();
+                if (NetworkList.Items.Count > 0)
+                    NetworkList.ScrollIntoView(NetworkList.Items[NetworkList.Items.Count - 1]);
+            });
         }
     }
 
@@ -1879,11 +1923,19 @@ public partial class MainWindow : Window
             NetworkCountText.Text = "No requests yet — send a request or open the Rendered tab.";
             return;
         }
-        var shown = NetworkList.Items.OfType<NetworkEntry>().ToList();
-        long size = shown.Sum(en => en.Error is null ? en.Size : 0);
-        string counts = shown.Count == total
+        int shownCount = 0;
+        long size = 0;
+        foreach (var item in NetworkList.Items)
+        {
+            if (item is NetworkEntry en)
+            {
+                shownCount++;
+                if (en.Error is null) size += en.Size;
+            }
+        }
+        string counts = shownCount == total
             ? $"{total} request{(total == 1 ? "" : "s")}"
-            : $"{shown.Count} of {total} requests";
+            : $"{shownCount} of {total} requests";
         NetworkCountText.Text = $"{counts} · {NetworkEntry.FormatSize(size)}";
     }
 
@@ -1956,7 +2008,7 @@ public partial class MainWindow : Window
         var host = NetworkDetailHost;
         host.Children.Clear();
 
-        var statusBrush = (System.Windows.Media.Brush)new StatusToBrushConverter().Convert(
+        var statusBrush = (System.Windows.Media.Brush)SharedStatusBrushConverter.Convert(
             entry, typeof(System.Windows.Media.Brush), null!, System.Globalization.CultureInfo.CurrentCulture);
 
         host.Children.Add(DetailCaption("GENERAL", first: true));
@@ -2186,17 +2238,33 @@ public partial class MainWindow : Window
 
     private void UpdateTokenChip()
     {
+        if (_state.SessionTokens.Count == 0 && _state.SessionCookies.Count == 0)
+        {
+            if (TokenChip.Visibility != Visibility.Collapsed) TokenChip.Visibility = Visibility.Collapsed;
+            return;
+        }
         var url = CurrentEditorUrl();
-        var origin = TokenService.OriginOf(url);
-        var token = origin is null ? null : _state.SessionTokens.FirstOrDefault(t => t.Origin == origin);
-        int cookieCount = origin is null ? 0 : _state.SessionCookies.Count(c => c.Origin == origin && !c.IsExpired);
-        if (token is null && cookieCount == 0) { TokenChip.Visibility = Visibility.Collapsed; return; }
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri) || uri.Scheme is not ("http" or "https"))
+        {
+            if (TokenChip.Visibility != Visibility.Collapsed) TokenChip.Visibility = Visibility.Collapsed;
+            return;
+        }
+        var origin = $"{uri.Scheme}://{uri.Host.ToLowerInvariant()}:{uri.Port}";
+        var token = _state.SessionTokens.FirstOrDefault(t => t.Origin == origin);
+        int cookieCount = 0;
+        foreach (var c in _state.SessionCookies)
+            if (c.Origin == origin && !c.IsExpired) cookieCount++;
+        if (token is null && cookieCount == 0)
+        {
+            if (TokenChip.Visibility != Visibility.Collapsed) TokenChip.Visibility = Visibility.Collapsed;
+            return;
+        }
 
         TokenChip.Visibility = Visibility.Visible;
         if (token is null)
         {
             string cookieSuffix = _state.AutoCookies ? "" : " · auto off";
-            TokenChipText.Text = $"Session: {new Uri(url).Host} · {cookieCount} cookie(s){cookieSuffix}";
+            TokenChipText.Text = $"Session: {uri.Host} · {cookieCount} cookie(s){cookieSuffix}";
             return;
         }
 
@@ -2206,7 +2274,7 @@ public partial class MainWindow : Window
             : token.ExpiresUtc is { } e ? $" · expires in {Math.Max(1, (int)(e - DateTime.UtcNow).TotalMinutes)}m"
             : "";
         string cookieBadge = cookieCount > 0 ? $" + {cookieCount} cookie(s)" : "";
-        TokenChipText.Text = $"Token: {new Uri(url).Host}{suffix}{cookieBadge}";
+        TokenChipText.Text = $"Token: {uri.Host}{suffix}{cookieBadge}";
     }
 
     private void TokenChip_Click(object sender, MouseButtonEventArgs e)
@@ -2228,6 +2296,13 @@ public partial class MainWindow : Window
                 IsEnabled = false
             });
             menu.Items.Add(new Separator());
+
+            if (JwtInspector.LooksLikeJwt(token.Token))
+            {
+                var inspectJwt = new MenuItem { Header = "Inspect JWT claims…" };
+                inspectJwt.Click += (_, _) => ShowJwtInspector(token);
+                menu.Items.Add(inspectJwt);
+            }
 
             var clearOne = new MenuItem { Header = $"Clear token for {new Uri(url).Host}" };
             clearOne.Click += (_, _) => { _state.SessionTokens.Remove(token); UpdateTokenChip(); };
@@ -2584,19 +2659,27 @@ public partial class MainWindow : Window
             var transport = model.Transport.ToOptions(model.IgnoreServerCert);
             var trust = _trustPredicates.For(host);
             var token = _cts.Token;
-            // Off the UI thread from the start: what SendAsync does before its first await (the
-            // proxy lookup, which can wait seconds on a PAC script, and the handler setup) would
-            // otherwise hold the window still.
-            response = await Task.Run(() => _apiClient.SendAsync(
-                request, cert,
-                transport: transport,
-                trustServerCertificate: trust,
-                cookies: _cookieJar, cancellationToken: token));
-            if (CorsReport.For(request.Headers, response) is { } corsLines) _corsReports.AddOrUpdate(response, corsLines);
+            // Off the UI thread from the start: proxy lookup, handler setup, response pretty-printing
+            // (up to 4 MB JSON/XML), and diagnostics formatting all run on the thread pool so large
+            // responses never freeze the window.
+            var (sentResponse, prePretty, preCors, preDiag) = await Task.Run(async () =>
+            {
+                var r = await _apiClient.SendAsync(
+                    request, cert,
+                    transport: transport,
+                    trustServerCertificate: trust,
+                    cookies: _cookieJar, cancellationToken: token);
+                var cors = CorsReport.For(request.Headers, r);
+                var diag = TransportDiagnostics.Format(r) + (cors is null ? "" : "\n\n" + cors);
+                var pretty = r.Error is null ? ResponseView.Pretty(r) : null;
+                return (r, pretty, cors, diag);
+            });
+            response = sentResponse;
+            if (preCors is not null) _corsReports.AddOrUpdate(response, preCors);
             bool stillShown = sendingTab is not null && ReferenceEquals(ActiveTab, sendingTab);
             if (stillShown)
             {
-                RenderResponse(response);
+                RenderResponse(response, prePretty, preDiag);
                 ShowAssertionResults(model, response);
                 if (_unresolvedVars.Count > 0)
                     StatusText.Text += "   ⚠ unresolved " +
@@ -2611,11 +2694,14 @@ public partial class MainWindow : Window
                     StatusText.Text += $"   {(results.All(r => r.Passed) ? "✓" : "✗")} tests {results.Count(r => r.Passed)}/{results.Count} passed";
                 }
             }
+            var snapshot = BuildSnapshot(response, preDiag);
             if (sendingTab is { } tab)
             {
                 tab.LastResponse = response;
-                tab.LastRawText = stillShown ? _lastRawText : "";
-                tab.Snapshot = BuildSnapshot(response);
+                tab.LastRawText = stillShown ? (_lastRawText ?? "") : "";
+                tab.CachedPretty = prePretty;
+                tab.CachedDiagnostics = preDiag;
+                tab.Snapshot = snapshot;
                 // Each redirect was a request of its own: trace them oldest-first, ahead of the
                 // final response, so the Network view reads the way a browser's does.
                 foreach (var hop in TransportDiagnostics.RedirectEntries(request, response))
@@ -2669,7 +2755,7 @@ public partial class MainWindow : Window
             UpdateTokenChip();
             if (response.Error is null && model.Captures.Count > 0)
                 ApplyCaptures(model, response);
-            AddToHistory(model, response);
+            AddToHistory(model, response, snapshot);
         }
         finally
         {
@@ -2719,15 +2805,16 @@ public partial class MainWindow : Window
         TransportDiagnostics.Format(response) +
         (_corsReports.TryGetValue(response, out var cors) ? "\n\n" + cors : "");
 
-    private void RenderResponse(ApiResponse response)
+    private void RenderResponse(ApiResponse response, FormattedResponse? preformatted = null, string? preDiagnostics = null)
     {
         _lastResponse = response;
         RefreshDiffIfVisible();
-        DiagnosticsBox.Text = DiagnosticsFor(response);
+        DiagnosticsBox.Text = preDiagnostics ?? DiagnosticsFor(response);
 
         if (response.Error is not null)
         {
             _lastRawText = response.Error.Message;
+            _lastRawTruncated = false;
             StatusText.Text = response.Error.Kind == ApiErrorKind.None
                 ? response.Error.Message
                 : $"Error [{response.Error.Kind}]: {response.Error.Message}";
@@ -2737,10 +2824,11 @@ public partial class MainWindow : Window
             return;
         }
 
-        var formatted = ResponseView.Pretty(response);
+        var formatted = preformatted ?? ResponseView.Pretty(response);
         SetPretty(formatted.Text, formatted.Kind);
-        _lastRawText = Encoding.UTF8.GetString(response.Body);
-        RawBox.Text = ResponseView.Raw(_lastRawText);
+        string rawDisplay = ResponseView.Raw(response.Body, out _lastRawTruncated);
+        _lastRawText = _lastRawTruncated ? null : rawDisplay;
+        RawBox.Text = rawDisplay;
         ResponseHeadersBox.Text = string.Join("\n", response.Headers.Select(h => $"{h.Key}: {h.Value}"));
 
         var tls = response.Connection?.TlsProtocol is { } p ? $"  •  {p}" : "";
@@ -2748,6 +2836,9 @@ public partial class MainWindow : Window
             $"{response.StatusCode} {response.ReasonPhrase}  •  {response.Body.Length} bytes  •  " +
             $"{response.Elapsed.TotalMilliseconds:F0} ms  •  {formatted.Kind}{tls}";
     }
+
+    private string FullRawText() =>
+        _lastRawText ??= _lastResponse?.Body is { Length: > 0 } b ? Encoding.UTF8.GetString(b) : "";
 
     private void SetPretty(string text, BodyKind kind)
     {
@@ -2759,8 +2850,9 @@ public partial class MainWindow : Window
 
     private void CopyBodyButton_Click(object sender, RoutedEventArgs e)
     {
-        if (string.IsNullOrEmpty(_lastRawText)) { StatusText.Text = "Nothing to copy."; return; }
-        TrySetClipboard(_lastRawText, "Copied response body.");
+        string text = FullRawText();
+        if (string.IsNullOrEmpty(text)) { StatusText.Text = "Nothing to copy."; return; }
+        TrySetClipboard(text, "Copied response body.");
     }
 
     private void CopyCodeButton_Click(object sender, RoutedEventArgs e)
@@ -2817,12 +2909,12 @@ public partial class MainWindow : Window
         if (string.IsNullOrEmpty(text)) { StatusText.Text = "No response to search yet."; return; }
 
         // Only the body: past the Raw view's limit the text ends with a note, which is not a match.
-        int bodyChars = _lastRawText.Length > ResponseView.MaxRawChars ? Math.Min(ResponseView.MaxRawChars, text.Length) : text.Length;
+        int bodyChars = _lastRawTruncated ? Math.Min(ResponseView.MaxRawChars, text.Length) : text.Length;
         int from = Math.Min(RawBox.SelectionStart + Math.Max(RawBox.SelectionLength, 0), bodyChars);
         int idx = text.IndexOf(term, from, bodyChars - from, StringComparison.OrdinalIgnoreCase);
         if (idx < 0) idx = text.IndexOf(term, 0, bodyChars, StringComparison.OrdinalIgnoreCase);   // wrap to the top
-        if (idx < 0 && _lastRawText.Length > ResponseView.MaxRawChars &&
-            _lastRawText.IndexOf(term, Math.Max(0, ResponseView.MaxRawChars - term.Length + 1), StringComparison.OrdinalIgnoreCase) >= 0)
+        if (idx < 0 && _lastRawTruncated &&
+            FullRawText().IndexOf(term, Math.Max(0, ResponseView.MaxRawChars - term.Length + 1), StringComparison.OrdinalIgnoreCase) >= 0)
         {
             StatusText.Text = $"“{term}” is further into the body than the Raw view shows. Save… the body to search all of it.";
             return;
@@ -2898,16 +2990,16 @@ public partial class MainWindow : Window
         if (parts.Count > 0) StatusText.Text += "   •   " + string.Join("; ", parts);
     }
 
-    private void AddToHistory(RequestModel model, ApiResponse response)
+    private void AddToHistory(RequestModel model, ApiResponse response, HistorySnapshot? snapshot = null)
     {
-        var entry = model.ToHistoryEntry(response.StatusCode, BuildSnapshot(response));
+        var entry = model.ToHistoryEntry(response.StatusCode, snapshot ?? BuildSnapshot(response));
         _state.History.RemoveAll(h => h.Method == entry.Method && h.EffectiveUrl == entry.EffectiveUrl);
         _state.History.Insert(0, entry);
         if (_state.History.Count > 30) _state.History.RemoveRange(30, _state.History.Count - 30);
         RefreshHistoryList();
     }
 
-    private HistorySnapshot BuildSnapshot(ApiResponse r)
+    private HistorySnapshot BuildSnapshot(ApiResponse r, string? preDiagnostics = null)
     {
         var body = r.Body;
         bool truncated = body.Length > MaxStoredBody;
@@ -2920,7 +3012,7 @@ public partial class MainWindow : Window
             Body = truncated ? Array.Empty<byte>() : body,
             BodyTruncated = truncated,
             Headers = r.Headers.Select(h => new HeaderRow { Name = h.Key, Value = h.Value }).ToList(),
-            Diagnostics = DiagnosticsFor(r),
+            Diagnostics = preDiagnostics ?? DiagnosticsFor(r),
             ErrorKind = r.Error?.Kind.ToString(),
             ErrorMessage = r.Error?.Message
         };
@@ -2960,6 +3052,8 @@ public partial class MainWindow : Window
         // Restore that request's own response into this tab.
         tab.LastResponse = null;
         tab.LastRawText = "";
+        tab.CachedPretty = null;
+        tab.CachedDiagnostics = null;
         tab.Snapshot = entry.Response;
         if (entry.Response is not null) RenderSnapshot(entry.Response, fromHistory: true);
         else ClearResponse();
@@ -2974,6 +3068,7 @@ public partial class MainWindow : Window
         {
             _lastResponse = null;
             _lastRawText = s.ErrorMessage;
+            _lastRawTruncated = false;
             SetPretty(s.ErrorMessage, BodyKind.Text);
             RawBox.Text = s.ErrorMessage;
             ResponseHeadersBox.Text = "";
@@ -2998,14 +3093,17 @@ public partial class MainWindow : Window
         {
             SetPretty("(the response body was too large to keep — re-send to see it)", BodyKind.Text);
             _lastRawText = "";
+            _lastRawTruncated = false;
+            RawBox.Text = "";
         }
         else
         {
             var formatted = ResponseView.Pretty(recon);
             SetPretty(formatted.Text, formatted.Kind);
-            _lastRawText = Encoding.UTF8.GetString(s.Body);
+            string rawDisplay = ResponseView.Raw(s.Body, out _lastRawTruncated);
+            _lastRawText = _lastRawTruncated ? null : rawDisplay;
+            RawBox.Text = rawDisplay;
         }
-        RawBox.Text = ResponseView.Raw(_lastRawText);
         ResponseHeadersBox.Text = string.Join("\n", recon.Headers.Select(h => $"{h.Key}: {h.Value}"));
         StatusText.Text = $"{s.StatusCode} {s.ReasonPhrase}  •  {s.Body.Length} bytes  •  {s.ElapsedMs:F0} ms{suffix}";
     }
@@ -3021,6 +3119,7 @@ public partial class MainWindow : Window
         DiffBox.Text = "";
         _lastResponse = null;
         _lastRawText = "";
+        _lastRawTruncated = false;
     }
 
     private void ShowPrettyHint()
@@ -3132,6 +3231,8 @@ public partial class MainWindow : Window
         var ctrl = Keyboard.Modifiers == ModifierKeys.Control;
         if (ctrl && e.Key == Key.Enter) { e.Handled = true; _ = SendRequestAsync(); }
         else if (ctrl && e.Key == Key.L) { e.Handled = true; UrlBox.Focus(); UrlBox.SelectAll(); }
+        else if (ctrl && e.Key == Key.F) { e.Handled = true; ResponseFindBox.Focus(); ResponseFindBox.SelectAll(); }
+        else if (ctrl && e.Key == Key.K) { e.Handled = true; OpenCommandPalette(); }
         else if (ctrl && e.Key == Key.S) { e.Handled = true; SaveResponse(); }
         else if (ctrl && e.Key == Key.H) { e.Handled = true; ToggleHistory(); }
         else if (ctrl && e.Key == Key.T) { e.Handled = true; AddNewTab(); }
@@ -3199,4 +3300,299 @@ public partial class MainWindow : Window
 
     private static string ShortPath(string url) =>
         Uri.TryCreate(url, UriKind.Absolute, out var u) ? u.AbsolutePath : url;
+
+    // ---------- tools menu, doctor, bench, grpc, jwt, cert inspect, smart-card pin, quick jump ----------
+
+    private void ToolsButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (ToolsButton.ContextMenu is not { } menu) return;
+        menu.PlacementTarget = ToolsButton;
+        menu.Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom;
+        menu.IsOpen = true;
+    }
+
+    private void OpenDoctor_Click(object sender, RoutedEventArgs e)
+    {
+        var transport = ActiveRequest?.Transport.ToOptions(IgnoreServerCertCheck.IsChecked == true)
+            ?? new TransportOptions { IgnoreServerCertificateErrors = IgnoreServerCertCheck.IsChecked == true };
+        var win = new DoctorWindow(CurrentEditorUrl(), SelectedCert(), transport, autoRun: !string.IsNullOrWhiteSpace(CurrentEditorUrl()))
+        { Owner = this };
+        win.Show();
+    }
+
+    private void OpenBench_Click(object sender, RoutedEventArgs e)
+    {
+        string url = CurrentEditorUrl();
+        if (string.IsNullOrWhiteSpace(url))
+        {
+            StatusText.Text = "Enter a request URL first before running a benchmark.";
+            return;
+        }
+        var request = BuildRequest();
+        var transport = ActiveRequest?.Transport.ToOptions(IgnoreServerCertCheck.IsChecked == true)
+            ?? new TransportOptions { IgnoreServerCertificateErrors = IgnoreServerCertCheck.IsChecked == true };
+        string host = TokenService.HostOf(request.Url);
+        var win = new BenchWindow(request, SelectedCert(), transport,
+            trustCert: c => c is not null && TrustService.IsTrustedHere(_state, host, c))
+        { Owner = this };
+        win.Show();
+    }
+
+    private void OpenGrpc_Click(object sender, RoutedEventArgs e)
+    {
+        var transport = ActiveRequest?.Transport.ToOptions(IgnoreServerCertCheck.IsChecked == true)
+            ?? new TransportOptions { IgnoreServerCertificateErrors = IgnoreServerCertCheck.IsChecked == true };
+        string initial = CurrentEditorUrl();
+        var win = new GrpcWindow(initial, SelectedCert(), transport,
+            trustCert: c =>
+            {
+                string h = TokenService.HostOf(initial);
+                return c is not null && TrustService.IsTrustedHere(_state, h, c);
+            })
+        { Owner = this };
+        win.Show();
+    }
+
+    private void InspectSelectedCert_Click(object sender, RoutedEventArgs e)
+    {
+        var cert = SelectedCert();
+        if (cert is null)
+        {
+            StatusText.Text = "Select a client certificate first to inspect it.";
+            return;
+        }
+        var details = CertificateInspector.Inspect(cert);
+        ShowTextInfoDialog("Certificate Details", CertificateInspector.FormatText(details));
+    }
+
+    private void UnlockSmartCardPin_Click(object sender, RoutedEventArgs e)
+    {
+        var cert = SelectedCert();
+        if (cert is null)
+        {
+            StatusText.Text = "Select a client certificate first to unlock its PIN.";
+            return;
+        }
+        var pin = InputDialog.Show(this, "Smart-card / HSM PIN",
+            $"Enter PIN for {cert.Subject} (kept in memory for this session only)", "");
+        if (string.IsNullOrEmpty(pin)) return;
+        var unlocked = SmartCardPin.Apply(cert, pin, out var note);
+        if (!ReferenceEquals(unlocked, cert))
+        {
+            var idx = _allOptions.FindIndex(o => ReferenceEquals(o.Cert, cert));
+            if (idx >= 0)
+            {
+                var old = _allOptions[idx];
+                _allOptions[idx] = new CertOption(old.Label + "  [PIN unlocked]", unlocked, old.Thumbprint);
+                ApplyCertFilter();
+                SelectCertByThumbprint(old.Thumbprint);
+            }
+        }
+        StatusText.Text = note ?? "Smart-card PIN applied for this session.";
+    }
+
+    private void ShowJwtInspector(SessionToken token)
+    {
+        if (!JwtInspector.TryParse(token.Token, out var info, out var err))
+        {
+            StatusText.Text = err ?? "Could not decode JWT.";
+            return;
+        }
+        ShowTextInfoDialog($"JWT Claims · {token.Origin}", JwtInspector.FormatText(info!));
+    }
+
+    private void ShowTextInfoDialog(string title, string body)
+    {
+        var dlg = new Window
+        {
+            Title = title,
+            Width = 680,
+            Height = 500,
+            Owner = this,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            Background = (System.Windows.Media.Brush)FindResource("Bg.Window"),
+            Foreground = (System.Windows.Media.Brush)FindResource("Text.Soft"),
+            FontFamily = new System.Windows.Media.FontFamily("Consolas"),
+            FontSize = 12
+        };
+        var dock = new DockPanel { Margin = new Thickness(12) };
+        var btnBar = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 10, 0, 0) };
+        var copyBtn = new Button { Content = "Copy", Height = 26, Padding = new Thickness(12, 0, 12, 0), Margin = new Thickness(0, 0, 8, 0) };
+        copyBtn.Click += (_, _) => { try { Clipboard.SetText(body); StatusText.Text = $"Copied {title} to clipboard."; } catch { } };
+        var closeBtn = new Button { Content = "Close", Height = 26, Padding = new Thickness(12, 0, 12, 0) };
+        closeBtn.Click += (_, _) => dlg.Close();
+        btnBar.Children.Add(copyBtn);
+        btnBar.Children.Add(closeBtn);
+        DockPanel.SetDock(btnBar, Dock.Bottom);
+        dock.Children.Add(btnBar);
+        dock.Children.Add(new TextBox
+        {
+            Text = body,
+            IsReadOnly = true,
+            AcceptsReturn = true,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
+            Padding = new Thickness(10),
+            FontFamily = new System.Windows.Media.FontFamily("Consolas"),
+            FontSize = 12
+        });
+        dlg.Content = dock;
+        dlg.ShowDialog();
+    }
+
+    private void OpenCommandPalette_Click(object sender, RoutedEventArgs e) => OpenCommandPalette();
+
+    private void OpenCommandPalette()
+    {
+        var items = new List<PaletteItem>();
+
+        for (int i = 0; i < _tabs.Count; i++)
+        {
+            int idx = i;
+            var t = _tabs[i];
+            items.Add(new PaletteItem("TAB", t.Title, $"{t.Request.Method} {t.Request.BaseUrl}{t.Request.Path}",
+                () => { TabStrip.SelectedIndex = idx; }));
+        }
+
+        void WalkCollections(IEnumerable<CollectionNode> nodes, string prefix)
+        {
+            foreach (var n in nodes)
+            {
+                string path = prefix.Length == 0 ? n.Name : $"{prefix}/{n.Name}";
+                if (n.IsFolder) WalkCollections(n.Children, path);
+                else if (n.Request is { } req)
+                {
+                    var capturedNode = n;
+                    var capturedReq = req;
+                    items.Add(new PaletteItem("REQUEST", $"{capturedReq.Method} {capturedNode.Name}", path, () =>
+                    {
+                        var clone = CloneRequest(capturedReq);
+                        clone.SourceCollectionId = capturedNode.Id;
+                        var (defBase, defCert) = CollectionDefaults.For(_collections, capturedNode);
+                        if (string.IsNullOrWhiteSpace(clone.BaseUrl)) clone.BaseUrl = defBase ?? ActiveRequest?.BaseUrl;
+                        if (string.IsNullOrEmpty(clone.CertThumbprint)) clone.CertThumbprint = defCert ?? SelectedThumbprint();
+                        var newTab = new RequestTab(clone);
+                        _tabs.Add(newTab);
+                        TabStrip.SelectedItem = newTab;
+                        StatusText.Text = $"Opened “{capturedNode.Name}” in a new tab.";
+                    }));
+                }
+            }
+        }
+        WalkCollections(_collections, "");
+
+        foreach (var env in _environments)
+        {
+            var capturedEnv = env;
+            items.Add(new PaletteItem("ENV", capturedEnv.Name, $"{capturedEnv.Variables.Count} variable(s)",
+                () => { EnvCombo.SelectedItem = capturedEnv; }));
+        }
+
+        items.Add(new PaletteItem("TOOL", "Connection Doctor", "Diagnose DNS, proxy, TCP, TLS, CAs, and HTTP", () => OpenDoctor_Click(this, new RoutedEventArgs())));
+        items.Add(new PaletteItem("TOOL", "Benchmark Current Request", "Measure throughput and p50/p90/p99 latency", () => OpenBench_Click(this, new RoutedEventArgs())));
+        items.Add(new PaletteItem("TOOL", "gRPC Client", "Discover and invoke gRPC services with mTLS", () => OpenGrpc_Click(this, new RoutedEventArgs())));
+        items.Add(new PaletteItem("TOOL", "CORS Check", "Check CORS preflight and browser policy", () => CorsButton_Click(this, new RoutedEventArgs())));
+        items.Add(new PaletteItem("TOOL", "Discover Endpoints (Fuzz)", "Probe a wordlist of paths against the website", () => DiscoverButton_Click(this, new RoutedEventArgs())));
+        items.Add(new PaletteItem("TOOL", "Mock Server", "Run a local HTTP/TLS/mTLS mock server", () => MockServerButton_Click(this, new RoutedEventArgs())));
+        items.Add(new PaletteItem("TOOL", "Inspect Selected Certificate", "Show SANs, EKUs, key provider, and chain", () => InspectSelectedCert_Click(this, new RoutedEventArgs())));
+        items.Add(new PaletteItem("TOOL", "Unlock Smart-Card PIN", "Supply CNG smart-card / HSM PIN for this session", () => UnlockSmartCardPin_Click(this, new RoutedEventArgs())));
+        items.Add(new PaletteItem("TOOL", "Trusted Certificates", "Manage per-host pinned server certificates", () => ManageTrustedCerts_Click(this, new RoutedEventArgs())));
+
+        var palette = new CommandPaletteWindow(items) { Owner = this };
+        if (palette.ShowDialog() == true && palette.Chosen is { } chosen)
+            chosen.Execute();
+    }
+
+    private void ImportPostman_Click(object sender, RoutedEventArgs e)
+    {
+        var dlg = new Microsoft.Win32.OpenFileDialog
+        {
+            Title = "Import Postman Collection (v2.0/v2.1)",
+            Filter = "Postman Collection (*.json)|*.json|All files|*.*"
+        };
+        if (dlg.ShowDialog(this) != true) return;
+        try
+        {
+            var result = PostmanImport.Parse(File.ReadAllText(dlg.FileName));
+            _collections.Add(result.Root);
+            if (result.Variables is { } env)
+            {
+                var existing = _environments.FirstOrDefault(x => x.Name.Equals(env.Name, StringComparison.OrdinalIgnoreCase));
+                if (existing is not null) _environments.Remove(existing);
+                _environments.Add(env);
+            }
+            UpdateCollectionsHint();
+            SetSidebarMode(SidebarMode.Collections);
+            StatusText.Text = $"Imported {CountRequests(result.Root)} request(s) from Postman collection “{result.Root.Name}”.";
+            SaveState();
+        }
+        catch (Exception ex) { StatusText.Text = "Couldn't import Postman file: " + ex.Message; }
+    }
+
+    private void ImportInsomnia_Click(object sender, RoutedEventArgs e)
+    {
+        var dlg = new Microsoft.Win32.OpenFileDialog
+        {
+            Title = "Import Insomnia v4 Export",
+            Filter = "Insomnia JSON (*.json)|*.json|All files|*.*"
+        };
+        if (dlg.ShowDialog(this) != true) return;
+        try
+        {
+            var result = InsomniaImport.Parse(File.ReadAllText(dlg.FileName));
+            _collections.Add(result.Root);
+            foreach (var env in result.Environments)
+            {
+                var existing = _environments.FirstOrDefault(x => x.Name.Equals(env.Name, StringComparison.OrdinalIgnoreCase));
+                if (existing is not null) _environments.Remove(existing);
+                _environments.Add(env);
+            }
+            UpdateCollectionsHint();
+            SetSidebarMode(SidebarMode.Collections);
+            StatusText.Text = $"Imported {CountRequests(result.Root)} request(s) from Insomnia “{result.Root.Name}”.";
+            SaveState();
+        }
+        catch (Exception ex) { StatusText.Text = "Couldn't import Insomnia file: " + ex.Message; }
+    }
+
+    private void ImportWsdl_Click(object sender, RoutedEventArgs e)
+    {
+        var dlg = new Microsoft.Win32.OpenFileDialog
+        {
+            Title = "Import WSDL / SOAP Document",
+            Filter = "WSDL (*.wsdl;*.xml)|*.wsdl;*.xml|All files|*.*"
+        };
+        if (dlg.ShowDialog(this) != true) return;
+        try
+        {
+            var result = WsdlImport.Parse(File.ReadAllText(dlg.FileName));
+            _collections.Add(result.Root);
+            UpdateCollectionsHint();
+            SetSidebarMode(SidebarMode.Collections);
+            StatusText.Text = $"Imported {CountRequests(result.Root)} SOAP operation(s) from “{result.Root.Name}”.";
+            SaveState();
+        }
+        catch (Exception ex) { StatusText.Text = "Couldn't import WSDL file: " + ex.Message; }
+    }
+
+    private void ImportHttpFile_Click(object sender, RoutedEventArgs e)
+    {
+        var dlg = new Microsoft.Win32.OpenFileDialog
+        {
+            Title = "Import .http / .rest File",
+            Filter = "HTTP files (*.http;*.rest)|*.http;*.rest|All files|*.*"
+        };
+        if (dlg.ShowDialog(this) != true) return;
+        try
+        {
+            var pc = HttpFileImporter.Parse(File.ReadAllText(dlg.FileName), Path.GetFileNameWithoutExtension(dlg.FileName));
+            var node = CollectionNode.FromParsed(pc);
+            _collections.Add(node);
+            UpdateCollectionsHint();
+            SetSidebarMode(SidebarMode.Collections);
+            StatusText.Text = $"Imported {CountRequests(node)} request(s) from “{node.Name}”.";
+            SaveState();
+        }
+        catch (Exception ex) { StatusText.Text = "Couldn't import .http file: " + ex.Message; }
+    }
 }

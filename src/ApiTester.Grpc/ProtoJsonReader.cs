@@ -50,31 +50,34 @@ internal static class ProtoJsonReader
         {
             WriteObject(writer, descriptor, Decode(descriptor, payload, depth: 0), depth: 0, resolveMessage);
         }
-        return Encoding.UTF8.GetString(stream.ToArray());
+        return Encoding.UTF8.GetString(stream.GetBuffer(), 0, (int)stream.Length);
     }
 
-    /// <summary>Parses <paramref name="payload"/> field-by-field into a field-number-keyed map. A
-    /// value is the field's natural CLR representation: <see cref="double"/>, <see cref="float"/>,
-    /// <see cref="int"/>, <see cref="long"/>, <see cref="uint"/>, <see cref="ulong"/>,
-    /// <see cref="bool"/>, <see cref="string"/>, a raw <see cref="ByteString"/>, the raw enum number
-    /// (<see cref="int"/>), a nested <c>Dictionary&lt;int, object&gt;</c> for a message field, a
-    /// <c>List&lt;object&gt;</c> of the element representation for a repeated field, or a
-    /// <c>Dictionary&lt;string, object&gt;</c> — keyed by the already-stringified map key — for a map
-    /// field.</summary>
     private static Dictionary<int, object> Decode(MessageDescriptor descriptor, byte[] payload, int depth)
+    {
+        using var input = new CodedInputStream(payload);
+        return Decode(descriptor, input, depth);
+    }
+
+    private static Dictionary<int, object> Decode(MessageDescriptor descriptor, ByteString payload, int depth)
+    {
+        using var input = payload.CreateCodedInput();
+        return Decode(descriptor, input, depth);
+    }
+
+    private static Dictionary<int, object> Decode(MessageDescriptor descriptor, CodedInputStream input, int depth)
     {
         if (depth > MaxDepth)
             throw new GrpcJsonException($"'{descriptor.FullName}': message nesting exceeds the maximum supported depth ({MaxDepth}).");
 
-        var fieldsByNumber = descriptor.Fields.InFieldNumberOrder().ToDictionary(f => f.FieldNumber);
         var values = new Dictionary<int, object>();
 
-        using var input = new CodedInputStream(payload);
         uint tag;
         while ((tag = input.ReadTag()) != 0)
         {
             int fieldNumber = WireFormat.GetTagFieldNumber(tag);
-            if (!fieldsByNumber.TryGetValue(fieldNumber, out var field))
+            var field = descriptor.FindFieldByNumber(fieldNumber);
+            if (field is null)
             {
                 // A server may legitimately send a field newer than the descriptor we fetched.
                 input.SkipLastField();
@@ -89,8 +92,7 @@ internal static class ProtoJsonReader
 
             if (field.IsMap)
             {
-                byte[] entryBytes = input.ReadBytes().ToByteArray();
-                var (key, entryValue) = DecodeMapEntry(field, entryBytes, depth);
+                var (key, entryValue) = DecodeMapEntry(field, input.ReadBytes(), depth);
                 if (!values.TryGetValue(fieldNumber, out var existingMap))
                 {
                     existingMap = new Dictionary<string, object>();
@@ -155,7 +157,7 @@ internal static class ProtoJsonReader
         FieldType.String => input.ReadString(),
         FieldType.Bytes => input.ReadBytes(),
         FieldType.Enum => input.ReadEnum(),
-        FieldType.Message => Decode(field.MessageType, input.ReadBytes().ToByteArray(), depth + 1),
+        FieldType.Message => Decode(field.MessageType, input.ReadBytes(), depth + 1),
         FieldType.Group => throw new GrpcJsonException(
             $"Field '{field.JsonName}': the proto2 'group' wire type is not supported (proto3 cannot express it)."),
         _ => throw new GrpcJsonException($"Field '{field.JsonName}' has an unrecognized Protobuf field type ({field.FieldType}).")
@@ -167,9 +169,8 @@ internal static class ProtoJsonReader
     /// exhausted, since <c>PushLimit</c>/<c>PopLimit</c> are not accessible here.</summary>
     private static List<object> ReadPackedRun(CodedInputStream outer, FieldDescriptor field)
     {
-        byte[] blob = outer.ReadBytes().ToByteArray();
         var items = new List<object>();
-        var inner = new CodedInputStream(blob);
+        using var inner = outer.ReadBytes().CreateCodedInput();
         while (!inner.IsAtEnd)
         {
             // Packable types are all scalar (never Message), so depth cannot matter here.
@@ -183,14 +184,14 @@ internal static class ProtoJsonReader
     /// wire (because it held its type's default) is reconstructed as that default — proto3's
     /// default-omission applies inside a map entry exactly as it does everywhere else, but a map entry
     /// must still produce a concrete key and value.</summary>
-    private static (string Key, object Value) DecodeMapEntry(FieldDescriptor mapField, byte[] entryBytes, int depth)
+    private static (string Key, object Value) DecodeMapEntry(FieldDescriptor mapField, ByteString entryBytes, int depth)
     {
         var keyField = mapField.MessageType.FindFieldByNumber(1);
         var valueField = mapField.MessageType.FindFieldByNumber(2);
         object? keyValue = null;
         object? valueValue = null;
 
-        using var input = new CodedInputStream(entryBytes);
+        using var input = entryBytes.CreateCodedInput();
         uint tag;
         while ((tag = input.ReadTag()) != 0)
         {
@@ -464,7 +465,7 @@ internal static class ProtoJsonReader
         {
             writer.WriteStartObject();
             writer.WriteString("@type", typeUrl);
-            writer.WriteString("value", Convert.ToBase64String(payloadBytes.ToByteArray()));
+            writer.WriteString("value", payloadBytes.ToBase64());
             writer.WriteEndObject();
         }
 
@@ -499,7 +500,7 @@ internal static class ProtoJsonReader
 
         try
         {
-            var payloadValues = Decode(payloadDescriptor, payloadBytes.ToByteArray(), depth + 1);
+            var payloadValues = Decode(payloadDescriptor, payloadBytes, depth + 1);
             writer.WriteStartObject();
             writer.WriteString("@type", typeUrl);
             if (WellKnownTypes.NestsUnderAnyValue(payloadDescriptor))
@@ -604,7 +605,7 @@ internal static class ProtoJsonReader
                 writer.WriteStringValue((string)value);
                 break;
             case FieldType.Bytes:
-                writer.WriteStringValue(Convert.ToBase64String(((ByteString)value).ToByteArray()));
+                writer.WriteStringValue(((ByteString)value).ToBase64());
                 break;
             case FieldType.Enum:
                 int number = (int)value;

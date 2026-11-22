@@ -115,6 +115,41 @@ internal sealed class DescriptorPool
             $"Service '{serviceFullName}' was not found among {_sourceLabel} for it.");
     }
 
+    /// <summary>Fetches all missing reflection files for a batch of services and rebuilds the
+    /// descriptor graph once instead of once per service (O(S) instead of O(S^2)).</summary>
+    internal async Task<IReadOnlyDictionary<string, ServiceDescriptor>> LoadServicesAsync(
+        IReadOnlyList<string> serviceFullNames, CancellationToken ct)
+    {
+        if (_reflection is not null)
+        {
+            bool addedAny = false;
+            foreach (var name in serviceFullNames)
+            {
+                if (_services.ContainsKey(name)) continue;
+                try
+                {
+                    var roots = await _reflection.FileContainingSymbolAsync(name, ct);
+                    foreach (var bytes in roots)
+                    {
+                        AddProto(FileDescriptorProto.Parser.ParseFrom(bytes));
+                        addedAny = true;
+                    }
+                }
+                catch (GrpcMethodNotFoundException)
+                {
+                    // Same tolerance as DiscoverAsync's per-service lookup: a service whose file
+                    // reflection refuses to hand back stays absent and renders with empty methods.
+                }
+            }
+            if (addedAny)
+            {
+                await ResolveDependenciesAsync(ct);
+                Rebuild();
+            }
+        }
+        return _services;
+    }
+
     /// <summary>Resolves a message by its full name across every file collected so far — the
     /// production resolver behind google.protobuf.Any expansion. Returns null when the name is not
     /// among the descriptors collected so far, which is the caller's cue to fall back to the

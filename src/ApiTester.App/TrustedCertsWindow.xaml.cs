@@ -16,6 +16,7 @@ public partial class TrustedCertsWindow : Window
     // refresh on removal, so the list is folded into an ObservableCollection for display and each
     // removal is re-applied to the underlying state via TrustService.Untrust.
     private readonly ObservableCollection<TrustedServerCert> _certs;
+    private bool _dirty;
 
     public TrustedCertsWindow(AppState state)
     {
@@ -44,6 +45,7 @@ public partial class TrustedCertsWindow : Window
         if (CertsList.SelectedItem is not TrustedServerCert sel) return;
         TrustService.Untrust(_state, sel.Host, sel.Thumbprint);
         _certs.Remove(sel);
+        _dirty = true;
         UpdateEmptyHint();
     }
 
@@ -54,7 +56,7 @@ public partial class TrustedCertsWindow : Window
 
     private void Close_Click(object sender, RoutedEventArgs e)
     {
-        _state.Save();
+        if (_dirty) _state.Save();
         Close();
     }
 }

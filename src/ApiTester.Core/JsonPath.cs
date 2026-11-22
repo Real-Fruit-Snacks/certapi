@@ -10,14 +10,29 @@ public static class JsonPath
     {
         if (string.IsNullOrWhiteSpace(path)) return null;
         JsonElement current = root;
+        ReadOnlySpan<char> remaining = path.AsSpan();
 
-        foreach (var segment in path.Split('.', StringSplitOptions.RemoveEmptyEntries))
+        while (remaining.Length > 0)
         {
-            string s = segment.Trim();
+            int dot = remaining.IndexOf('.');
+            ReadOnlySpan<char> segment;
+            if (dot < 0)
+            {
+                segment = remaining;
+                remaining = ReadOnlySpan<char>.Empty;
+            }
+            else
+            {
+                segment = remaining[..dot];
+                remaining = remaining[(dot + 1)..];
+            }
+            if (segment.IsEmpty) continue;
+
+            ReadOnlySpan<char> s = segment.Trim();
 
             // Split "name[1][2]" into a leading name (optional) and any trailing [index] parts.
             int bracket = s.IndexOf('[');
-            string name = bracket < 0 ? s : s[..bracket];
+            ReadOnlySpan<char> name = bracket < 0 ? s : s[..bracket];
             if (name.Length > 0)
             {
                 if (current.ValueKind != JsonValueKind.Object || !current.TryGetProperty(name, out current))
@@ -26,17 +41,29 @@ public static class JsonPath
 
             if (bracket >= 0)
             {
-                string rest = s[bracket..];
-                var idxTokens = rest.Split('[', StringSplitOptions.RemoveEmptyEntries);
-                if (idxTokens.Length == 0) return null;   // "name[" with nothing after
-                foreach (var idxToken in idxTokens)
+                ReadOnlySpan<char> rest = s[bracket..];
+                bool anyIndex = false;
+                while (rest.Length > 0)
                 {
-                    if (!idxToken.EndsWith(']')) return null;   // unclosed like "name[0"
-                    var t = idxToken.TrimEnd(']');
+                    if (rest[0] == '[')
+                    {
+                        rest = rest[1..];
+                        if (rest.Length == 0) break;
+                        if (rest[0] == '[') continue;
+                    }
+                    int nextOpen = rest.IndexOf('[');
+                    ReadOnlySpan<char> idxToken = nextOpen < 0 ? rest : rest[..nextOpen];
+                    rest = nextOpen < 0 ? ReadOnlySpan<char>.Empty : rest[nextOpen..];
+                    if (idxToken.IsEmpty) continue;
+
+                    anyIndex = true;
+                    if (idxToken[^1] != ']') return null;   // unclosed like "name[0"
+                    ReadOnlySpan<char> t = idxToken.TrimEnd(']');
                     if (!int.TryParse(t, out int index) || current.ValueKind != JsonValueKind.Array) return null;
                     if (index < 0 || index >= current.GetArrayLength()) return null;
                     current = current[index];
                 }
+                if (!anyIndex) return null;   // "name[" with nothing after
             }
         }
         return current;

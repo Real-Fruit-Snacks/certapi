@@ -55,6 +55,7 @@
                                    Foreground="{DynamicResource Text.Normal}" Margin="0,0,0,6"/>
                         <DataGrid x:Name="ResultsGrid" AutoGenerateColumns="False" IsReadOnly="True"
                                   HeadersVisibility="Column" GridLinesVisibility="Horizontal"
+                                  VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling"
                                   Background="{DynamicResource Bg.Panel}"
                                   SelectionChanged="ResultsGrid_SelectionChanged">
                             <DataGrid.Columns>

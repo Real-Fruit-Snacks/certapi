@@ -24,7 +24,10 @@ public sealed record DoctorStage(
 
 /// <summary>The whole triage: the stages that ran, in order, and the per-phase timings. Data only —
 /// rendering (text or JSON) belongs to the caller.</summary>
-public sealed record DoctorReport(string Url, IReadOnlyList<DoctorStage> Stages)
+public sealed record DoctorReport(
+    string Url,
+    IReadOnlyList<DoctorStage> Stages,
+    IReadOnlyList<string>? ServerChainPems = null)
 {
     /// <summary>True when every stage that ran passed.</summary>
     public bool Ok => Stages.All(s => s.Ok);
@@ -242,6 +245,7 @@ public static class ConnectionDoctor
             return new DoctorReport(url, stages);
         }
 
+        List<string>? serverChainPems = null;
         try
         {
             Stream stream = new NetworkStream(socket, ownsSocket: true);
@@ -271,27 +275,20 @@ public static class ConnectionDoctor
                 var ssl = new SslStream(stream, leaveInnerStreamOpen: false);
                 var detail = new List<string>();
                 acceptableIssuers = Array.Empty<string>();
-                X509Certificate2? presented = null;
-                // A snapshot, not the chain object: SslStream disposes the X509Chain it handed to
-                // the callback as soon as the callback returns, so reading ChainElements afterwards
-                // finds nothing — and the chain lines and the interception note silently vanish.
                 ChainSnapshot? seenChain = null;
                 SslPolicyErrors seenErrors = SslPolicyErrors.None;
 
                 var sslOptions = new SslClientAuthenticationOptions
                 {
                     TargetHost = uri.Host,
-                    RemoteCertificateValidationCallback = (_, _, chain, errors) =>
+                    RemoteCertificateValidationCallback = (_, remoteCert, chain, errors) =>
                     {
-                        // Everything is recorded and nothing is refused: the point is to REPORT
-                        // what a real connection would have hit, so a failing chain must still get
-                        // far enough to be described.
                         seenChain = ChainSnapshot.Of(chain); seenErrors = errors;
+                        serverChainPems = CaptureChainPems(remoteCert, chain);
                         return true;
                     },
                     LocalCertificateSelectionCallback = (_, _, _, _, issuers) =>
                     {
-                        // The prize: the certificate-authority list the server actually asks for.
                         acceptableIssuers = issuers ?? Array.Empty<string>();
                         return clientCertificate!;
                     }
@@ -299,14 +296,8 @@ public static class ConnectionDoctor
                 if (clientCertificate is not null)
                     sslOptions.ClientCertificates = new X509CertificateCollection { clientCertificate };
                 RevocationCheck.Apply(sslOptions, options);
-                // --tls-min and --sni, as a real send would use them: a doctor that negotiated
-                // TLS 1.2 under --tls-min 1.3 would report a success the send never has.
                 TlsPolicy.Apply(sslOptions, options);
 
-                // A listener that accepts TCP and never speaks TLS (a wrong port, a middlebox) must
-                // be reported, not waited on forever. The handshake gets 30 s, or --connect-timeout
-                // when that is longer: a fail-fast connect timeout must not also cut short a
-                // smart-card PIN prompt or a revocation fetch inside the handshake.
                 var tlsBudget = options.ConnectTimeout is { } longer && longer > TimeSpan.FromSeconds(30) ? longer : TimeSpan.FromSeconds(30);
                 using var tlsDeadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
                 tlsDeadline.CancelAfter(tlsBudget);
@@ -319,16 +310,18 @@ public static class ConnectionDoctor
                             clock.Elapsed - start, detail,
                             "Usually something is listening that does not speak TLS here (a plain-HTTP port, the wrong service, or a device holding the connection): check the port and scheme. Less often the handshake's own checks (a revocation download, a smart-card PIN) took that long."));
                         ssl.Dispose();
-                        return new DoctorReport(url, stages);
+                        return new DoctorReport(url, stages, serverChainPems);
                     }
-                    presented = ssl.RemoteCertificate is { } rc ? new X509Certificate2(rc) : null;
+                    using var presented = ssl.RemoteCertificate is { } rc ? new X509Certificate2(rc) : null;
                     detail.Add($"protocol: {ssl.SslProtocol}");
                     detail.Add($"cipher: {ssl.NegotiatedCipherSuite}");
                     if (presented is not null)
+                    {
                         detail.Add($"server certificate: {presented.Subject} (issued by {presented.Issuer}, expires {presented.NotAfter:yyyy-MM-dd})");
+                        if (options.Revocation != RevocationMode.None)
+                            detail.AddRange(DescribeRevocation(presented, options.Revocation));
+                    }
                     detail.AddRange(DescribeChain(seenChain));
-                    // The selection callback can be invoked speculatively on some platforms, so
-                    // "did the server take a certificate" is read from the finished handshake.
                     handshakeAskedForCertificate = ssl.LocalCertificate is not null;
                     detail.Add(ssl.LocalCertificate is not null
                         ? $"client certificate presented: {ssl.LocalCertificate.Subject}"
@@ -351,7 +344,7 @@ public static class ConnectionDoctor
                     stages.Add(DoctorStage.Fail("tls", "handshake failed — " + ex.Message, clock.Elapsed - start,
                         detail, AdviseOnHandshake(acceptableIssuers, storeCertificates, clientCertificate)));
                     ssl.Dispose();
-                    return new DoctorReport(url, stages);
+                    return new DoctorReport(url, stages, serverChainPems);
                 }
             }
 
@@ -396,7 +389,60 @@ public static class ConnectionDoctor
             stages.Add(DoctorStage.Fail("connection", ex.Message, TimeSpan.Zero));
         }
 
-        return new DoctorReport(url, stages);
+        return new DoctorReport(url, stages, serverChainPems);
+    }
+
+    private static List<string>? CaptureChainPems(X509Certificate? remoteCert, X509Chain? chain)
+    {
+        var pems = new List<string>();
+        if (chain is not null && chain.ChainElements.Count > 0)
+        {
+            foreach (var elem in chain.ChainElements)
+            {
+                try { pems.Add(elem.Certificate.ExportCertificatePem()); }
+                catch { }
+            }
+        }
+        else if (remoteCert is not null)
+        {
+            try
+            {
+                using var copy = new X509Certificate2(remoteCert);
+                pems.Add(copy.ExportCertificatePem());
+            }
+            catch { }
+        }
+        return pems.Count > 0 ? pems : null;
+    }
+
+    private static IEnumerable<string> DescribeRevocation(X509Certificate2 leaf, RevocationMode mode)
+    {
+        var lines = new List<string>();
+        var sw = Stopwatch.StartNew();
+        try
+        {
+            using var chain = new X509Chain();
+            chain.ChainPolicy.RevocationMode = mode == RevocationMode.Online
+                ? X509RevocationMode.Online
+                : X509RevocationMode.Offline;
+            chain.ChainPolicy.RevocationFlag = X509RevocationFlag.ExcludeRoot;
+            chain.Build(leaf);
+            sw.Stop();
+
+            var revStatuses = chain.ChainStatus
+                .Where(s => s.Status is X509ChainStatusFlags.Revoked
+                         or X509ChainStatusFlags.RevocationStatusUnknown
+                         or X509ChainStatusFlags.OfflineRevocation)
+                .ToList();
+            lines.Add(revStatuses.Count == 0
+                ? $"revocation ({mode.ToString().ToLowerInvariant()}): good ({sw.Elapsed.TotalMilliseconds:F0} ms)"
+                : $"revocation ({mode.ToString().ToLowerInvariant()}): {string.Join("; ", revStatuses.Select(s => s.Status))} ({sw.Elapsed.TotalMilliseconds:F0} ms)");
+        }
+        catch (Exception ex)
+        {
+            lines.Add($"revocation ({mode.ToString().ToLowerInvariant()}): error — {ex.Message}");
+        }
+        return lines;
     }
 
     /// <summary>Which proxy this URL would go through, and why — the same three inputs

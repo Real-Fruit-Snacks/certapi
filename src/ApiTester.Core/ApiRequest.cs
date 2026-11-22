@@ -32,6 +32,10 @@ public sealed record ApiRequest
     public HmacOptions? Hmac { get; init; }
 
     public TimeSpan Timeout { get; init; } = TimeSpan.FromSeconds(100);
+
+    /// <summary>When true (used by <see cref="Bench"/>), the response body is drained through a
+    /// small pooled buffer instead of retained in a per-request <c>byte[]</c>.</summary>
+    internal bool DiscardBody { get; init; }
 }
 
 /// <summary>One part of a multipart/form-data body: a text field (<see cref="Value"/> set) or a

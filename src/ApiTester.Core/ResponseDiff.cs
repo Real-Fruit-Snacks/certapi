@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using System.Text.Unicode;
 
 namespace ApiTester.Core;
 
@@ -151,14 +152,18 @@ public static class ResponseDiff
         byte[] before = baseline.Body ?? Array.Empty<byte>();
         byte[] after = actual.Body ?? Array.Empty<byte>();
 
+        // Byte-identical bodies can never differ under JSON, text, or binary comparison.
+        if (before.AsSpan().SequenceEqual(after)) return Array.Empty<BodyDiff>();
+
         JsonDocument? beforeJson = TryParseJson(before);
         JsonDocument? afterJson = TryParseJson(after);
         try
         {
             if (beforeJson is not null && afterJson is not null)
             {
+                var compiled = CompileIgnorePatterns(options.IgnorePaths);
                 var diffs = new List<BodyDiff>();
-                DiffJson("", beforeJson.RootElement, afterJson.RootElement, options, diffs);
+                DiffJson("", beforeJson.RootElement, afterJson.RootElement, compiled, diffs);
                 return diffs;
             }
         }
@@ -175,12 +180,10 @@ public static class ResponseDiff
 
     /// <summary>Bytes we cannot honestly show as text: the same rule the CLI's JSON envelope uses,
     /// so a body called binary in one place is binary in the other.</summary>
-    private static bool IsBinary(byte[] body)
-    {
-        foreach (byte b in body) if (b == 0) return true;
-        // UTF8.GetString never throws — invalid bytes decode to U+FFFD, which marks the body binary.
-        return Encoding.UTF8.GetString(body).Contains('�');
-    }
+    private static bool IsBinary(byte[] body) =>
+        body.AsSpan().IndexOf((byte)0) >= 0 ||
+        !Utf8.IsValid(body) ||
+        body.AsSpan().IndexOf("\uFFFD"u8) >= 0;
 
     /// <summary>Size and equality only. A caller who needs to know *where* two PDFs differ needs a
     /// different tool, and inventing a line diff for them would only mislead.</summary>
@@ -232,24 +235,53 @@ public static class ResponseDiff
         return line;
     }
 
-    /// <summary>Split on '\n' only, so CRLF and LF bodies count the same; an empty body is 0 lines
+    /// <summary>Count '\n' only, so CRLF and LF bodies count the same; an empty body is 0 lines
     /// rather than the 1 that a naive split would claim.</summary>
-    private static int LineCount(string text) => text.Length == 0 ? 0 : text.Split('\n').Length;
+    private static int LineCount(string text) => text.Length == 0 ? 0 : text.AsSpan().Count('\n') + 1;
 
     /// <summary>Parse a body as JSON, or null when it is empty or isn't JSON. An empty body is not
     /// JSON — comparing "nothing" structurally would invent a difference that isn't there.</summary>
     private static JsonDocument? TryParseJson(byte[] body)
     {
         if (body.Length == 0) return null;
-        try { return JsonDocument.Parse(Utf8Json.Body(body)); }
+        var mem = Utf8Json.Body(body);
+        var span = mem.Span;
+        int i = 0;
+        while (i < span.Length && span[i] is (byte)' ' or (byte)'\t' or (byte)'\r' or (byte)'\n') i++;
+        if (i >= span.Length || span[i] is not ((byte)'{' or (byte)'[' or (byte)'"' or (byte)'-'
+            or (>= (byte)'0' and <= (byte)'9') or (byte)'t' or (byte)'f' or (byte)'n'))
+            return null;
+        try { return JsonDocument.Parse(mem); }
         catch (JsonException) { return null; }
+    }
+
+    private readonly record struct IgnoreSegment(string Text, bool Prefix);
+
+    private static IgnoreSegment[][] CompileIgnorePatterns(IReadOnlyList<string>? patterns)
+    {
+        if (patterns is null || patterns.Count == 0) return Array.Empty<IgnoreSegment[]>();
+        var list = new List<IgnoreSegment[]>(patterns.Count);
+        foreach (var raw in patterns)
+        {
+            if (string.IsNullOrWhiteSpace(raw)) continue;
+            var segs = Segments(raw.Trim());
+            if (segs.Length == 0) continue;
+            var compiled = new IgnoreSegment[segs.Length];
+            for (int i = 0; i < segs.Length; i++)
+            {
+                string s = segs[i];
+                compiled[i] = s.EndsWith('*') ? new IgnoreSegment(s[..^1], true) : new IgnoreSegment(s, false);
+            }
+            list.Add(compiled);
+        }
+        return list.Count == 0 ? Array.Empty<IgnoreSegment[]>() : list.ToArray();
     }
 
     /// <summary>Walk both trees together, emitting a diff at each leaf path that differs.</summary>
     private static void DiffJson(string path, JsonElement before, JsonElement after,
-        DiffOptions options, List<BodyDiff> into)
+        IgnoreSegment[][] ignorePatterns, List<BodyDiff> into)
     {
-        if (IsIgnored(path, options.IgnorePaths)) return;
+        if (IsIgnored(path, ignorePatterns)) return;
 
         var beforeKind = ComparableKind(before);
         var afterKind = ComparableKind(after);
@@ -264,10 +296,10 @@ public static class ResponseDiff
         switch (beforeKind)
         {
             case JsonValueKind.Object:
-                DiffObjects(path, before, after, options, into);
+                DiffObjects(path, before, after, ignorePatterns, into);
                 break;
             case JsonValueKind.Array:
-                DiffArrays(path, before, after, options, into);
+                DiffArrays(path, before, after, ignorePatterns, into);
                 break;
             default:
                 // Raw text, so 1 and 1.0 count as changed: honest about what the server sent.
@@ -278,46 +310,55 @@ public static class ResponseDiff
     }
 
     private static void DiffObjects(string path, JsonElement before, JsonElement after,
-        DiffOptions options, List<BodyDiff> into)
+        IgnoreSegment[][] ignorePatterns, List<BodyDiff> into)
     {
         var beforeProps = Properties(before);
         var afterProps = Properties(after);
 
         // Baseline order first, then anything new from the actual response: property order in JSON
         // carries no meaning, but a stable diff order does.
-        var names = new List<string>(beforeProps.Keys);
-        foreach (var name in afterProps.Keys) if (!beforeProps.ContainsKey(name)) names.Add(name);
-
-        foreach (var name in names)
+        foreach (var pair in beforeProps)
         {
-            string child = path.Length == 0 ? name : $"{path}.{name}";
-            bool inBefore = beforeProps.TryGetValue(name, out var b);
-            bool inAfter = afterProps.TryGetValue(name, out var a);
-            if (inBefore && inAfter) DiffJson(child, b, a, options, into);
-            else if (inBefore) Add(into, child, DiffKind.Removed, Render(b), null, options);
-            else Add(into, child, DiffKind.Added, null, Render(a), options);
+            string child = path.Length == 0 ? pair.Key : $"{path}.{pair.Key}";
+            if (afterProps.TryGetValue(pair.Key, out var a))
+                DiffJson(child, pair.Value, a, ignorePatterns, into);
+            else
+                Add(into, child, DiffKind.Removed, Render(pair.Value), null, ignorePatterns);
+        }
+        foreach (var pair in afterProps)
+        {
+            if (beforeProps.ContainsKey(pair.Key)) continue;
+            string child = path.Length == 0 ? pair.Key : $"{path}.{pair.Key}";
+            Add(into, child, DiffKind.Added, null, Render(pair.Value), ignorePatterns);
         }
     }
 
     private static void DiffArrays(string path, JsonElement before, JsonElement after,
-        DiffOptions options, List<BodyDiff> into)
+        IgnoreSegment[][] ignorePatterns, List<BodyDiff> into)
     {
-        var beforeItems = before.EnumerateArray().ToList();
-        var afterItems = after.EnumerateArray().ToList();
-        int shared = Math.Min(beforeItems.Count, afterItems.Count);
-
-        for (int i = 0; i < shared; i++)
-            DiffJson($"{path}[{i}]", beforeItems[i], afterItems[i], options, into);
-        for (int i = shared; i < afterItems.Count; i++)
-            Add(into, $"{path}[{i}]", DiffKind.Added, null, Render(afterItems[i]), options);
-        for (int i = shared; i < beforeItems.Count; i++)
-            Add(into, $"{path}[{i}]", DiffKind.Removed, Render(beforeItems[i]), null, options);
+        var be = before.EnumerateArray();
+        var ae = after.EnumerateArray();
+        int i = 0;
+        while (true)
+        {
+            bool hasB = be.MoveNext();
+            bool hasA = ae.MoveNext();
+            if (hasB && hasA)
+                DiffJson($"{path}[{i}]", be.Current, ae.Current, ignorePatterns, into);
+            else if (hasA)
+                Add(into, $"{path}[{i}]", DiffKind.Added, null, Render(ae.Current), ignorePatterns);
+            else if (hasB)
+                Add(into, $"{path}[{i}]", DiffKind.Removed, Render(be.Current), null, ignorePatterns);
+            else
+                break;
+            i++;
+        }
     }
 
     private static void Add(List<BodyDiff> into, string path, DiffKind kind,
-        string? before, string? after, DiffOptions options)
+        string? before, string? after, IgnoreSegment[][] ignorePatterns)
     {
-        if (IsIgnored(path, options.IgnorePaths)) return;
+        if (IsIgnored(path, ignorePatterns)) return;
         into.Add(new BodyDiff(path, kind, before, after));
     }
 
@@ -351,24 +392,22 @@ public static class ResponseDiff
     /// or is a prefix written with a trailing <c>*</c>. So <c>data</c> suppresses everything under
     /// data, <c>data.token*</c> suppresses <c>data.tokenId</c> but not <c>data.other</c>, and
     /// <c>items[0].id</c> suppresses exactly that one path.</summary>
-    private static bool IsIgnored(string path, IReadOnlyList<string>? patterns)
+    private static bool IsIgnored(string path, IgnoreSegment[][] patterns)
     {
-        if (patterns is null || patterns.Count == 0 || path.Length == 0) return false;
+        if (patterns.Length == 0 || path.Length == 0) return false;
         var candidate = Segments(path);
 
-        foreach (var pattern in patterns)
+        foreach (var wanted in patterns)
         {
-            if (string.IsNullOrWhiteSpace(pattern)) continue;
-            var wanted = Segments(pattern.Trim());
-            if (wanted.Length == 0 || wanted.Length > candidate.Length) continue;
+            if (wanted.Length > candidate.Length) continue;
 
             bool matched = true;
             for (int i = 0; i < wanted.Length; i++)
             {
-                string segment = wanted[i];
-                bool ok = segment.EndsWith('*')
-                    ? candidate[i].StartsWith(segment[..^1], StringComparison.Ordinal)
-                    : string.Equals(candidate[i], segment, StringComparison.Ordinal);
+                var segment = wanted[i];
+                bool ok = segment.Prefix
+                    ? candidate[i].StartsWith(segment.Text, StringComparison.Ordinal)
+                    : string.Equals(candidate[i], segment.Text, StringComparison.Ordinal);
                 if (!ok) { matched = false; break; }
             }
             if (matched) return true;

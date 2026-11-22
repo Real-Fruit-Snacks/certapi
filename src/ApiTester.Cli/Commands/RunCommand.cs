@@ -64,6 +64,10 @@ public static class RunCommand
                                   history a trend needs is never overwritten
           --md-include-secrets    Keep credential-looking query values in the report (redacted by
                                   default, because a vault syncs)
+          --fail-fast             Stop the run on the first failing request (remaining requests marked SKIP)
+          --parallel <n>          Run independent requests concurrently with up to <n> workers (not with --chain/--cookies)
+          --filter <glob>         Keep only saved requests whose path matches this glob (* and ?, case-insensitive)
+          --repeat <n>            Repeat the suite <n> times (default 1)
 
         Chains:
           --chain <name>          Run a saved chain: its requests, in the order the chain names them,
@@ -171,6 +175,10 @@ public static class RunCommand
         string? mdFile = args.Value("--md");
         string? mdVault = args.Value("--md-vault");
         string? junitFile = args.Value("--junit");
+        bool failFast = args.Flag("--fail-fast");
+        string? parallelRaw = args.Value("--parallel");
+        string? filterGlob = args.Value("--filter");
+        string? repeatRaw = args.Value("--repeat");
         string? corsOriginRaw = args.Value("--origin");
         bool corsCredentials = args.Flag("--cors-credentials");
         if (corsCredentials && corsOriginRaw is null) throw new CliUsageException("--cors-credentials needs --origin <origin>.");
@@ -180,6 +188,14 @@ public static class RunCommand
             throw new CliUsageException("--md and --md-vault both name where the report goes; pick one.");
         if (mdIncludeSecrets && mdFile is null && mdVault is null)
             throw new CliUsageException("--md-include-secrets only applies with --md or --md-vault.");
+        int parallel = 1;
+        if (parallelRaw is not null && (!int.TryParse(parallelRaw, out parallel) || parallel <= 0))
+            throw new CliUsageException($"--parallel expects a positive integer, got '{parallelRaw}'.");
+        int repeat = 1;
+        if (repeatRaw is not null && (!int.TryParse(repeatRaw, out repeat) || repeat <= 0))
+            throw new CliUsageException($"--repeat expects a positive integer, got '{repeatRaw}'.");
+        if (parallel > 1 && (chainName is not null || useCookies))
+            throw new CliUsageException("--parallel cannot be combined with --chain or --cookies (those are sequential).");
         bool harIncludeSecrets = args.Flag("--har-include-secrets");
         string? diffHar = args.Value("--diff-har");
         var diffIgnorePaths = args.Values("--diff-ignore");
@@ -233,6 +249,10 @@ public static class RunCommand
             if (mdFile is not null) unused.Add("--md");
             if (mdVault is not null) unused.Add("--md-vault");
             if (junitFile is not null) unused.Add("--junit");
+            if (failFast) unused.Add("--fail-fast");
+            if (parallelRaw is not null) unused.Add("--parallel");
+            if (filterGlob is not null) unused.Add("--filter");
+            if (repeatRaw is not null) unused.Add("--repeat");
             if (corsOrigin is not null) unused.Add("--origin");
             if (useCookies) unused.Add(cookieJarPath is not null ? "--cookie-jar" : "--cookies");
             if (dataFile is not null) unused.Add("--data");
@@ -298,6 +318,13 @@ public static class RunCommand
         var targets = chain is null
             ? CliWorkspace.ResolveTargets(state, positionals.FirstOrDefault(), all)
             : new List<(string Path, CollectionNode Node)>();
+        if (chain is null && filterGlob is not null)
+        {
+            var globRegex = CompileGlob(filterGlob);
+            targets = targets.Where(t => globRegex.IsMatch(t.Path)).ToList();
+            if (targets.Count == 0)
+                throw new CliDataException($"No saved requests matched --filter '{filterGlob}'.");
+        }
 
         // Data-driven runs: one iteration per dataset row, its columns overriding the variables.
         IReadOnlyList<IReadOnlyDictionary<string, string>?> rows;
@@ -369,12 +396,13 @@ public static class RunCommand
         // output that just stops leaves the reader guessing whether the rest passed.
         var skippedSteps = new List<string>();
         var clock = Stopwatch.StartNew();
+        var certCache = new System.Collections.Concurrent.ConcurrentDictionary<string, System.Security.Cryptography.X509Certificates.X509Certificate2?>(StringComparer.OrdinalIgnoreCase);
         var runContext = new RequestRunContext
         {
             State = state,
             Client = services.Client,
             Predicates = predicates,
-            FindCertificate = thumbprint => services.FindCertificate(thumbprint),
+            FindCertificate = thumbprint => certCache.GetOrAdd(thumbprint, services.FindCertificate),
             NoAutoToken = noAutoToken,
             StrictVars = strictVars,
             Record = record,
@@ -398,27 +426,91 @@ public static class RunCommand
 
         if (chain is not null)
         {
-            var vars = new RunVariables(() => BuildIterVars(null));
-            // No progress sink: this front end renders after the run, and System.Progress<T> would
-            // hand each report to the thread pool, which is exactly wrong for a list read back
-            // synchronously three lines later.
-            var chainResult = ChainRunner
-                .RunAsync(chainSteps, runContext, vars, progress: null, services.Cancel)
-                .GetAwaiter().GetResult();
-            foreach (var outcome in chainResult.Steps) Collect(outcome);
-            skippedSteps.AddRange(chainResult.SkippedLabels);
+            for (int iter = 1; iter <= repeat; iter++)
+            {
+                var vars = new RunVariables(() => BuildIterVars(null));
+                var chainResult = ChainRunner
+                    .RunAsync(chainSteps, runContext, vars, progress: null, services.Cancel)
+                    .GetAwaiter().GetResult();
+                foreach (var outcome in chainResult.Steps) Collect(outcome);
+                skippedSteps.AddRange(chainResult.SkippedLabels);
+                if (failFast && chainResult.Steps.Any(s => !s.Passed)) break;
+            }
+        }
+        else if (parallel > 1)
+        {
+            var work = new List<(string Label, CollectionNode Node, IReadOnlyDictionary<string, string>? Row)>();
+            for (int iter = 1; iter <= repeat; iter++)
+            {
+                string iterPrefix = repeat > 1 ? $"[run {iter}] " : "";
+                int rowIndex = 0;
+                foreach (var row in rows)
+                {
+                    rowIndex++;
+                    string rowPrefix = dataFile is null ? "" : $"[row {rowIndex}] ";
+                    foreach (var (path, node) in targets)
+                        work.Add((iterPrefix + rowPrefix + path, node, row));
+                }
+            }
+            var slotOutcomes = new RequestOutcome?[work.Count];
+            var slotSkipped = new bool[work.Count];
+            int failedFlag = 0;
+            int nextIdx = -1;
+            int workers = Math.Min(parallel, work.Count);
+            var tasks = new Task[workers];
+            for (int w = 0; w < workers; w++)
+            {
+                tasks[w] = Task.Run(async () =>
+                {
+                    while (!services.Cancel.IsCancellationRequested)
+                    {
+                        int idx = Interlocked.Increment(ref nextIdx);
+                        if (idx >= work.Count) return;
+                        if (failFast && Volatile.Read(ref failedFlag) != 0)
+                        {
+                            slotSkipped[idx] = true;
+                            continue;
+                        }
+                        var item = work[idx];
+                        var vars = new RunVariables(() => BuildIterVars(item.Row));
+                        var outcome = await RequestRunner.RunAsync(item.Label, item.Node, runContext, vars, services.Cancel);
+                        slotOutcomes[idx] = outcome;
+                        if (!outcome.Passed) Volatile.Write(ref failedFlag, 1);
+                    }
+                }, CancellationToken.None);
+            }
+            Task.WhenAll(tasks).GetAwaiter().GetResult();
+            for (int i = 0; i < work.Count; i++)
+            {
+                if (slotOutcomes[i] is { } o) Collect(o);
+                else if (slotSkipped[i]) skippedSteps.Add(work[i].Label);
+            }
         }
         else
         {
-            int rowIndex = 0;
-            foreach (var row in rows)
+            bool stopped = false;
+            for (int iter = 1; iter <= repeat; iter++)
             {
-                rowIndex++;
-                var vars = new RunVariables(() => BuildIterVars(row));
-                string label = dataFile is null ? "" : $"[row {rowIndex}] ";
-                foreach (var (path, node) in targets)
-                    Collect(RequestRunner.RunAsync(label + path, node, runContext, vars, services.Cancel)
-                                         .GetAwaiter().GetResult());
+                string iterPrefix = repeat > 1 ? $"[run {iter}] " : "";
+                int rowIndex = 0;
+                foreach (var row in rows)
+                {
+                    rowIndex++;
+                    var vars = new RunVariables(() => BuildIterVars(row));
+                    string label = iterPrefix + (dataFile is null ? "" : $"[row {rowIndex}] ");
+                    foreach (var (path, node) in targets)
+                    {
+                        if (stopped)
+                        {
+                            skippedSteps.Add(label + path);
+                            continue;
+                        }
+                        var outcome = RequestRunner.RunAsync(label + path, node, runContext, vars, services.Cancel)
+                                                   .GetAwaiter().GetResult();
+                        Collect(outcome);
+                        if (failFast && !outcome.Passed) stopped = true;
+                    }
+                }
             }
         }
         clock.Stop();
@@ -448,8 +540,8 @@ public static class RunCommand
             stderr.WriteLine($"wrote HAR to {harPath} ({harEntries.Count} entr{(harEntries.Count == 1 ? "y" : "ies")})");
         }
 
-        int passed = results.Count(r => Passed(r.Model, r.Response));
-        int failed = results.Count - passed;
+        int passed = outcomes.Count(o => o.Passed);
+        int failed = outcomes.Count - passed;
 
         if (json)
         {
@@ -457,23 +549,23 @@ public static class RunCommand
             {
                 w.WriteStartObject();
                 w.WriteStartArray("results");
-                foreach (var r in results)
+                foreach (var o in outcomes)
                 {
                     w.WriteStartObject();
-                    w.WriteString("path", r.Path);
-                    w.WriteString("method", r.Model.Method);
+                    w.WriteString("path", o.Label);
+                    w.WriteString("method", o.Request.Method);
                     // The URL actually sent (resolver already applied), not recomputed from the model —
                     // recomputing here would report "%7B%7Btok%7D%7D" for a request that actually sent
                     // the resolved value.
-                    w.WriteString("url", r.Url);
-                    w.NumberOrNull("status", r.Response.StatusCode);
-                    w.WriteNumber("elapsedMs", Math.Round(r.Response.Elapsed.TotalMilliseconds));
-                    w.WriteNumber("sizeBytes", r.Response.Body.LongLength);
-                    w.WriteBoolean("passed", Passed(r.Model, r.Response));
-                    if (r.Model.Assertions.Any(a => a.Enabled))
+                    w.WriteString("url", o.Url);
+                    w.NumberOrNull("status", o.Response.StatusCode);
+                    w.WriteNumber("elapsedMs", Math.Round(o.Response.Elapsed.TotalMilliseconds));
+                    w.WriteNumber("sizeBytes", o.Response.Body.LongLength);
+                    w.WriteBoolean("passed", o.Passed);
+                    if (o.Assertions is { Count: > 0 } assertions)
                     {
                         w.WriteStartArray("assertions");
-                        foreach (var a in AssertionEvaluator.Evaluate(r.Model.Assertions, r.Response))
+                        foreach (var a in assertions)
                         {
                             w.WriteStartObject();
                             w.WriteString("Description", a.Description);
@@ -484,12 +576,12 @@ public static class RunCommand
                         w.WriteEndArray();
                     }
                     else w.WriteNull("assertions");
-                    w.StringOrNull("error", r.Response.Error?.Message);
+                    w.StringOrNull("error", o.Response.Error?.Message);
                     w.WriteEndObject();
                 }
                 w.WriteEndArray();
                 w.WriteStartObject("summary");
-                w.WriteNumber("total", results.Count);
+                w.WriteNumber("total", outcomes.Count);
                 w.WriteNumber("passed", passed);
                 w.WriteNumber("failed", failed);
                 w.WriteNumber("elapsedMs", clock.ElapsedMilliseconds);
@@ -502,20 +594,21 @@ public static class RunCommand
         }
         else
         {
-            foreach (var (path, model, _, r) in results)
+            foreach (var o in outcomes)
             {
-                string verdict = Passed(model, r) ? "PASS" : "FAIL";
+                var r = o.Response;
+                string verdict = o.Passed ? "PASS" : "FAIL";
                 string status = r.Error is not null ? "ERR" : r.StatusCode?.ToString() ?? "—";
-                int assertCount = model.Assertions.Count(a => a.Enabled);
+                int assertCount = o.Assertions?.Count ?? 0;
                 string detail = r.Error is not null ? $"  ({r.Error.Message})"
                     : assertCount > 0 ? $"  ({assertCount} assertion{(assertCount == 1 ? "" : "s")})" : "";
                 stdout.WriteLine(
-                    $"{verdict}  {status,4}  {r.Elapsed.TotalMilliseconds,6:F0} ms  {OutputText.Size(r.Body.LongLength),9}  {path}{detail}");
+                    $"{verdict}  {status,4}  {r.Elapsed.TotalMilliseconds,6:F0} ms  {OutputText.Size(r.Body.LongLength),9}  {o.Label}{detail}");
             }
             // Same columns as PASS/FAIL, with an em dash where there is no measurement to report.
             foreach (var label in skippedSteps)
                 stdout.WriteLine($"SKIP  {"—",4}  {"—",6} ms  {"—",9}  {label}  (an earlier step failed)");
-            stdout.WriteLine($"----\n{results.Count} request{(results.Count == 1 ? "" : "s")} · {passed} passed · {failed} failed" +
+            stdout.WriteLine($"----\n{outcomes.Count} request{(outcomes.Count == 1 ? "" : "s")} · {passed} passed · {failed} failed" +
                              (skippedSteps.Count > 0 ? $" · {skippedSteps.Count} skipped" : "") +
                              $" · {clock.Elapsed.TotalSeconds:F1} s");
         }
@@ -541,14 +634,26 @@ public static class RunCommand
         return failed == 0 ? ExitCodes.Ok : ExitCodes.Failure;
     }
 
+    private static System.Text.RegularExpressions.Regex CompileGlob(string glob)
+    {
+        var sb = new System.Text.StringBuilder("^");
+        foreach (char c in glob)
+        {
+            if (c == '*') sb.Append(".*");
+            else if (c == '?') sb.Append('.');
+            else sb.Append(System.Text.RegularExpressions.Regex.Escape(c.ToString()));
+        }
+        sb.Append('$');
+        return new System.Text.RegularExpressions.Regex(sb.ToString(),
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.Compiled);
+    }
+
     private static RunReport BuildReport(List<RequestOutcome> outcomes, List<string> skipped, string? chainName, TimeSpan elapsed) =>
         new(chainName,
             outcomes.Select(o => new RunReportRow(
                 o.Label, o.Request.Method, o.Url, o.Response.StatusCode, o.Response.Elapsed,
                 o.Response.Body.LongLength, o.Passed,
-                o.Request.Assertions.Any(a => a.Enabled)
-                    ? AssertionEvaluator.Evaluate(o.Request.Assertions, o.Response)
-                    : Array.Empty<AssertionResult>(),
+                o.Assertions ?? Array.Empty<AssertionResult>(),
                 o.Response.Error?.Message,
                 o.Captures)).ToList(),
             skipped, elapsed);

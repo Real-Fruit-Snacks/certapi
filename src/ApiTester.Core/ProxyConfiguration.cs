@@ -143,6 +143,8 @@ public static class ProxyConfiguration
         /// <summary>How many times the system proxy was actually asked.</summary>
         public long Asked => Interlocked.Read(ref _asked);
 
+        internal IWebProxy Inner => _inner;
+
         /// <summary>The gateway's own instance, or null when the system proxy needs none: it is not
         /// Windows' (an HTTP_PROXY variable, another platform), or Windows' settings name a manual
         /// proxy or none, which .NET answers without WinHTTP. Read as .NET reads them, through

@@ -149,11 +149,15 @@ public static class SendCommand
         Output:
           -o, --output <file>     Write the body to a file instead of stdout (-o - writes all of
                                   it to stdout, even to a console)
+          -D, --dump-header <f>   Write response status line and headers to a file
           -O, --remote-name       Write it to a file named as the URL's last path segment
           -i, --include           Print status line and headers before the body
           --pretty                Pretty-print the body (JSON/XML; hex for binary)
+          --select <path>         Extract a JSON value by path (e.g. data.items[0].id); exits 1 if missing
+          --raw                   With --select: print JSON strings without surrounding quotes
           --json                  Print a JSON result envelope instead of the raw body
           -f, --fail              Exit 1 when the HTTP status is 400 or higher
+          --max-size <bytes>      Fail (exit 1) when the response body exceeds this many bytes
           -q, -s, --quiet         No metadata line on stderr
           -S, --show-error, -#, --progress-bar
                                   Accepted for curl habits; errors are always shown, and no
@@ -171,6 +175,12 @@ public static class SendCommand
                                   file ends. A server that ignores ranges gets the file rewritten
           --timing                Where the time went: DNS, connect, TLS, wait for the server,
                                   first byte, download, total (stderr; in the envelope with --json)
+          --dry-run               Resolve variables, profile, cert, headers, and URL and print the
+                                  request without sending it
+          --until <expr>          Poll until this assertion passes (same syntax as --assert)
+          --interval <seconds>    Delay between --until or --watch attempts (default 2)
+          --max-wait <seconds>    Max total wait time for --until before failing (default 60)
+          --watch <seconds>       Repeat the request every <seconds> seconds until Ctrl+C
           --har <file>            Capture the request/response (and every redirect hop) as a
                                   HAR file, written once when the command finishes
           --har-include-secrets   Keep credential header values in the captured HAR (Authorization,
@@ -340,11 +350,20 @@ public static class SendCommand
         string? workspace = args.Value("--workspace") ?? services.Profile?.Workspace;
         bool strictVars = args.Flag("--strict-vars");
         string? outFile = args.Value("-o", "--output");
+        string? dumpHeaderFile = args.Value("-D", "--dump-header");
         bool include = args.Flag("--include") || head;
         bool pretty = args.Flag("--pretty");
+        string? selectPath = args.Value("--select");
+        bool rawSelect = args.Flag("--raw");
         bool json = args.Flag("--json");
         bool fail = args.Flag("--fail");
+        string? maxSizeRaw = args.Value("--max-size");
         bool quiet = args.Flag("-q", "--quiet");
+        bool dryRun = args.Flag("--dry-run");
+        string? untilExpr = args.Value("--until");
+        string? intervalRaw = args.Value("--interval");
+        string? maxWaitRaw = args.Value("--max-wait");
+        string? watchRaw = args.Value("--watch");
         // curl's -S/--show-error (errors are always shown here) and -#/--progress-bar (there is no
         // progress meter): accepted so a pasted command runs, and change nothing.
         args.Flag("-S", "--show-error");
@@ -455,6 +474,45 @@ public static class SendCommand
             throw new CliUsageException("--graphql cannot be combined with -d/--data or -F/--form.");
         if (bearer is not null && basic is not null)
             throw new CliUsageException("--bearer and --basic are mutually exclusive.");
+        if (rawSelect && selectPath is null)
+            throw new CliUsageException("--raw only applies together with --select <path>.");
+        if (untilExpr is not null && watchRaw is not null)
+            throw new CliUsageException("--until and --watch are mutually exclusive.");
+        if ((intervalRaw is not null || maxWaitRaw is not null) && untilExpr is null && watchRaw is null)
+            throw new CliUsageException("--interval and --max-wait only apply with --until or --watch.");
+        long? maxSizeBytes = null;
+        if (maxSizeRaw is not null)
+        {
+            if (!long.TryParse(maxSizeRaw, out long ms) || ms < 0)
+                throw new CliUsageException($"--max-size expects a non-negative integer number of bytes, got '{maxSizeRaw}'.");
+            maxSizeBytes = ms;
+        }
+        AssertionRule? untilRule = null;
+        if (untilExpr is not null)
+        {
+            try { untilRule = AssertionParser.Parse(untilExpr); }
+            catch (FormatException ex) { throw new CliUsageException($"--until: {ex.Message}"); }
+        }
+        double pollIntervalSec = 2.0;
+        if (watchRaw is not null)
+        {
+            if (!double.TryParse(watchRaw, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double ws) || ws <= 0)
+                throw new CliUsageException($"--watch expects a positive number of seconds, got '{watchRaw}'.");
+            pollIntervalSec = ws;
+        }
+        if (intervalRaw is not null)
+        {
+            if (!double.TryParse(intervalRaw, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double iv) || iv <= 0)
+                throw new CliUsageException($"--interval expects a positive number of seconds, got '{intervalRaw}'.");
+            pollIntervalSec = iv;
+        }
+        double maxWaitSec = 60.0;
+        if (maxWaitRaw is not null)
+        {
+            if (!double.TryParse(maxWaitRaw, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double mw) || mw <= 0)
+                throw new CliUsageException($"--max-wait expects a positive number of seconds, got '{maxWaitRaw}'.");
+            maxWaitSec = mw;
+        }
         bool anyHmacOption = hmacSign is not null || hmacHeader is not null || hmacSet.Count > 0 || hmacAlg is not null ||
             hmacEncoding is not null || hmacKeyId is not null || hmacSecretEncoding is not null || httpSignature is not null || hmacComponents is not null;
         if (anyHmacOption && hmacSecret is null)
@@ -546,10 +604,17 @@ public static class SendCommand
             throw new CliDataException($"Workspace file not found: {workspace}");
 
         // ---- variables ----
-        // The state is always loaded now: even without --env, the live state may hold a
-        // captured session token for this URL's origin. A --workspace that doesn't exist yet
-        // is fine when --capture is present — it is created fresh on save.
-        var state = LoadWorkspaceOrEmpty(workspace, services, stderr);
+        // Skip loading/decrypting the workspace when nothing in this send reads or writes it.
+        // When we only read tokens/cookies/trust/environments (no capture rules and no known-good
+        // diff), use LoadLightFrom so large History/Collections bodies skip DPAPI decryption.
+        bool needsWorkspace = workspace is not null || envName is not null || captureRules.Count > 0 ||
+            !noAutoToken || !insecure ||
+            string.Equals(diffBaseline, "known-good", StringComparison.OrdinalIgnoreCase);
+        bool lightLoad = needsWorkspace && captureRules.Count == 0 &&
+            !string.Equals(diffBaseline, "known-good", StringComparison.OrdinalIgnoreCase);
+        var state = !needsWorkspace ? new AppState()
+                  : lightLoad ? LoadWorkspaceLightOrEmpty(workspace, services, stderr)
+                  : LoadWorkspaceOrEmpty(workspace, services, stderr);
         var vars = CliWorkspace.BuildVars(state, envName, varOverrides);
         var unresolved = new List<string>();
         string R(string s)
@@ -750,6 +815,15 @@ public static class SendCommand
 
         string harVersion = HarCreatorVersion();
 
+        // --dry-run: print the fully resolved request without touching the network.
+        if (dryRun)
+            return PrintDryRun(request, cert, transport, json, stdout);
+
+        // --watch: repeat the request every N seconds until Ctrl+C.
+        if (watchRaw is not null)
+            return WatchLoop(request, cert, transport, cookieJar, trustCert, TimeSpan.FromSeconds(pollIntervalSec),
+                selectPath, rawSelect, stdout, stderr, services);
+
         // --all-ips is a comparison run, not a single send: it owns stdout from here on, and the
         // single-response output path below (capture, token capture, envelope) does not apply.
         if (allIps)
@@ -782,13 +856,55 @@ public static class SendCommand
 
         PhaseTimings? phases;
         ApiResponse response;
-        using (var timer = timing || writeOutTemplate?.NeedsTimes == true ? new PhaseTimer() : null)
+        bool untilTimedOut = false;
+        if (untilRule is not null)
         {
-            response = services.Client.SendAsync(request, cert,
-                transport: transport,
-                trustServerCertificate: trustCert,
-                cookies: cookieJar, wireLog: wireLog, cancellationToken: services.Cancel).GetAwaiter().GetResult();
-            phases = timer?.Result();
+            var waitClock = System.Diagnostics.Stopwatch.StartNew();
+            var deadline = TimeSpan.FromSeconds(maxWaitSec);
+            var interval = TimeSpan.FromSeconds(pollIntervalSec);
+            int attempt = 0;
+            while (true)
+            {
+                attempt++;
+                using (var timer = timing || writeOutTemplate?.NeedsTimes == true ? new PhaseTimer() : null)
+                {
+                    response = services.Client.SendAsync(request, cert,
+                        transport: transport,
+                        trustServerCertificate: trustCert,
+                        cookies: cookieJar, wireLog: wireLog, cancellationToken: services.Cancel).GetAwaiter().GetResult();
+                    phases = timer?.Result();
+                }
+                var check = AssertionEvaluator.Evaluate(new[] { untilRule }, response);
+                if (check[0].Passed)
+                {
+                    if (!quiet && attempt > 1)
+                        stderr.WriteLine($"note: --until condition matched on attempt {attempt} ({waitClock.Elapsed.TotalSeconds:0.0} s)");
+                    break;
+                }
+                if (services.Cancel.IsCancellationRequested || waitClock.Elapsed >= deadline)
+                {
+                    untilTimedOut = true;
+                    stderr.WriteLine($"--until condition did not match after {attempt} attempt(s) ({waitClock.Elapsed.TotalSeconds:0.0} s): {check[0].Description} (last actual: {check[0].Actual ?? "<none>"})");
+                    break;
+                }
+                if (!quiet)
+                    stderr.WriteLine($"waiting (attempt {attempt}, {OutputText.MetaLine(response)})…");
+                var remaining = deadline - waitClock.Elapsed;
+                var delay = remaining < interval ? remaining : interval;
+                try { Task.Delay(delay, services.Cancel).GetAwaiter().GetResult(); }
+                catch (OperationCanceledException) { untilTimedOut = true; break; }
+            }
+        }
+        else
+        {
+            using (var timer = timing || writeOutTemplate?.NeedsTimes == true ? new PhaseTimer() : null)
+            {
+                response = services.Client.SendAsync(request, cert,
+                    transport: transport,
+                    trustServerCertificate: trustCert,
+                    cookies: cookieJar, wireLog: wireLog, cancellationToken: services.Cancel).GetAwaiter().GetResult();
+                phases = timer?.Result();
+            }
         }
 
         if (maxFilesize is { } limit && response.Error is null && (response.BodyTruncated || response.Body.LongLength > limit))
@@ -897,14 +1013,46 @@ public static class SendCommand
             services.Log.Debug($"token captured for {captured.Origin} ({captured.Source}): {TokenService.Mask(captured.Token)}");
             stateDirty = true;
         }
-        if (stateDirty) SaveState(state, workspace, services, stderr);
+        if (stateDirty)
+        {
+            if (lightLoad)
+            {
+                // Reload the full workspace before writing so History/Collections secrets are preserved intact.
+                var full = LoadWorkspaceOrEmpty(workspace, services, stderr);
+                TokenService.Capture(full, response.FinalUrl(url), response.Body, response.ContentType, response.Headers);
+                SaveState(full, workspace, services, stderr);
+            }
+            else SaveState(state, workspace, services, stderr);
+        }
+
+        if (dumpHeaderFile is not null && response.Error is null)
+        {
+            var hsb = new StringBuilder();
+            hsb.AppendLine($"{response.StatusCode} {response.ReasonPhrase}".Trim());
+            foreach (var h in response.Headers) hsb.Append(h.Key).Append(": ").AppendLine(h.Value);
+            File.WriteAllText(dumpHeaderFile, hsb.ToString(), new UTF8Encoding(false));
+        }
 
         // ---- output ----
         // "-o -" is stdout, asked for by name: every byte, console or not. Without -o, a console
         // gets what it can draw (ConsoleBody); a file or a pipe gets every byte.
         string? bodyFile = outFile == "-" ? null : outFile;
         bool consoleLimits = services.StdoutIsTerminal && outFile is null;
-        if (json)
+        bool selectMissed = false;
+        if (selectPath is not null && response.Error is null)
+        {
+            if (TrySelectJsonPath(response.Body, selectPath, rawSelect, out string selected, out string? selErr))
+            {
+                if (bodyFile is not null) File.WriteAllText(bodyFile, selected + "\n", new UTF8Encoding(false));
+                else stdout.WriteLine(selected);
+            }
+            else
+            {
+                selectMissed = true;
+                stderr.WriteLine($"--select '{selectPath}': {selErr}");
+            }
+        }
+        else if (json)
         {
             if (bodyFile is not null && response.Error is null) File.WriteAllBytes(bodyFile, response.Body);
             stdout.WriteLine(BuildEnvelope(response, includeBody: bodyFile is null, diff: diff, timing: timing ? phases : null));
@@ -919,7 +1067,12 @@ public static class SendCommand
             }
             if (bodyFile is not null && continueAt is not null)
                 WriteResumed(bodyFile, resumeFrom, response, quiet, stderr);
-            else if (bodyFile is not null) File.WriteAllBytes(bodyFile, response.Body);
+            else if (bodyFile is not null)
+            {
+                File.WriteAllBytes(bodyFile, response.Body);
+                if (!quiet && services.StderrIsTerminal)
+                    stderr.WriteLine($"saved {OutputText.Size(response.Body.LongLength)} to {bodyFile}");
+            }
             else if (pretty) WritePretty(response, consoleLimits, stdout, stderr, bodyOut);
             else if (consoleLimits && ConsoleBody.LooksBinary(response.Body, response.ContentType))
                 stderr.WriteLine($"note: the body is binary ({OutputText.Size(response.Body.LongLength)}" +
@@ -956,6 +1109,12 @@ public static class SendCommand
             foreach (var line in CorsLines(corsOrigin, request, response)) stderr.WriteLine(line);
 
         if (response.Error is not null) return ExitCodes.Failure;
+        if (untilTimedOut || selectMissed) return ExitCodes.Failure;
+        if (maxSizeBytes is { } sizeLimit && response.Body.LongLength > sizeLimit)
+        {
+            stderr.WriteLine($"response body ({response.Body.LongLength} bytes) exceeded --max-size {sizeLimit} bytes.");
+            return ExitCodes.Failure;
+        }
 
         // ---- assertions ----
         bool assertionsFailed = false;
@@ -1228,13 +1387,7 @@ public static class SendCommand
         stdout.WriteLine(text);
     }
 
-    private static string HarCreatorVersion()
-    {
-        var version = Assembly.GetExecutingAssembly()
-            .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "0.0.0";
-        int plus = version.IndexOf('+');
-        return plus > 0 ? version[..plus] : version;
-    }
+    private static string HarCreatorVersion() => CliApp.ProductVersion;
 
     private static IReadOnlyList<string> ResolveAll(string host)
     {
@@ -1251,6 +1404,143 @@ public static class SendCommand
     /// corrupt *live* state (no --workspace given) is tolerated the same way the GUI tolerates it:
     /// warn on stderr and start fresh, rather than failing every plain send. An explicit --workspace
     /// keeps its current behavior — a corrupt file the caller named is a data error.</summary>
+    private static readonly JsonSerializerOptions IndentedJson = new() { WriteIndented = true };
+
+    private static AppState LoadWorkspaceLightOrEmpty(string? workspace, CliServices services, TextWriter stderr)
+    {
+        string path = workspace ?? services.LiveStatePath;
+        if (!File.Exists(path)) return new AppState();
+        try
+        {
+            var state = AppState.LoadLightFrom(path);
+            CliWorkspace.ReportSecretWarnings(state, stderr);
+            return state;
+        }
+        catch (Exception ex)
+        {
+            if (workspace is not null)
+                throw new CliDataException($"Could not read '{workspace}': {ex.Message}");
+            string? kept = AppState.PreserveUnreadable(services.LiveStatePath);
+            stderr.WriteLine($"warning: could not read the live state ({ex.Message}) — continuing without saved tokens/environments" +
+                             (kept is null ? "" : $"; the file was kept as {kept}"));
+            return new AppState();
+        }
+    }
+
+    private static int PrintDryRun(
+        ApiRequest request,
+        System.Security.Cryptography.X509Certificates.X509Certificate2? cert,
+        TransportOptions transport,
+        bool json,
+        TextWriter stdout)
+    {
+        if (json)
+        {
+            stdout.WriteLine(JsonSerializer.Serialize(new
+            {
+                dryRun = true,
+                method = request.Method.Method,
+                url = request.Url,
+                headers = request.Headers.Select(h => new
+                {
+                    name = h.Key,
+                    value = h.Key.Equals("Authorization", StringComparison.OrdinalIgnoreCase)
+                        ? TokenService.MaskAuthorization(h.Value) : h.Value
+                }),
+                contentType = request.ContentType,
+                bodyBytes = request.BodyBytes?.Length ?? (request.Body is null ? 0 : Encoding.UTF8.GetByteCount(request.Body)),
+                certificate = cert is null ? null : new { subject = cert.Subject, thumbprint = cert.Thumbprint },
+                transport = DescribeTransport(transport),
+                proxyWillBeUsed = ApiClient.ProxyWillBeUsed(request.Url, transport)
+            }, IndentedJson));
+            return ExitCodes.Ok;
+        }
+
+        stdout.WriteLine($"[dry-run] {request.Method} {request.Url}");
+        stdout.WriteLine($"  certificate : {(cert is null ? "(none)" : $"{cert.Subject} ({cert.Thumbprint})")}");
+        stdout.WriteLine($"  transport   : {DescribeTransport(transport)}");
+        stdout.WriteLine($"  proxy       : {(ApiClient.ProxyWillBeUsed(request.Url, transport) ? "yes" : "direct")}");
+        foreach (var h in request.Headers)
+        {
+            string val = h.Key.Equals("Authorization", StringComparison.OrdinalIgnoreCase)
+                ? TokenService.MaskAuthorization(h.Value) : h.Value;
+            stdout.WriteLine($"  header      : {h.Key}: {val}");
+        }
+        if (request.ContentType is not null)
+            stdout.WriteLine($"  content-type: {request.ContentType}");
+        if (request.Body is not null)
+            stdout.WriteLine($"  body        : {request.Body.Length} chars");
+        else if (request.BodyBytes is not null)
+            stdout.WriteLine($"  body        : {request.BodyBytes.Length} bytes (binary)");
+        else if (request.Parts is { Count: > 0 } parts)
+            stdout.WriteLine($"  multipart   : {parts.Count} part(s)");
+        return ExitCodes.Ok;
+    }
+
+    private static int WatchLoop(
+        ApiRequest request,
+        System.Security.Cryptography.X509Certificates.X509Certificate2? cert,
+        TransportOptions transport,
+        System.Net.CookieContainer cookieJar,
+        Func<System.Security.Cryptography.X509Certificates.X509Certificate2?, bool> trustCert,
+        TimeSpan interval,
+        string? selectPath,
+        bool rawSelect,
+        TextWriter stdout,
+        TextWriter stderr,
+        CliServices services)
+    {
+        while (!services.Cancel.IsCancellationRequested)
+        {
+            var response = services.Client.SendAsync(request, cert,
+                transport: transport,
+                trustServerCertificate: trustCert,
+                cookies: cookieJar, wireLog: null, cancellationToken: services.Cancel).GetAwaiter().GetResult();
+            string stamp = DateTime.Now.ToString("HH:mm:ss");
+            if (selectPath is not null && response.Error is null &&
+                TrySelectJsonPath(response.Body, selectPath, rawSelect, out string val, out _))
+            {
+                stdout.WriteLine($"[{stamp}] {OutputText.MetaLine(response)}  =>  {val}");
+            }
+            else
+            {
+                stdout.WriteLine($"[{stamp}] {OutputText.MetaLine(response)}");
+            }
+            stdout.Flush();
+            try { Task.Delay(interval, services.Cancel).GetAwaiter().GetResult(); }
+            catch (OperationCanceledException) { break; }
+        }
+        return ExitCodes.Ok;
+    }
+
+    private static bool TrySelectJsonPath(byte[] body, string path, bool raw, out string value, out string? error)
+    {
+        value = "";
+        error = null;
+        try
+        {
+            ReadOnlyMemory<byte> mem = body.Length >= 3 && body[0] == 0xEF && body[1] == 0xBB && body[2] == 0xBF
+                ? body.AsMemory(3)
+                : body.AsMemory();
+            using var doc = JsonDocument.Parse(mem);
+            var found = JsonPath.Evaluate(doc.RootElement, path);
+            if (found is not { } el)
+            {
+                error = "path not found in JSON response.";
+                return false;
+            }
+            value = raw && el.ValueKind == JsonValueKind.String
+                ? (el.GetString() ?? "")
+                : el.GetRawText();
+            return true;
+        }
+        catch (JsonException ex)
+        {
+            error = $"response body is not valid JSON ({ex.Message}).";
+            return false;
+        }
+    }
+
     private static AppState LoadWorkspaceOrEmpty(string? workspace, CliServices services, TextWriter stderr)
     {
         if (workspace is not null && !File.Exists(workspace)) return new AppState();
@@ -1307,9 +1597,8 @@ public static class SendCommand
         string? text = null;
         if (includeBody && r.Error is null)
         {
-            // UTF8.GetString never throws — invalid bytes decode to U+FFFD, which marks the body binary.
-            text = Encoding.UTF8.GetString(r.Body);
-            binary = text.Contains('\uFFFD');
+            binary = !System.Text.Unicode.Utf8.IsValid(r.Body) || r.Body.AsSpan().IndexOf("\uFFFD"u8) >= 0;
+            if (!binary) text = Encoding.UTF8.GetString(r.Body);
         }
 
         var buffer = new ArrayBufferWriter<byte>(Math.Max(1024, (text?.Length ?? 0) + (binary ? r.Body.Length * 4 / 3 : 0) + 1024));

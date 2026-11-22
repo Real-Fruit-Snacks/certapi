@@ -1,0 +1,42 @@
+<Window x:Class="ApiTester.App.CommandPaletteWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Quick Jump" Height="420" Width="560"
+        WindowStyle="None" ResizeMode="NoResize" WindowStartupLocation="CenterOwner"
+        Background="{DynamicResource Bg.Window}" Foreground="{DynamicResource Text.Soft}"
+        FontFamily="{StaticResource Mono}" FontSize="12.5"
+        TextOptions.TextFormattingMode="Ideal" UseLayoutRounding="True"
+        PreviewKeyDown="Window_PreviewKeyDown">
+    <WindowChrome.WindowChrome>
+        <WindowChrome CaptionHeight="0" ResizeBorderThickness="0" CornerRadius="0"
+                      GlassFrameThickness="0" UseAeroCaptionButtons="False"/>
+    </WindowChrome.WindowChrome>
+    <Border BorderBrush="{DynamicResource Accent}" BorderThickness="1">
+        <DockPanel Margin="10">
+            <TextBox x:Name="QueryBox" DockPanel.Dock="Top" Height="34" VerticalContentAlignment="Center"
+                     FontSize="13" Padding="10,0" Margin="0,0,0,8"
+                     Tag="Type to jump to a saved request, chain, environment, tab, or tool…"
+                     TextChanged="QueryBox_TextChanged"/>
+            <TextBlock DockPanel.Dock="Bottom" Margin="2,6,2,0" FontSize="11" Foreground="{DynamicResource Text.Faint}"
+                       Text="Enter to run / open  ·  Up/Down to navigate  ·  Esc to close"/>
+            <ListBox x:Name="ResultsList" BorderThickness="1" BorderBrush="{DynamicResource Border}"
+                     ScrollViewer.VerticalScrollBarVisibility="Auto"
+                     VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling"
+                     MouseDoubleClick="ResultsList_DoubleClick">
+                <ListBox.ItemTemplate>
+                    <DataTemplate>
+                        <DockPanel Margin="6,5">
+                            <TextBlock DockPanel.Dock="Right" Text="{Binding Category}" FontSize="10.5"
+                                       Foreground="{DynamicResource Text.Faint}" VerticalAlignment="Center" Margin="10,0,0,0"/>
+                            <StackPanel>
+                                <TextBlock Text="{Binding Title}" Foreground="{DynamicResource Text.Normal}" FontSize="12"/>
+                                <TextBlock Text="{Binding Subtitle}" Foreground="{DynamicResource Text.Muted}" FontSize="10.5"
+                                           TextTrimming="CharacterEllipsis"/>
+                            </StackPanel>
+                        </DockPanel>
+                    </DataTemplate>
+                </ListBox.ItemTemplate>
+            </ListBox>
+        </DockPanel>
+    </Border>
+</Window>

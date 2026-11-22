@@ -64,9 +64,12 @@ public partial class SessionCaptureWindow : Window
 
     protected override void OnClosed(System.EventArgs e) { _controller.Dispose(); base.OnClosed(e); }
 
+    private readonly HashSet<string> _uniqueCallKeys = new(StringComparer.Ordinal);
+
     private void OnCall(ObservedCall call)
     {
         _calls.Add(call);
+        _uniqueCallKeys.Add(call.Key);
         if (TokenService.OriginOf(call.Url) is { } o) _origins.Add(o);
         RefreshSummary();
     }
@@ -80,7 +83,7 @@ public partial class SessionCaptureWindow : Window
 
     private void RefreshSummary() =>
         CaptureSummary.Text =
-            $"Seen {ObservedCall.Dedup(_calls).Count} API call(s) across {_origins.Count} origin(s); " +
+            $"Seen {_uniqueCallKeys.Count} API call(s) across {_origins.Count} origin(s); " +
             $"{_tokenCount} bearer token(s) detected. Cookies are read when you press Finish.";
 
     private async void Finish_Click(object sender, RoutedEventArgs e)
@@ -114,7 +117,8 @@ public partial class SessionCaptureWindow : Window
                 SaveCollectionName = string.IsNullOrWhiteSpace(name) ? null : name;
             }
 
-            _state.Save();
+            // MainWindow.CaptureSessionButton_Click calls SaveState() immediately after ShowDialog()
+            // returns true (and after importing the captured collection), avoiding a redundant double save.
             DialogResult = true;
             Close();
         }

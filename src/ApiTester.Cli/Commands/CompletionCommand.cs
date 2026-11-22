@@ -12,19 +12,24 @@ public static class CompletionCommand
 {
     public const string Help = """
         Usage: certapi completion powershell
+               certapi completion bash
+               certapi completion zsh
 
-        Prints a PowerShell script that adds tab completion for certapi: commands, subcommands,
-        every option of the command being typed, and values where they can be known — methods,
-        certificates in your store (thumbprint or subject), profile names from your configuration,
-        environment and collection names from your workspace, and the fixed choices of options such
-        as --store, --revocation, --tls-min and --grant. Works in Windows PowerShell 5.1 and
-        PowerShell 7.
+        Prints a shell completion script that adds tab completion for certapi: commands,
+        subcommands, every option of the command being typed, and values where they can be known —
+        methods, certificates in your store (thumbprint or subject), profile names from your
+        configuration, environment and collection names from your workspace, and the fixed choices
+        of options such as --store, --revocation, --tls-min and --grant. Works in Windows
+        PowerShell 5.1, PowerShell 7, Git Bash, and Zsh.
 
-        Load it for this session:
+        Load in PowerShell:
           certapi completion powershell | Out-String | Invoke-Expression
 
-        Load it in every session, by adding that line to your profile:
-          Add-Content $PROFILE 'certapi completion powershell | Out-String | Invoke-Expression'
+        Load in Bash (Git Bash / WSL):
+          source <(certapi completion bash)
+
+        Load in Zsh:
+          source <(certapi completion zsh)
 
         The script calls certapi to work out each completion, so it stays right after an update.
 
@@ -32,7 +37,49 @@ public static class CompletionCommand
 
         Examples:
           certapi completion powershell | Out-String | Invoke-Expression
+          certapi completion bash >> ~/.bashrc
           certapi send https://api.example.com --cert <Tab>   # certificates in your store
+        """;
+
+    public const string BashScript = """
+        # certapi tab completion for Bash (Git Bash / WSL).
+        # Load with: source <(certapi completion bash)
+        _certapi_complete() {
+            local cur="${COMP_WORDS[COMP_CWORD]}"
+            local words=("${COMP_WORDS[@]:1:COMP_CWORD}")
+            local flag="--word"
+            if [[ -z "$cur" ]]; then flag="--empty"; fi
+            local IFS=$'\n'
+            local lines
+            lines=$("${COMP_WORDS[0]}" __complete "$flag" -- "${words[@]}" 2>/dev/null | cut -f1)
+            COMPREPLY=($(compgen -W "$lines" -- "$cur"))
+        }
+        complete -F _certapi_complete certapi certapi.exe
+        """;
+
+    public const string ZshScript = """
+        # certapi tab completion for Zsh.
+        # Load with: source <(certapi completion zsh)
+        _certapi() {
+            local cur="${words[CURRENT]}"
+            local flag="--word"
+            [[ -z "$cur" ]] && flag="--empty"
+            local -a raw completions
+            raw=("${(@f)$("${words[1]}" __complete "$flag" -- "${words[@]:1:CURRENT-1}" 2>/dev/null)}")
+            local line val tip
+            for line in "${raw[@]}"; do
+                [[ -z "$line" ]] && continue
+                val="${line%%$'\t'*}"
+                tip="${line#*$'\t'}"
+                if [[ "$val" == "$tip" ]]; then
+                    completions+=("$val")
+                else
+                    completions+=("${val}:${tip}")
+                fi
+            done
+            _describe 'certapi' completions
+        }
+        compdef _certapi certapi certapi.exe
         """;
 
     public const string PowerShellScript = """
@@ -71,12 +118,23 @@ public static class CompletionCommand
     public static int Run(Args args, TextWriter stdout, TextWriter stderr)
     {
         var positionals = args.Positionals();
-        if (positionals.Count != 1 || !positionals[0].Equals("powershell", StringComparison.OrdinalIgnoreCase))
-            throw new CliUsageException(positionals.Count == 1
-                ? $"No completion script for '{positionals[0]}'. certapi completes in PowerShell: certapi completion powershell"
-                : Help);
-        stdout.WriteLine(PowerShellScript);
-        return ExitCodes.Ok;
+        if (positionals.Count != 1)
+            throw new CliUsageException(Help);
+        switch (positionals[0].ToLowerInvariant())
+        {
+            case "powershell":
+                stdout.WriteLine(PowerShellScript);
+                return ExitCodes.Ok;
+            case "bash":
+                stdout.WriteLine(BashScript);
+                return ExitCodes.Ok;
+            case "zsh":
+                stdout.WriteLine(ZshScript);
+                return ExitCodes.Ok;
+            default:
+                throw new CliUsageException(
+                    $"No completion script for '{positionals[0]}'. Use: certapi completion powershell | bash | zsh");
+        }
     }
 
     /// <summary>The hidden entry point the script calls: <c>__complete (--empty|--word) -- words…</c>.
@@ -197,7 +255,7 @@ public static class CompletionCommand
     /// <summary>Subcommands from a help's usage lines: <c>certapi trust add …</c> → add.</summary>
     internal static List<string> SubcommandsOf(string command, string help)
     {
-        if (command == "completion") return ["powershell"];
+        if (command == "completion") return ["powershell", "bash", "zsh"];
         var subs = new List<string>();
         // Only the usage block at the top: examples further down name URLs, not subcommands.
         var blank = Regex.Match(help, @"\r?\n[ \t]*\r?\n");

@@ -73,6 +73,7 @@
 
                 <DataGrid Grid.Row="2" x:Name="ResultsGrid" AutoGenerateColumns="False" IsReadOnly="True"
                           HeadersVisibility="Column" GridLinesVisibility="Horizontal"
+                          VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling"
                           Background="{DynamicResource Bg.Panel}" MouseDoubleClick="Results_DoubleClick">
                     <DataGrid.Columns>
                         <DataGridTextColumn Header="Outcome" Binding="{Binding OutcomeLabel}" Width="90">

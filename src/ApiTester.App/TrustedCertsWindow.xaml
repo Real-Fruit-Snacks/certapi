@@ -37,27 +37,27 @@
                            FontSize="11" TextWrapping="Wrap" Margin="4,20,4,0"
                            Text="No certificates are pinned yet. When a server presents an untrusted certificate, trusting it from the send error adds a pin here."/>
                 <Border x:Name="ListBorder" BorderBrush="{DynamicResource Border}" BorderThickness="1" CornerRadius="6">
-                    <ScrollViewer VerticalScrollBarVisibility="Auto">
-                        <ListBox x:Name="CertsList" Margin="2" BorderThickness="0" Background="Transparent">
-                            <ListBox.ItemTemplate>
-                                <DataTemplate>
-                                    <StackPanel Margin="8,7,8,7">
-                                        <TextBlock Text="{Binding Host}" FontWeight="SemiBold"
-                                                   Foreground="{DynamicResource Text.Normal}"/>
-                                        <TextBlock Text="{Binding Thumbprint}" FontSize="11" Margin="0,2,0,0"
-                                                   Foreground="{DynamicResource Text.Soft}"/>
-                                        <TextBlock Text="{Binding Subject}" FontSize="11" Margin="0,2,0,0"
-                                                   TextWrapping="Wrap" Foreground="{DynamicResource Text.Faint}"/>
-                                        <TextBlock FontSize="10" Margin="0,4,0,0" Foreground="{DynamicResource Text.Faint}">
-                                            <TextBlock.Text>
-                                                <Binding Path="AddedUtc" StringFormat="Trusted {0:yyyy-MM-dd}"/>
-                                            </TextBlock.Text>
-                                        </TextBlock>
-                                    </StackPanel>
-                                </DataTemplate>
-                            </ListBox.ItemTemplate>
-                        </ListBox>
-                    </ScrollViewer>
+                    <ListBox x:Name="CertsList" Margin="2" BorderThickness="0" Background="Transparent"
+                             ScrollViewer.VerticalScrollBarVisibility="Auto"
+                             VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate>
+                                <StackPanel Margin="8,7,8,7">
+                                    <TextBlock Text="{Binding Host}" FontWeight="SemiBold"
+                                               Foreground="{DynamicResource Text.Normal}"/>
+                                    <TextBlock Text="{Binding Thumbprint}" FontSize="11" Margin="0,2,0,0"
+                                               Foreground="{DynamicResource Text.Soft}"/>
+                                    <TextBlock Text="{Binding Subject}" FontSize="11" Margin="0,2,0,0"
+                                               TextWrapping="Wrap" Foreground="{DynamicResource Text.Faint}"/>
+                                    <TextBlock FontSize="10" Margin="0,4,0,0" Foreground="{DynamicResource Text.Faint}">
+                                        <TextBlock.Text>
+                                            <Binding Path="AddedUtc" StringFormat="Trusted {0:yyyy-MM-dd}"/>
+                                        </TextBlock.Text>
+                                    </TextBlock>
+                                </StackPanel>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
                 </Border>
             </Grid>
         </DockPanel>

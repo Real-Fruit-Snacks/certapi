@@ -479,6 +479,15 @@ size and equality only.
 | `--pretty` | off | Pretty-print the body: JSON and XML reformatted, binary as hex |
 | `--json` | off | Print a JSON result envelope — status, headers, timing, body — instead of the raw body |
 | `-f, --fail` | off | Exit 1 when the HTTP status is 400 or higher |
+| `-D, --dump-header <file>` | none | Write the response status line and headers to a file |
+| `--select <path>` | none | Extract a JSON value by dotted path (e.g. `data.items[0].id`); exits 1 if the path is missing or the body is not JSON |
+| `--raw` | off | With `--select`, print JSON string values without surrounding quotes |
+| `--max-size <bytes>` | unlimited | Exit 1 if the response body exceeds this many bytes |
+| `--dry-run` | off | Resolve variables, profile defaults, certificate, headers, proxy decision, and URL and print the request without contacting the network |
+| `--until <expr>` | none | Poll until the assertion expression passes (same syntax as `--assert`), reusing pooled connections |
+| `--interval <seconds>` | `2` | Delay in seconds between `--until` or `--watch` attempts |
+| `--max-wait <seconds>` | `60` | Maximum total wait time for `--until` before failing with exit 1 |
+| `--watch <seconds>` | none | Repeat the request every `<seconds>` seconds until Ctrl+C |
 | `-q, -s, --quiet` | off | No metadata line on stderr |
 | `-S, --show-error`, `-#, --progress-bar` | — | Accepted for curl habits and change nothing: errors are always shown, and no progress meter is drawn |
 | `--timing` | off | Where the time went, on stderr: `timing: dns 2.1 ms · connect 1.4 ms · tls 14 ms · wait 31 ms · first byte 52 ms · download 1.0 ms · total 54 ms`. A phase that did not happen is left out (`tls` on plain HTTP, `dns` for an IP address, all three on a reused connection, which says `connection reused`). Through a proxy, `connect` is to the proxy and `tls` is the handshake with the site inside the tunnel. After redirects or retries the phases describe the last request. With `--json` the same numbers are a `timing` object in the envelope (`dnsMs`, `connectMs`, `tlsMs`, `waitMs`, `firstByteMs`, `downloadMs`, `totalMs`, `reused`, `requests`). Printed even with `--quiet`. Not with `--all-ips` |
@@ -589,9 +598,10 @@ certapi curl -sS -E "CurrentUser\MY\3f1c…" https://mtls.example.com/whoami --t
 
 ```
 certapi token [options]
+certapi token inspect [<jwt-or-origin>] [--workspace <file>] [--json]
 ```
 
-Fetch an OAuth 2.0 access token. By default it prints the token to stdout; `--save` stores it so
+Fetch an OAuth 2.0 access token, or inspect a JWT offline without sending it to an external site (`certapi token inspect` accepts a raw JWT, a stored workspace origin, or no argument to list all captured workspace tokens). By default a fetched token is printed to stdout; `--save` stores it so
 later [`send`](#send) calls attach it automatically.
 
 Accepts the [certificate](#certificate-options) and
@@ -695,6 +705,10 @@ so it refuses `--har`, `--junit`, `--md`, `--md-vault`, `--cookies`, `--cookie-j
 | `--cookies` | off | Keep one cookie jar for the whole run, so a login's `Set-Cookie` carries to later requests |
 | `--cookie-jar <file>` | none | Like `--cookies`, with the jar loaded from and saved to this file, so a run's login carries to the next run or to `certapi send --cookie-jar` |
 | `--no-auto-token` | off | Do not attach captured session tokens **or** captured session cookies |
+| `--fail-fast` | off | Stop the suite on the first failing request and mark remaining requests as SKIP |
+| `--parallel <n>` | `1` | Run independent requests concurrently with up to *n* workers (not with `--chain` or `--cookies`) |
+| `--filter <glob>` | none | Keep only saved requests whose path matches this case-insensitive glob (`*`, `?`) |
+| `--repeat <n>` | `1` | Repeat the suite *n* times |
 | `--origin <origin>` | none | Check the suite's CORS too: every request is sent with `Origin: <origin>` and gets a `cors <origin> allowed` check alongside its own assertions, so the table, `--junit` and `--md` say which endpoints a page on that origin could read. The checks exist for the run only; nothing is written to the collection |
 | `--cors-credentials` | off | With `--origin`, require that the page could read each answer **with credentials** — what a mutual-TLS API needs, since a browser presents the client certificate only on a credentialed request |
 | `--diff-ignore <path>` | none | A JSON path to ignore when diffing. Repeatable |
@@ -802,6 +816,9 @@ Accepts the [certificate](#certificate-options), [transport](#transport-options)
 | `--warmup <seconds>` | none | Send for this long first and **discard every result**, so the figures describe a warmed-up endpoint. Warm-up requests are extra — they do not come out of `--count` |
 | `--bench-retries` | off | Let the [retry options](#retries) apply during the bench. They are forced off by default, because a retry hides the very failure rate a bench exists to measure |
 | `--pool` | off | Also report the connections the run actually used: how many were opened and how many requests each served. Turns the pooling note below into a measurement — a server answering `Connection: close` makes every request pay a fresh handshake, and that dominates the latency being reported |
+| `--rate <rps>` | unlimited | Pace requests to a constant arrival rate (requests per second) across workers |
+| `--threshold <expr>` | none | Fail (exit 1) when an SLO regresses (repeatable), e.g. `p99 < 250ms`, `p50 <= 50ms`, `error-rate <= 1%`, `rps >= 50` |
+| `--max-error-rate <value>` | none | Shorthand for `--threshold "error-rate <= <value>"` (accepts `0.01` or `1%`) |
 
 ### Request
 
@@ -823,6 +840,8 @@ cannot be benched.
 | Option | Default | What it does |
 |---|---|---|
 | `--json` | off | A JSON envelope instead of the summary table |
+| `--histogram` | off | Print an ASCII latency distribution histogram below the summary |
+| `--csv <file>` | none | Export every measured request sample (`index,elapsed_ms,status,error,ok`) to a CSV file |
 
 The report gives requests sent / succeeded / failed, elapsed, requests per second, the min / p50 /
 p90 / p99 / max latencies, and status and error counts. **Percentiles come from the full retained
@@ -907,6 +926,15 @@ List the client certificates available to you — the same list the app's picker
 |---|---|---|
 | `--filter <text>` | none | Show only certificates whose subject, issuer or thumbprint contains this text |
 | `--store <location>` | `CurrentUser` | `LocalMachine` searches both the machine store and your own |
+| `--valid-only` | off | Hide already-expired certificates |
+| `--client-auth-only` | off | Show only certificates carrying the Client Authentication EKU |
+| `--expiring-within <days>` | none | Show only certificates already expired or expiring within `<days>` days |
+| `--fail` | off | With `--expiring-within`, exit 1 when any matching certificate is found |
+| `--inspect <thumb\|subject>` | none | Show full X.509 details (SANs, EKUs, key algorithm/size, CNG/hardware provider, chain status) for one store certificate |
+| `--inspect-file <path>` | none | Show full X.509 details for a `.pfx`/`.p12`/`.pem`/`.crt`/`.cer` file on disk |
+| `--cert-password <pw>` | none | Password for an encrypted `.pfx`/`.p12` file with `--inspect-file` |
+| `--key-file <path>` | none | Separate private key file for a PEM file with `--inspect-file` |
+| `--check-revocation` | off | With `--inspect` or `--inspect-file`, perform online OCSP/CRL revocation checking |
 | `--json` | off | Machine-readable output instead of the table |
 
 Each row gives the subject, issuer, thumbprint and expiry, and flags whether the certificate is
@@ -1013,6 +1041,7 @@ Bring requests in from somewhere else. See [Import & Export](17-Import-and-Expor
 | `postman` | a Collection v2.0/v2.1 export | Folders, both URL forms, query rows, headers (disabled stays disabled), raw/urlencoded/formdata bodies, bearer/basic/apikey auth with request-level beating folder and collection level, and collection variables as an environment (Postman's "secret" type stays secret here) |
 | `insomnia` | a v4 export | Folders rebuilt from the flat resource list, disabled rows preserved, text and form bodies, bearer and basic auth, environments. `{{ _.name }}` is translated to `{{name}}` |
 | `wsdl` | a WSDL 1.1 document (or the SOAP 1.2 binding variant) | One POST per operation at the port's address, with the right content type, `SOAPAction`, and an envelope skeleton |
+| `http` | a VS Code / JetBrains `.http` or `.rest` file | `###` request separators, `@var = value` file variables, query continuations, headers, bearer auth, and bodies |
 
 | Option | Default | What it does |
 |---|---|---|
@@ -1033,12 +1062,14 @@ certapi export openapi [<folder>] -o <file> [--workspace <file>]
 certapi export openapi --from-har <file.har> -o <file> [--host <h>] [--no-template-ids]
 certapi export workspace -o <file> [--workspace <file>] [--include-secrets]
 certapi export markdown -o <folder> [--workspace <file>] [--into <name>] [--index] [--include-secrets]
+certapi export code <curl|powershell|python|csharp> <Collection/Request> [-o <file>] [--env <name>] [--workspace <file>]
 ```
 
 | Option | Applies to | Default | What it does |
 |---|---|---|---|
-| `-o, --output <path>` | all | **required** | The file to write — or, for `markdown`, the folder |
+| `-o, --output <path>` | all | required (optional for `code`, defaults to stdout) | The file to write — or, for `markdown`, the folder |
 | `--workspace <file>` | all | live state | Read from a workspace file instead of the live state |
+| `--env <name>` | `code` | none | Resolve `{{variables}}` from this environment when generating the snippet |
 | `--from-har <file>` | `openapi` | none | Build the document from a captured archive instead of saved collections: repeated calls to one endpoint collapse into a single operation, identifier-looking path segments become `{id}`, responses of 400 and above are skipped, and redacted header values are never written |
 | `--host <h>` | `openapi --from-har` | all hosts | Keep only entries for this host, case-insensitive |
 | `--no-template-ids` | `openapi --from-har` | off | Keep identifier-looking path segments literal instead of turning them into `{id}` |
@@ -1267,6 +1298,9 @@ dropped (it requires `Secure`). `--rewrite-location` also rewrites the URLs in `
 | `--remove-request-header <name>` | none | Strip a header from the request. Repeatable. Removal wins over a `--request-header` naming the same header |
 | `--response-header "Name: value"` | none | Set a header on the response before it reaches the caller. Repeatable |
 | `--remove-response-header <name>` | none | Strip a header from the response. Repeatable. Removal wins over a `--response-header` naming the same header |
+| `--print-pac` | off | Print a PAC script (`FindProxyForURL`) routing the configured upstream hosts and `--allow` patterns through this gateway and exit without starting |
+
+`/_certapi/status` joins `/_certapi/health` and `/_certapi/routes`, adding per-site client certificate expiry countdowns.
 
 An upstream pinned with [`trust add`](#trust) is reachable without `--insecure`.
 
@@ -1719,6 +1753,9 @@ Accepts the [certificate](#certificate-options) and
 | `--md-vault <folder>` | none | File it as `certapi/investigations/<host>-<timestamp>.md` instead. **A new note per run**: a diagnosis is history, so nothing overwrites a past one |
 | `--md-open` | off | Open the written note afterwards. If nothing is registered for `.md` it prints the path rather than failing |
 | `--include-secrets` | off | Keep credential-looking query values in the note, redacted by default because vaults sync |
+| `--server-cert-out <file.pem>` | none | Save the server's leaf certificate as PEM |
+| `--chain-out <file.pem>` | none | Save the server's full presented certificate chain as PEM |
+| `--check-revocation` | off | Run an online OCSP/CRL revocation check on the server certificate during the TLS stage |
 
 **What it reports that an ordinary request cannot:**
 
@@ -1841,14 +1878,20 @@ Exit 0 when the configuration could be read, 3 when a named file does not exist,
 
 ```
 certapi completion powershell
+certapi completion bash
+certapi completion zsh
 ```
 
-Prints a PowerShell script that adds tab completion for `certapi` (Windows PowerShell 5.1 and
-PowerShell 7). Load it for the session, or add the line to your profile to have it every time:
+Prints a shell completion script for `certapi` (Windows PowerShell 5.1, PowerShell 7, Bash / Git Bash / WSL, and Zsh). Load it for the session, or add the line to your profile to have it every time:
 
 ```powershell
 certapi completion powershell | Out-String | Invoke-Expression
 Add-Content $PROFILE 'certapi completion powershell | Out-String | Invoke-Expression'
+```
+
+```bash
+source <(certapi completion bash)
+source <(certapi completion zsh)
 ```
 
 What completes:

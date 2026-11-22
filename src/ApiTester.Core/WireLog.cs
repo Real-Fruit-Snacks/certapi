@@ -195,17 +195,38 @@ public sealed class WireLog
         return printable >= bytes.Length * 0.85;
     }
 
+    private const string HexDigits = "0123456789abcdef";
+
     /// <summary>Hex and ASCII side by side, sixteen bytes to a line.</summary>
     internal static string Hex(ReadOnlySpan<byte> bytes)
     {
-        var sb = new StringBuilder();
+        if (bytes.Length == 0) return string.Empty;
+        int rows = (bytes.Length + 15) / 16;
+        var sb = new StringBuilder(rows * 82);
         for (int offset = 0; offset < bytes.Length; offset += 16)
         {
             int count = Math.Min(16, bytes.Length - offset);
-            sb.Append("   ").Append(offset.ToString("x8")).Append("  ");
+            sb.Append("   ")
+              .Append(HexDigits[(offset >> 28) & 0xF])
+              .Append(HexDigits[(offset >> 24) & 0xF])
+              .Append(HexDigits[(offset >> 20) & 0xF])
+              .Append(HexDigits[(offset >> 16) & 0xF])
+              .Append(HexDigits[(offset >> 12) & 0xF])
+              .Append(HexDigits[(offset >> 8) & 0xF])
+              .Append(HexDigits[(offset >> 4) & 0xF])
+              .Append(HexDigits[offset & 0xF])
+              .Append("  ");
             for (int i = 0; i < 16; i++)
             {
-                sb.Append(i < count ? bytes[offset + i].ToString("x2") : "  ").Append(' ');
+                if (i < count)
+                {
+                    byte b = bytes[offset + i];
+                    sb.Append(HexDigits[b >> 4]).Append(HexDigits[b & 0xF]).Append(' ');
+                }
+                else
+                {
+                    sb.Append("   ");
+                }
                 if (i == 7) sb.Append(' ');
             }
             sb.Append(" |");

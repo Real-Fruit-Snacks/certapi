@@ -57,21 +57,21 @@
                                Foreground="{DynamicResource Text.Faint}" Margin="0,0,0,8"
                                Text="No saved requests yet. Save a request into your collections first — a chain runs saved requests."/>
                     <Border BorderBrush="{DynamicResource Border}" BorderThickness="1" CornerRadius="6">
-                        <ScrollViewer VerticalScrollBarVisibility="Auto">
-                            <ListBox x:Name="AvailableList" Margin="2" BorderThickness="0" Background="Transparent"
-                                     MouseDoubleClick="AvailableList_MouseDoubleClick">
-                                <ListBox.ItemTemplate>
-                                    <DataTemplate>
-                                        <StackPanel Orientation="Horizontal" Margin="6,4,6,4">
-                                            <TextBlock Text="{Binding MethodBadge}" FontSize="10" FontWeight="Bold" MinWidth="30"
-                                                       Margin="0,0,7,0" Foreground="{DynamicResource Accent}" VerticalAlignment="Center"/>
-                                            <TextBlock Text="{Binding Name}" Foreground="{DynamicResource Text.Normal}"
-                                                       VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
-                                        </StackPanel>
-                                    </DataTemplate>
-                                </ListBox.ItemTemplate>
-                            </ListBox>
-                        </ScrollViewer>
+                        <ListBox x:Name="AvailableList" Margin="2" BorderThickness="0" Background="Transparent"
+                                 ScrollViewer.VerticalScrollBarVisibility="Auto"
+                                 VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling"
+                                 MouseDoubleClick="AvailableList_MouseDoubleClick">
+                            <ListBox.ItemTemplate>
+                                <DataTemplate>
+                                    <StackPanel Orientation="Horizontal" Margin="6,4,6,4">
+                                        <TextBlock Text="{Binding MethodBadge}" FontSize="10" FontWeight="Bold" MinWidth="30"
+                                                   Margin="0,0,7,0" Foreground="{DynamicResource Accent}" VerticalAlignment="Center"/>
+                                        <TextBlock Text="{Binding Name}" Foreground="{DynamicResource Text.Normal}"
+                                                   VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+                                    </StackPanel>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
                     </Border>
                 </DockPanel>
 
@@ -88,43 +88,43 @@
                                Foreground="{DynamicResource Text.Faint}" Margin="0,0,0,8"
                                Text="No steps yet. Pick a saved request on the left and add it — the first step runs first, and what it captures is available to the ones after it."/>
                     <Border BorderBrush="{DynamicResource Border}" BorderThickness="1" CornerRadius="6">
-                        <ScrollViewer VerticalScrollBarVisibility="Auto">
-                            <ListBox x:Name="StepsList" Margin="2" BorderThickness="0" Background="Transparent">
-                                <ListBox.ItemTemplate>
-                                    <DataTemplate>
-                                        <Grid Margin="6,5,6,5">
-                                            <Grid.ColumnDefinitions>
-                                                <ColumnDefinition Width="Auto"/>
-                                                <ColumnDefinition Width="Auto"/>
-                                                <ColumnDefinition Width="*"/>
-                                                <ColumnDefinition Width="Auto"/>
-                                            </Grid.ColumnDefinitions>
-                                            <TextBlock Grid.Column="0" Text="{Binding Position}" FontSize="10" MinWidth="22"
-                                                       Foreground="{DynamicResource Text.Faint}" VerticalAlignment="Center"/>
-                                            <TextBlock Grid.Column="1" Text="{Binding Badge}" FontSize="10" FontWeight="Bold" MinWidth="30"
-                                                       Margin="0,0,7,0" Foreground="{DynamicResource Accent}" VerticalAlignment="Center"/>
-                                            <TextBlock Grid.Column="2" Text="{Binding Label}" VerticalAlignment="Center"
-                                                       TextTrimming="CharacterEllipsis" ToolTip="{Binding Label}">
-                                                <TextBlock.Style>
-                                                    <Style TargetType="TextBlock">
-                                                        <Setter Property="Foreground" Value="{DynamicResource Text.Normal}"/>
-                                                        <Style.Triggers>
-                                                            <!-- a chain can outlive a deleted request; say so instead of showing a blank row -->
-                                                            <DataTrigger Binding="{Binding Missing}" Value="True">
-                                                                <Setter Property="Foreground" Value="{DynamicResource Text.Faint}"/>
-                                                            </DataTrigger>
-                                                        </Style.Triggers>
-                                                    </Style>
-                                                </TextBlock.Style>
-                                            </TextBlock>
-                                            <CheckBox Grid.Column="3" Content="Stop on failure" FontSize="10" Margin="8,0,0,0"
-                                                      VerticalAlignment="Center" IsChecked="{Binding StopOnFailure, Mode=TwoWay}"
-                                                      ToolTip="Stop the chain here when this step fails, instead of calling the next one anyway."/>
-                                        </Grid>
-                                    </DataTemplate>
-                                </ListBox.ItemTemplate>
-                            </ListBox>
-                        </ScrollViewer>
+                        <ListBox x:Name="StepsList" Margin="2" BorderThickness="0" Background="Transparent"
+                                 ScrollViewer.VerticalScrollBarVisibility="Auto"
+                                 VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling">
+                            <ListBox.ItemTemplate>
+                                <DataTemplate>
+                                    <Grid Margin="6,5,6,5">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" Text="{Binding Position}" FontSize="10" MinWidth="22"
+                                                   Foreground="{DynamicResource Text.Faint}" VerticalAlignment="Center"/>
+                                        <TextBlock Grid.Column="1" Text="{Binding Badge}" FontSize="10" FontWeight="Bold" MinWidth="30"
+                                                   Margin="0,0,7,0" Foreground="{DynamicResource Accent}" VerticalAlignment="Center"/>
+                                        <TextBlock Grid.Column="2" Text="{Binding Label}" VerticalAlignment="Center"
+                                                   TextTrimming="CharacterEllipsis" ToolTip="{Binding Label}">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="Foreground" Value="{DynamicResource Text.Normal}"/>
+                                                    <Style.Triggers>
+                                                        <!-- a chain can outlive a deleted request; say so instead of showing a blank row -->
+                                                        <DataTrigger Binding="{Binding Missing}" Value="True">
+                                                            <Setter Property="Foreground" Value="{DynamicResource Text.Faint}"/>
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                        <CheckBox Grid.Column="3" Content="Stop on failure" FontSize="10" Margin="8,0,0,0"
+                                                  VerticalAlignment="Center" IsChecked="{Binding StopOnFailure, Mode=TwoWay}"
+                                                  ToolTip="Stop the chain here when this step fails, instead of calling the next one anyway."/>
+                                    </Grid>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
                     </Border>
                 </DockPanel>
             </Grid>

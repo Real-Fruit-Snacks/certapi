@@ -22,16 +22,22 @@ public sealed class NetworkEntry
     public List<KeyValuePair<string, string>> RequestHeaders { get; init; } = new();
     public List<KeyValuePair<string, string>> ResponseHeaders { get; init; } = new();
 
+    private string? _statusLabel;
+    private string? _statusClass;
+    private string? _sizeLabel;
+    private string? _timeLabel;
+    private string? _shortType;
+
     public bool UsedClientCert => !string.IsNullOrEmpty(ClientCertSubject);
 
-    public string StatusLabel => Error is not null ? "ERR" : StatusCode?.ToString() ?? "—";
+    public string StatusLabel => _statusLabel ??= Error is not null ? "ERR" : StatusCode?.ToString() ?? "—";
 
     /// <summary>The status class used by the filter bar: "2xx".."5xx", "ERR", or "" when unknown.</summary>
-    public string StatusClass =>
+    public string StatusClass => _statusClass ??=
         Error is not null ? "ERR" :
         StatusCode is { } c && c >= 100 && c <= 599 ? $"{c / 100}xx" : "";
 
-    public string SizeLabel => Error is not null ? "" : FormatSize(Size);
+    public string SizeLabel => _sizeLabel ??= Error is not null ? "" : FormatSize(Size);
 
     public static string FormatSize(long bytes) =>
         bytes < 1024 ? $"{bytes} B" :
@@ -67,19 +73,20 @@ public sealed class NetworkEntry
         return sb.ToString();
     }
 
-    public string TimeLabel => Error is not null ? "" : $"{ElapsedMs:F0} ms";
+    public string TimeLabel => _timeLabel ??= Error is not null ? "" : $"{ElapsedMs:F0} ms";
 
     /// <summary>Short content-type for the table (the subtype, e.g. "json", "html", "css").</summary>
     public string ShortType
     {
         get
         {
+            if (_shortType is not null) return _shortType;
             var ct = ContentType;
-            if (string.IsNullOrEmpty(ct)) return Error is not null ? "—" : "";
+            if (string.IsNullOrEmpty(ct)) return _shortType = Error is not null ? "—" : "";
             int semi = ct.IndexOf(';');
             if (semi >= 0) ct = ct[..semi];
             int slash = ct.IndexOf('/');
-            return (slash >= 0 ? ct[(slash + 1)..] : ct).Trim();
+            return _shortType = (slash >= 0 ? ct[(slash + 1)..] : ct).Trim();
         }
     }
 }

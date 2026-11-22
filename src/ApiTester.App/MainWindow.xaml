@@ -92,7 +92,8 @@
                 <Border DockPanel.Dock="Top" Height="1" Background="{DynamicResource Border}"/>
                 <Grid>
                     <ListBox x:Name="HistoryList" SelectionChanged="HistoryList_SelectionChanged"
-                             ScrollViewer.VerticalScrollBarVisibility="Auto">
+                             ScrollViewer.VerticalScrollBarVisibility="Auto"
+                             VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling">
                         <ListBox.ItemTemplate>
                             <DataTemplate>
                                 <StackPanel>
@@ -129,6 +130,7 @@
                                    Foreground="{DynamicResource Text.Faint}" FontSize="11" TextWrapping="Wrap"
                                    Text="No saved requests yet. Send a request, then “Save current request…” to keep it here."/>
                         <TreeView x:Name="CollectionsTree" ScrollViewer.VerticalScrollBarVisibility="Auto"
+                                  VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling"
                                   MouseDoubleClick="CollectionsTree_MouseDoubleClick"
                                   PreviewMouseRightButtonDown="CollectionsTree_PreviewMouseRightButtonDown">
                             <TreeView.ContextMenu>
@@ -234,12 +236,33 @@
                         <ContextMenu>
                             <MenuItem Header="Paste cURL command…" Click="ImportCurl_Click"/>
                             <MenuItem Header="Import OpenAPI file…" Click="ImportOpenApi_Click"/>
+                            <MenuItem Header="Import Postman collection…" Click="ImportPostman_Click"/>
+                            <MenuItem Header="Import Insomnia v4…" Click="ImportInsomnia_Click"/>
+                            <MenuItem Header="Import WSDL / SOAP…" Click="ImportWsdl_Click"/>
+                            <MenuItem Header="Import .http file…" Click="ImportHttpFile_Click"/>
+                            <Separator/>
                             <MenuItem Header="Import workspace…" Click="ImportWorkspace_Click"/>
                             <MenuItem Header="Export workspace…" Click="ExportWorkspace_Click"/>
                             <MenuItem Header="Import HAR file…" Click="ImportHar_Click"/>
                             <MenuItem Header="Export Network trace as HAR…" Click="ExportNetworkHar_Click"/>
                             <MenuItem Header="Export OpenAPI from HAR file…" Click="ExportOpenApiFromHar_Click"/>
                             <MenuItem Header="Trusted certificates…" Click="ManageTrustedCerts_Click"/>
+                        </ContextMenu>
+                    </Button.ContextMenu>
+                </Button>
+                <Button x:Name="ToolsButton" DockPanel.Dock="Right" Content="Tools &#x25BE;" Width="86"
+                        VerticalAlignment="Bottom" Margin="4,0,0,0" Click="ToolsButton_Click"
+                        ToolTip="Diagnostics, benchmark, gRPC client, certificate inspector, and Quick Jump (Ctrl+K)">
+                    <Button.ContextMenu>
+                        <ContextMenu>
+                            <MenuItem Header="Connection Doctor…" Click="OpenDoctor_Click"/>
+                            <MenuItem Header="Benchmark current request…" Click="OpenBench_Click"/>
+                            <MenuItem Header="gRPC Client…" Click="OpenGrpc_Click"/>
+                            <Separator/>
+                            <MenuItem Header="Inspect selected certificate…" Click="InspectSelectedCert_Click"/>
+                            <MenuItem Header="Unlock smart-card PIN…" Click="UnlockSmartCardPin_Click"/>
+                            <Separator/>
+                            <MenuItem Header="Quick Jump (Ctrl+K)…" Click="OpenCommandPalette_Click"/>
                         </ContextMenu>
                     </Button.ContextMenu>
                 </Button>
@@ -997,6 +1020,7 @@
                             </Border>
                             <ListBox x:Name="NetworkList" Grid.Row="2" SelectionChanged="NetworkList_SelectionChanged"
                                      PreviewMouseRightButtonDown="NetworkList_PreviewMouseRightButtonDown"
+                                     VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling"
                                      ScrollViewer.HorizontalScrollBarVisibility="Disabled" ScrollViewer.VerticalScrollBarVisibility="Auto">
                                 <ListBox.ItemContainerStyle>
                                     <Style TargetType="ListBoxItem" BasedOn="{StaticResource {x:Type ListBoxItem}}">

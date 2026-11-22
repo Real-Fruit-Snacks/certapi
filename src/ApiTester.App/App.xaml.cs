@@ -53,11 +53,7 @@ public partial class App : Application
     /// over the base dark palette; anything else removes the overlay and reverts to dark.</summary>
     /// <summary>The saved theme, read without side effects: an unreadable workspace is reported (and
     /// kept) once, by the main window's own load, not here.</summary>
-    private static string? SavedTheme()
-    {
-        try { return System.IO.File.Exists(AppState.DefaultPath) ? AppState.PeekFrom(AppState.DefaultPath).Theme : null; }
-        catch (Exception) { return null; }
-    }
+    private static string? SavedTheme() => AppState.PeekTheme(AppState.DefaultPath);
 
     public void ApplyTheme(string? theme)
     {

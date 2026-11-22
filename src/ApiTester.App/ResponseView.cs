@@ -65,6 +65,35 @@ public static class ResponseView
     /// <summary>What the Raw view shows of a body's text.</summary>
     public static string Raw(string text) => Cut(text, MaxRawChars);
 
+    /// <summary>What the Raw view shows of a raw byte body, without decoding a huge multi-megabyte
+    /// download into a UTF-16 string just to discard everything past <see cref="MaxRawChars"/>.</summary>
+    public static string Raw(byte[] body, out bool truncated)
+    {
+        if (body.Length == 0) { truncated = false; return ""; }
+        if (body.Length <= MaxRawChars)
+        {
+            truncated = false;
+            return Encoding.UTF8.GetString(body);
+        }
+
+        int maxBytes = Math.Min(body.Length, MaxRawChars * 4);
+        int take = Utf8Cut(body, maxBytes);
+        string prefix = Encoding.UTF8.GetString(body, 0, take);
+        if (take == body.Length && prefix.Length <= MaxRawChars)
+        {
+            truncated = false;
+            return prefix;
+        }
+        truncated = true;
+        int cut = prefix.Length > MaxRawChars
+            ? (char.IsHighSurrogate(prefix[MaxRawChars - 1]) ? MaxRawChars - 1 : MaxRawChars)
+            : prefix.Length;
+        long remainingApprox = take == body.Length
+            ? prefix.Length - cut
+            : Math.Max(1, body.Length - take) + (prefix.Length - cut);
+        return prefix[..cut] + $"\n\n… {remainingApprox:N0} more characters are not shown here. Copy and Save… take all of it.";
+    }
+
     /// <summary>The text, or its start with a line saying how much is left out.</summary>
     public static string Cut(string text, int max)
     {

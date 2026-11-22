@@ -6,6 +6,37 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.102.0] - 2026-11-21
+
+### Added
+- **CLI `send` scripting & polling flags**:
+  - `--select <path>` (with `--raw`) extracts a JSON value directly by dotted/indexed path without needing `jq`, exiting 1 if the path is missing or the body is not JSON.
+  - `--until <expr>` (with `--interval <seconds>` and `--max-wait <seconds>`) polls an endpoint over pooled connections until an assertion expression passes; `--watch <seconds>` repeats a request until Ctrl+C.
+  - `--dry-run` resolves variables, profile defaults, certificate, headers, and proxy routing and prints the request (with `Authorization` masked) without touching the network.
+  - `-D, --dump-header <file>` writes the response status line and headers to a file, and `--max-size <bytes>` fails if a response exceeds a byte budget.
+- **Offline JWT inspector**: `certapi token inspect [<jwt-or-origin>] [--workspace <file>] [--json]` decodes JWT header, claims, scopes, roles, issuer, audiences, and expiry completely offline; in the desktop app, clicking the session token chip adds **Inspect JWT claims…**.
+- **Deep X.509 certificate inspector & store filters**:
+  - `certapi certs --inspect <thumb|subject>` and `--inspect-file <path>` (with `--cert-password`, `--key-file`, and `--check-revocation`) print SHA-1/SHA-256 thumbprints, serial, SANs, EKUs, key algorithm/size, CNG/hardware/smart-card provider detection, and chain status.
+  - `certapi certs --valid-only`, `--client-auth-only`, and `--expiring-within <days> [--fail]` filter the store and support CI certificate-expiry checks.
+- **Suite orchestration (`run`)**: `--fail-fast`, `--parallel <n>`, `--filter <glob>`, and `--repeat <n>` for faster, targeted CI collection runs.
+- **Load testing upgrades (`bench`)**: `--rate <rps>` constant-arrival-rate pacing, `--threshold <expr>` / `--max-error-rate <v>` SLO gates (e.g. `p99 < 250ms`, `error-rate <= 1%`, `rps >= 50`), `--histogram` ASCII latency distribution, and `--csv <file>` per-sample export.
+- **VS Code / JetBrains `.http` importer**: `certapi import http <file>` and **Import ▾ → Import .http file…** (plus Postman, Insomnia v4, and WSDL imports directly from the desktop app's Import menu).
+- **Code snippet export CLI**: `certapi export code <curl|powershell|python|csharp> <Collection/Request> [-o <file>] [--env <name>]` generates ready-to-run client code from saved requests.
+- **Diagnostics & gateway additions**:
+  - `certapi doctor --server-cert-out <file.pem>`, `--chain-out <file.pem>`, and `--check-revocation`.
+  - `certapi serve --print-pac` prints a `FindProxyForURL` PAC script for configured upstreams/allowlist, and `/_certapi/status` reports per-site certificate expiry countdowns.
+  - `certapi completion bash` and `certapi completion zsh` join PowerShell tab completion.
+- **New MCP tools**: `doctor`, `inspect_cert`, `inspect_token`, and `diff_known_good` join the MCP server's toolset.
+- **Desktop app tools & productivity**:
+  - **Tools ▾** menu with **Connection Doctor…**, **Benchmark current request…**, **gRPC Client…**, **Inspect selected certificate…**, **Unlock smart-card PIN…**, and **Quick Jump (`Ctrl+K`)** command palette across tabs, collections, environments, and tools (plus `Ctrl+F` to focus response search).
+
+### Changed
+- **Performance & memory optimizations across CLI, Core, gRPC, and Desktop**:
+  - Fast 40-hex thumbprint lookup in `CliCert`, lazy `ApiClient` instantiation, single-pass global option parsing, and selective workspace decryption (`AppState.LoadLightFrom`) so `certapi send` skips decrypting History/Collections bodies when read-only.
+  - Streaming `AppState.PeekTheme` and `NeedsSecretUpgrade` via `Utf8JsonReader` + `ArrayPool`, structural `AppState` cloning (`SnapshotForSave` / `SaveSnapshotTo`) instead of JSON round-trips, pinned DPAPI entropy and `ArrayPool` buffers in `DpapiSecretProtector`, and background non-blocking workspace saves in the desktop app.
+  - Offloaded response formatting and diagnostics onto background threads in `MainWindow`, lazy `ResponseView.Raw(byte[], out bool)` slicing for multi-MB bodies, virtualized `HistoryList` / `CollectionsTree` / `NetworkList`, coalesced Network UI updates, cached `HelpWindow` sections, and pre-sized `SyntaxHighlighter` / `Bench` hot paths (`DiscardBody` pooled drain in `ApiClient`).
+  - Single-pass assertion evaluation in `RequestRunner`, memoized certificate lookups in `run` and chain runs, and batched gRPC reflection descriptor loading (`DescriptorPool.LoadServicesAsync`).
+
 ## [1.101.0] - 2026-11-15
 
 ### Added
@@ -3645,7 +3676,8 @@ Initial release.
 - Save any response (including binary) to a file.
 - Self-contained single-file executable — no installer, no admin rights, no runtime dependency.
 
-[Unreleased]: https://github.com/Real-Fruit-Snacks/certapi/compare/v1.101.0...HEAD
+[Unreleased]: https://github.com/Real-Fruit-Snacks/certapi/compare/v1.102.0...HEAD
+[1.102.0]: https://github.com/Real-Fruit-Snacks/certapi/compare/v1.101.0...v1.102.0
 [1.101.0]: https://github.com/Real-Fruit-Snacks/certapi/compare/v1.100.2...v1.101.0
 [1.100.2]: https://github.com/Real-Fruit-Snacks/certapi/compare/v1.100.1...v1.100.2
 [1.100.1]: https://github.com/Real-Fruit-Snacks/certapi/compare/v1.100.0...v1.100.1

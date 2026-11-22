@@ -21,6 +21,7 @@ public static class TokenService
 {
     private const int MaxScanBytes = 2 * 1024 * 1024;
     private static readonly string[] BodyFields = { "access_token", "id_token", "token", "accessToken", "jwt" };
+    private static readonly string[] NestedFields = { "data", "result" };
     private static readonly string[] HeaderNames = { "X-Auth-Token", "X-Access-Token" };
 
     /// <summary>The token scope for a URL: scheme://host:port, host lowercase. Null when the
@@ -81,6 +82,12 @@ public static class TokenService
         if (body.Length == 0 || body.Length > MaxScanBytes) return default;
         if (contentType is not null && !contentType.Contains("json", StringComparison.OrdinalIgnoreCase)) return default;
 
+        // Only JSON objects can contain token fields — skip arrays and non-JSON payloads without
+        // paying JsonDocument.Parse (up to 2 MB) on every response.
+        int i = 0;
+        while (i < body.Length && body[i] is (byte)' ' or (byte)'\t' or (byte)'\r' or (byte)'\n') i++;
+        if (i >= body.Length || body[i] != (byte)'{') return default;
+
         JsonDocument doc;
         try { doc = JsonDocument.Parse(body); }
         catch (JsonException) { return default; }
@@ -89,7 +96,7 @@ public static class TokenService
         {
             if (doc.RootElement.ValueKind != JsonValueKind.Object) return default;
             if (ScanObject(doc.RootElement) is { } hit) return hit;
-            foreach (var nested in new[] { "data", "result" })
+            foreach (var nested in NestedFields)
                 if (TryGetIgnoreCase(doc.RootElement, nested, out var el) && el.ValueKind == JsonValueKind.Object &&
                     ScanObject(el) is { } nestedHit)
                     return nestedHit;
@@ -135,8 +142,13 @@ public static class TokenService
     }
 
     /// <summary>Header-safe: non-empty, no whitespace or control characters.</summary>
-    private static bool IsTokenShaped(string? value) =>
-        !string.IsNullOrEmpty(value) && !value.Any(c => char.IsWhiteSpace(c) || char.IsControl(c));
+    private static bool IsTokenShaped(string? value)
+    {
+        if (string.IsNullOrEmpty(value)) return false;
+        for (int i = 0; i < value.Length; i++)
+            if (char.IsWhiteSpace(value[i]) || char.IsControl(value[i])) return false;
+        return true;
+    }
 
     /// <summary>Detect a token in a response and upsert it into the state's per-origin store
     /// (newest wins). Returns the stored token, or null when none was found.</summary>

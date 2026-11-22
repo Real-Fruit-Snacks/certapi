@@ -118,7 +118,10 @@ public static class ServeCommand
                                   cookie rewriting follows the dynamic prefix the same way.
                                   /_/ and /_certapi/ are reserved and cannot be mounted
           /_certapi/health        Answers 200 with the gateway's state as JSON; /_certapi/routes
-                                  lists the mounts and the allow list. Both honour --token
+                                  lists the mounts and the allow list; /_certapi/status adds
+                                  certificate expiry countdowns. All honour --token
+          --print-pac             Print a PAC script routing the configured upstream hosts through
+                                  this gateway and exit without starting
           --workspace <file>      Resolve a saved-website <upstream> from a workspace file
           -q, --quiet             No startup table, per-request log or notes; warnings and the
                                   once-a-minute health line still print. To a console window the
@@ -448,6 +451,7 @@ public static class ServeCommand
         string? lifetimeRaw = args.Value("--connection-lifetime") ?? sp?.ConnectionLifetime?.ToString();
 
         bool check = args.Flag("--check");
+        bool printPac = args.Flag("--print-pac");
         bool tls = args.Switch("--tls", sp?.Tls);
         bool tlsTrust = args.Flag("--tls-trust");
         bool tlsUntrust = args.Flag("--tls-untrust");
@@ -772,6 +776,12 @@ public static class ServeCommand
             summary.Add($"  replay mode: answering from {replayPath} ({replay.Count} recorded exchange(s)) — the upstream is never contacted.");
         if (recorder is not null)
             summary.Add($"  recording every forwarded exchange to {recordPath}" + (recordIncludeSecrets ? " (secrets included)." : " (credential headers, credential query values — redirect addresses included — and credential fields in JSON and form bodies are redacted; other body content is kept; --record-include-secrets keeps everything)."));
+
+        if (printPac)
+        {
+            stdout.WriteLine(BuildPacScript(routes, allow, port));
+            return ExitCodes.Ok;
+        }
 
         // --check stops here: every site, certificate, file and flag has been resolved and
         // validated, and nothing has been bound, installed or contacted.
@@ -1991,18 +2001,76 @@ public static class ServeCommand
                     autoToken = policy.TokenState is not null
                 };
                 break;
+            case "/_certapi/status":
+                var now = DateTime.UtcNow;
+                body = new
+                {
+                    status = "ok",
+                    version = CliApp.ProductVersion,
+                    load = policy.Health?.Describe(),
+                    sites = routes.All.Select(r =>
+                    {
+                        var c = gateway.Current(r.Certificate) ?? gateway.CertificateFor(r.Upstream);
+                        return new
+                        {
+                            name = r.DisplayName,
+                            prefix = r.PathPrefix,
+                            upstream = r.Upstream.ToString(),
+                            certificate = c is null ? null : new
+                            {
+                                subject = c.Subject,
+                                thumbprint = c.Thumbprint,
+                                expiresUtc = c.NotAfter.ToUniversalTime(),
+                                daysRemaining = (int)Math.Floor((c.NotAfter.ToUniversalTime() - now).TotalDays),
+                                expired = c.NotAfter.ToUniversalTime() <= now
+                            }
+                        };
+                    }),
+                    allow = gateway.DynamicAllowlist?.Entries
+                };
+                break;
             default:
                 res.StatusCode = 404;
                 res.Close();
                 return;
         }
-        var bytes = System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(body, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+        var bytes = System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(body, IndentedJson);
         res.StatusCode = 200;
         res.ContentType = "application/json";
         res.ContentLength64 = bytes.Length;
         await res.OutputStream.WriteAsync(bytes, ct);
         res.Close();
     }
+
+    private static string BuildPacScript(GatewayRoutes routes, UpstreamAllowlist? allow, int port)
+    {
+        var hosts = new List<string>();
+        foreach (var r in routes.All)
+            if (!hosts.Contains(r.Upstream.Host, StringComparer.OrdinalIgnoreCase))
+                hosts.Add(r.Upstream.Host);
+        if (allow is not null)
+            foreach (var entry in allow.Entries)
+                if (!hosts.Contains(entry, StringComparer.OrdinalIgnoreCase))
+                    hosts.Add(entry);
+
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine("// Generated by certapi serve --print-pac");
+        sb.AppendLine("function FindProxyForURL(url, host) {");
+        foreach (var h in hosts)
+        {
+            if (h == "*")
+                sb.AppendLine($"  return \"PROXY 127.0.0.1:{port}; DIRECT\";");
+            else if (h.StartsWith("*.", StringComparison.Ordinal))
+                sb.AppendLine($"  if (shExpMatch(host, \"{h}\") || dnsDomainIs(host, \"{h[1..]}\")) return \"PROXY 127.0.0.1:{port}; DIRECT\";");
+            else
+                sb.AppendLine($"  if (localHostOrDomainIs(host, \"{h}\") || host.toLowerCase() === \"{h.ToLowerInvariant()}\") return \"PROXY 127.0.0.1:{port}; DIRECT\";");
+        }
+        sb.AppendLine("  return \"DIRECT\";");
+        sb.Append('}');
+        return sb.ToString();
+    }
+
+    private static readonly System.Text.Json.JsonSerializerOptions IndentedJson = new() { WriteIndented = true };
 
     /// <summary>k/m/g suffixes, case-insensitive; a bare number is bytes.</summary>
     internal static long? ParseSize(string raw)

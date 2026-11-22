@@ -107,7 +107,7 @@ public static class TrustCommand
                 kind = t.EffectiveKind.ToString().ToLowerInvariant(),
                 subject = t.Subject,
                 addedUtc = t.AddedUtc
-            }), new JsonSerializerOptions { WriteIndented = true }));
+            }), IndentedJson));
             return ExitCodes.Ok;
         }
 
@@ -115,6 +115,8 @@ public static class TrustCommand
             stdout.WriteLine($"{t.Host}\n  {t.Thumbprint}  ·  {Describe(t.EffectiveKind)}  ·  {t.Subject ?? "—"}  ·  added {t.AddedUtc:yyyy-MM-dd}");
         return ExitCodes.Ok;
     }
+
+    private static readonly JsonSerializerOptions IndentedJson = new() { WriteIndented = true };
 
     private static int Add(
         AppState state, string host, string? thumbprint, string? fromUrl, X509Certificate2? cert,

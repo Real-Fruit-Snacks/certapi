@@ -106,11 +106,13 @@ internal static class ProtoJsonWriter
         // same JSON object) without "@type" itself being reported as an unrecognized field.
         var propertyOrder = new List<string>();
         var remaining = new HashSet<string>(StringComparer.Ordinal);
+        var propertiesByName = new Dictionary<string, JsonElement>(StringComparer.Ordinal);
         foreach (var property in element.EnumerateObject())
         {
             if (property.Name == ignoreProperty) continue;
             propertyOrder.Add(property.Name);
             remaining.Add(property.Name);
+            propertiesByName[property.Name] = property.Value;
         }
 
         using var buffer = new MemoryStream();
@@ -118,11 +120,11 @@ internal static class ProtoJsonWriter
 
         // A non-synthetic oneof only allows one member set at a time; track which member (if any)
         // this message has already seen so a second one can be reported by name.
-        var setOneofFields = new Dictionary<OneofDescriptor, string>();
+        Dictionary<OneofDescriptor, string>? setOneofFields = null;
 
         foreach (var field in descriptor.Fields.InFieldNumberOrder())
         {
-            if (!TryGetField(element, field, out var value, out var matchedName)) continue;
+            if (!TryGetField(propertiesByName, field, out var value, out var matchedName)) continue;
             remaining.Remove(matchedName);
 
             // A JSON null ordinarily means "field absent", per proto3 JSON mapping — except for a
@@ -139,6 +141,7 @@ internal static class ProtoJsonWriter
 
             if (field.RealContainingOneof is { } oneof)
             {
+                setOneofFields ??= new Dictionary<OneofDescriptor, string>();
                 if (setOneofFields.TryGetValue(oneof, out var earlier))
                 {
                     throw new GrpcJsonException(
@@ -766,26 +769,33 @@ internal static class ProtoJsonWriter
         var keyField = field.MessageType.FindFieldByNumber(1);
         var valueField = field.MessageType.FindFieldByNumber(2);
 
+        using var entryBuffer = new MemoryStream();
         foreach (var property in value.EnumerateObject())
         {
             string entryPath = $"{path}.{property.Name}";
-            var keyElement = ParseMapKey(keyField, property.Name, entryPath);
-
-            byte[] entryBytes;
-            using (var entryBuffer = new MemoryStream())
+            entryBuffer.SetLength(0);
+            using (var entryOutput = new CodedOutputStream(entryBuffer, leaveOpen: true))
             {
-                using (var entryOutput = new CodedOutputStream(entryBuffer, leaveOpen: true))
+                if (keyField.FieldType == FieldType.String)
                 {
-                    WriteSingularValue(entryOutput, keyField, keyElement, entryPath, depth, resolveMessage);
-                    if (property.Value.ValueKind != JsonValueKind.Null)
-                        WriteSingularValue(entryOutput, valueField, property.Value, entryPath, depth + 1, resolveMessage);
-                    entryOutput.Flush();
+                    if (property.Name.Length > 0)
+                    {
+                        entryOutput.WriteTag(keyField.FieldNumber, WireFormat.WireType.LengthDelimited);
+                        entryOutput.WriteString(property.Name);
+                    }
                 }
-                entryBytes = entryBuffer.ToArray();
+                else
+                {
+                    var keyElement = ParseMapKey(keyField, property.Name, entryPath);
+                    WriteSingularValue(entryOutput, keyField, keyElement, entryPath, depth, resolveMessage);
+                }
+                if (property.Value.ValueKind != JsonValueKind.Null)
+                    WriteSingularValue(entryOutput, valueField, property.Value, entryPath, depth + 1, resolveMessage);
+                entryOutput.Flush();
             }
 
             output.WriteTag(field.FieldNumber, WireFormat.WireType.LengthDelimited);
-            output.WriteBytes(ByteString.CopyFrom(entryBytes));
+            output.WriteBytes(UnsafeByteOperations.UnsafeWrap(entryBuffer.GetBuffer().AsMemory(0, (int)entryBuffer.Length)));
         }
     }
 
@@ -926,10 +936,10 @@ internal static class ProtoJsonWriter
         _ => true
     };
 
-    private static bool TryGetField(JsonElement element, FieldDescriptor field, out JsonElement value, out string matchedName)
+    private static bool TryGetField(Dictionary<string, JsonElement> properties, FieldDescriptor field, out JsonElement value, out string matchedName)
     {
-        if (element.TryGetProperty(field.JsonName, out value)) { matchedName = field.JsonName; return true; }
-        if (field.JsonName != field.Name && element.TryGetProperty(field.Name, out value)) { matchedName = field.Name; return true; }
+        if (properties.TryGetValue(field.JsonName, out value)) { matchedName = field.JsonName; return true; }
+        if (field.JsonName != field.Name && properties.TryGetValue(field.Name, out value)) { matchedName = field.Name; return true; }
         value = default;
         matchedName = "";
         return false;

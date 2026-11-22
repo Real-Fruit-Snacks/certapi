@@ -80,7 +80,10 @@ internal static class AppWebView
                 return true;
             using var key = Registry.LocalMachine.OpenSubKey(@"SYSTEM\CurrentControlSet\Control\Terminal Server\");
             if (key?.GetValue("GlassSessionId") is int glass)
-                return glass != Process.GetCurrentProcess().SessionId;
+            {
+                using var current = Process.GetCurrentProcess();
+                return glass != current.SessionId;
+            }
         }
         catch (Exception ex) when (ex is DllNotFoundException or EntryPointNotFoundException or
                                        System.Security.SecurityException or UnauthorizedAccessException or IOException) { }

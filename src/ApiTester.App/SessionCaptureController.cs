@@ -101,10 +101,13 @@ public sealed class SessionCaptureController : IDisposable
                 string.IsNullOrEmpty(result.ReasonPhrase) ? "OK" : result.ReasonPhrase, headerLines);
 
             var observedHeaders = result.Headers ?? new List<KeyValuePair<string, string>>();
-            _browser.Dispatcher.Invoke(() =>
+            var call = new ObservedCall(method, uri, result.StatusCode, result.ContentType);
+            var respBody = result.Body ?? Array.Empty<byte>();
+            var respContentType = result.ContentType;
+            _ = _browser.Dispatcher.BeginInvoke(() =>
             {
-                CallObserved?.Invoke(new ObservedCall(method, uri, result.StatusCode, result.ContentType));
-                ResponseBody?.Invoke(result.Body ?? Array.Empty<byte>(), result.ContentType, observedHeaders, uri);
+                CallObserved?.Invoke(call);
+                ResponseBody?.Invoke(respBody, respContentType, observedHeaders, uri);
             });
         }
         catch (Exception ex)
@@ -112,7 +115,7 @@ public sealed class SessionCaptureController : IDisposable
             e.Response = environment.CreateWebResourceResponse(
                 new MemoryStream(Array.Empty<byte>()), 502, "Bad Gateway", "");
             var msg = ex.Message;
-            _browser.Dispatcher.Invoke(() => Failed?.Invoke(msg));
+            _ = _browser.Dispatcher.BeginInvoke(() => Failed?.Invoke(msg));
         }
         finally { deferral.Complete(); }
     }

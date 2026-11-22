@@ -15,6 +15,7 @@ public partial class HelpWindow : Window
     private const string DocsUrl = "https://real-fruit-snacks.github.io/certapi/";
 
     private readonly List<(string Title, Func<UIElement> Build)> _sections;
+    private readonly UIElement?[] _sectionCache;
     private static readonly FontFamily Code = new("Consolas");
 
     public HelpWindow()
@@ -37,7 +38,8 @@ public partial class HelpWindow : Window
             ("Keyboard shortcuts", Shortcuts),
             ("About", About),
         };
-        var titles = new List<string>();
+        _sectionCache = new UIElement?[_sections.Count];
+        var titles = new List<string>(_sections.Count);
         foreach (var s in _sections) titles.Add(s.Title);
         SectionList.ItemsSource = titles;
         SectionList.SelectedIndex = 0;
@@ -52,7 +54,8 @@ public partial class HelpWindow : Window
     private void SectionList_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         int i = SectionList.SelectedIndex;
-        if (i >= 0 && i < _sections.Count) ContentHost.Content = _sections[i].Build();
+        if (i >= 0 && i < _sections.Count)
+            ContentHost.Content = _sectionCache[i] ??= _sections[i].Build();
     }
 
     private void Header_Drag(object sender, MouseButtonEventArgs e)

@@ -15,6 +15,8 @@ public sealed class RequestTab : INotifyPropertyChanged
     // Transient response state for this tab (not persisted directly; Snapshot is).
     public ApiResponse? LastResponse { get; set; }
     public string LastRawText { get; set; } = "";
+    public FormattedResponse? CachedPretty { get; set; }
+    public string? CachedDiagnostics { get; set; }
     public HistorySnapshot? Snapshot { get; set; }
 
     /// <summary>Live network trace for this tab — requests sent and resources the Rendered view fetched.</summary>

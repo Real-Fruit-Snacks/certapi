@@ -20,16 +20,20 @@ public sealed record Http2Frame(
 {
     /// <summary>The type's name, or <c>UNKNOWN(n)</c> — extensions and future types are legal on a
     /// live connection, and a reader that hid them would be lying about what arrived.</summary>
-    public string TypeName => Enum.IsDefined(typeof(Http2FrameType), TypeCode)
-        ? ((Http2FrameType)TypeCode).ToString().ToUpperInvariant() switch
-        {
-            "RSTSTREAM" => "RST_STREAM",
-            "PUSHPROMISE" => "PUSH_PROMISE",
-            "WINDOWUPDATE" => "WINDOW_UPDATE",
-            "GOAWAY" => "GOAWAY",
-            var name => name
-        }
-        : $"UNKNOWN({TypeCode})";
+    public string TypeName => TypeCode switch
+    {
+        0 => "DATA",
+        1 => "HEADERS",
+        2 => "PRIORITY",
+        3 => "RST_STREAM",
+        4 => "SETTINGS",
+        5 => "PUSH_PROMISE",
+        6 => "PING",
+        7 => "GOAWAY",
+        8 => "WINDOW_UPDATE",
+        9 => "CONTINUATION",
+        _ => $"UNKNOWN({TypeCode})"
+    };
 
     /// <summary>Flag names, which are type-dependent: 0x01 means END_STREAM on DATA and ACK on
     /// SETTINGS, so a single shared table would mislabel half of them.</summary>
@@ -71,7 +75,8 @@ public sealed record Http2Frame(
           .Append($"[{At.TotalMilliseconds,8:F1} ms] ")
           .Append($"{TypeName,-13} ")
           .Append($"stream={StreamId,-3} len={Length,-6}");
-        if (FlagNames.Length > 0) sb.Append(' ').Append(FlagNames);
+        string flags = FlagNames;
+        if (flags.Length > 0) sb.Append(' ').Append(flags);
         if (Detail.Length > 0) sb.Append("  ").Append(Detail);
         return sb.ToString();
     }
@@ -116,6 +121,7 @@ public static class Http2FrameReader
         bool preface = StartsWithPreface(bytes);
         if (preface) at = Preface.Length;
 
+        int offsetIdx = 0;
         while (at + 9 <= bytes.Length)
         {
             int length = (bytes[at] << 16) | (bytes[at + 1] << 8) | bytes[at + 2];
@@ -128,7 +134,7 @@ public static class Http2FrameReader
             if (at + 9 + length > bytes.Length) break;      // a frame cut short by the capture limit
             var payload = bytes.Slice(at + 9, length);
 
-            frames.Add(new Http2Frame(TimeAt(offsets, at), direction, length, type, flags, stream,
+            frames.Add(new Http2Frame(TimeAt(offsets, at, ref offsetIdx), direction, length, type, flags, stream,
                                       Describe(type, flags, payload, includeSecrets)));
             at += 9 + length;
         }
@@ -136,16 +142,11 @@ public static class Http2FrameReader
         return new Http2Read(preface, frames, bytes.Length - at);
     }
 
-    private static TimeSpan TimeAt(IReadOnlyList<(int Offset, TimeSpan At)>? offsets, int position)
+    private static TimeSpan TimeAt(IReadOnlyList<(int Offset, TimeSpan At)>? offsets, int position, ref int idx)
     {
         if (offsets is null || offsets.Count == 0) return TimeSpan.Zero;
-        TimeSpan found = offsets[0].At;
-        foreach (var (offset, when) in offsets)
-        {
-            if (offset > position) break;
-            found = when;
-        }
-        return found;
+        while (idx + 1 < offsets.Count && offsets[idx + 1].Offset <= position) idx++;
+        return offsets[idx].At;
     }
 
     private static string Describe(byte type, byte flags, ReadOnlySpan<byte> payload, bool includeSecrets)

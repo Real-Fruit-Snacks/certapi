@@ -92,6 +92,25 @@ public static class CliCert
             NoteMissingIntermediates(certFile, cert.Thumbprint!, stderr);
         }
         else if (certQuery is null) return null;
+        else if (services.UsesDefaultListCertificates && certIssuer is null && certSerial is null &&
+                 TryNormalizeThumbprint(certQuery, out string thumb) &&
+                 new CertificateStoreService().FindByThumbprint(thumb, localMachine) is { } direct)
+        {
+            // Fast path: full 40-char SHA-1 thumbprint lookup avoids enumerating and probing
+            // private keys on every certificate in the Windows store.
+            var info = new CertificateInfo
+            {
+                Subject = direct.Subject,
+                Issuer = direct.Issuer,
+                Thumbprint = direct.Thumbprint,
+                NotBefore = direct.NotBefore,
+                NotAfter = direct.NotAfter,
+                HasClientAuthEku = true,
+                Certificate = direct
+            };
+            if (info.ExpiryWarning() is { } warning) stderr.WriteLine("warning: " + warning);
+            cert = direct;
+        }
         else
         {
             var clock = System.Diagnostics.Stopwatch.StartNew();
@@ -188,6 +207,21 @@ public static class CliCert
         var unlocked = SmartCardPin.Apply(cert, pin, out var note);
         if (note is not null) stderr.WriteLine("note: " + note);
         return unlocked;
+    }
+
+    private static bool TryNormalizeThumbprint(string query, out string normalized)
+    {
+        Span<char> buf = stackalloc char[40];
+        int n = 0;
+        foreach (char c in query)
+        {
+            if (!char.IsLetterOrDigit(c)) continue;
+            if (n == 40 || !Uri.IsHexDigit(c)) { normalized = ""; return false; }
+            buf[n++] = char.ToUpperInvariant(c);
+        }
+        if (n != 40) { normalized = ""; return false; }
+        normalized = new string(buf);
+        return true;
     }
 }
 

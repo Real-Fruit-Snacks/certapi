@@ -1,3 +1,4 @@
+using System.Buffers.Text;
 using System.Collections.Generic;
 using System.Text;
 
@@ -124,20 +125,17 @@ public static class StateSecrets
         return Encoding.UTF8.GetBytes(protectedValue);
     }
 
-    // Cheap guard first, mirroring the one in TryUnprotectBody: only decode a (possibly large,
-    // possibly binary) body as UTF-8 once its leading bytes already match the ASCII marker.
+    // Cheap guard first, mirroring the one in TryUnprotectBody: validates directly on the UTF-8
+    // bytes with Base64.IsValid so a (possibly large, possibly binary) body is never decoded to a
+    // UTF-16 string just to ask whether it is already ciphertext.
     private static bool LooksLikeProtectedBody(byte[] body) =>
-        StartsWithProtectedMarker(body) && SecretProtection.LooksProtected(Encoding.UTF8.GetString(body));
+        StartsWithProtectedMarker(body) &&
+        Base64.IsValid(body.AsSpan(ProtectedMarkerBytes.Length), out int decoded) && decoded >= 32;
 
     private static readonly byte[] ProtectedMarkerBytes = Encoding.ASCII.GetBytes(SecretProtection.Prefix);
 
-    private static bool StartsWithProtectedMarker(byte[] body)
-    {
-        if (body.Length < ProtectedMarkerBytes.Length) return false;
-        for (int i = 0; i < ProtectedMarkerBytes.Length; i++)
-            if (body[i] != ProtectedMarkerBytes[i]) return false;
-        return true;
-    }
+    private static bool StartsWithProtectedMarker(byte[] body) =>
+        body.AsSpan().StartsWith(ProtectedMarkerBytes);
 
     // Decrypt a stored response body in place. Never throws: a null from Unprotect or a
     // FormatException from the Base64 decode both mean "undecryptable" — result becomes empty and
@@ -149,11 +147,9 @@ public static class StateSecrets
     private static bool TryUnprotectBody(byte[] body, ISecretProtector protector, out byte[] result)
     {
         result = body;
-        if (body is null || body.Length == 0 || !StartsWithProtectedMarker(body)) return true;
+        if (body is null || body.Length == 0 || !LooksLikeProtectedBody(body)) return true;
 
         var text = Encoding.UTF8.GetString(body);
-        if (!SecretProtection.LooksProtected(text)) return true;
-
         var plain = protector.Unprotect(text);
         if (plain is null)
         {
@@ -174,7 +170,16 @@ public static class StateSecrets
 
     /// <summary>Decrypt every stored secret in place. A value that cannot be decrypted is treated
     /// as absent (per the table below) and described in <paramref name="warnings"/>.</summary>
-    public static void Unprotect(AppState state, ISecretProtector protector, List<string> warnings)
+    public static void Unprotect(AppState state, ISecretProtector protector, List<string> warnings) =>
+        UnprotectCore(state, protector, warnings, includeTabsHistoryAndCollections: true);
+
+    /// <summary>Decrypt only the fields a one-off read-only send needs: session tokens, session
+    /// cookies, and environment variables. Skips Tabs, History, and Collections so a large history
+    /// with encrypted response bodies pays zero DPAPI overhead on <c>certapi send</c>.</summary>
+    public static void UnprotectLight(AppState state, ISecretProtector protector, List<string> warnings) =>
+        UnprotectCore(state, protector, warnings, includeTabsHistoryAndCollections: false);
+
+    private static void UnprotectCore(AppState state, ISecretProtector protector, List<string> warnings, bool includeTabsHistoryAndCollections)
     {
         bool anyDropped = false;
 
@@ -216,6 +221,7 @@ public static class StateSecrets
         state.SessionCookies.Clear();
         state.SessionCookies.AddRange(survivingCookies);
 
+        if (includeTabsHistoryAndCollections)
         for (int i = 0; i < state.Tabs.Count; i++)
         {
             var tab = state.Tabs[i];
@@ -246,6 +252,7 @@ public static class StateSecrets
             }
         }
 
+        if (includeTabsHistoryAndCollections)
         for (int i = 0; i < state.History.Count; i++)
         {
             var h = state.History[i];
@@ -299,6 +306,7 @@ public static class StateSecrets
             }
         }
 
+        if (includeTabsHistoryAndCollections)
         foreach (var root in state.Collections)
             UnprotectNode(root, protector, root.Name, warnings, ref anyDropped);
 

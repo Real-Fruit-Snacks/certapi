@@ -31,9 +31,38 @@ public sealed class CertificateStoreService
 
     public X509Certificate2? FindByThumbprint(string thumbprint, bool includeLocalMachine = false)
     {
-        return ListClientCertificates(includeLocalMachine)
-            .FirstOrDefault(c => c.Thumbprint.Equals(thumbprint, StringComparison.OrdinalIgnoreCase))
-            ?.Certificate;
+        if (string.IsNullOrWhiteSpace(thumbprint)) return null;
+        var found = FindInStore(StoreLocation.CurrentUser, thumbprint);
+        if (found is not null) return found;
+        return includeLocalMachine ? FindInStore(StoreLocation.LocalMachine, thumbprint) : null;
+    }
+
+    private static X509Certificate2? FindInStore(StoreLocation location, string thumbprint)
+    {
+        try
+        {
+            using var store = new X509Store(StoreName.My, location);
+            store.Open(OpenFlags.ReadOnly | OpenFlags.OpenExistingOnly);
+            var matches = store.Certificates.Find(X509FindType.FindByThumbprint, thumbprint, validOnly: false);
+            X509Certificate2? kept = null;
+            foreach (var cert in matches)
+            {
+                if (kept is null && cert.HasPrivateKey &&
+                    cert.Thumbprint.Equals(thumbprint, StringComparison.OrdinalIgnoreCase))
+                {
+                    kept = cert;
+                }
+                else
+                {
+                    cert.Dispose();
+                }
+            }
+            return kept;
+        }
+        catch (CryptographicException)
+        {
+            return null;
+        }
     }
 
     private static X509Certificate2Collection ReadStore(StoreLocation location)

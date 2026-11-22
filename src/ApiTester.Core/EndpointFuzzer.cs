@@ -78,28 +78,28 @@ public static class EndpointFuzzer
         }
 
         int concurrency = Math.Clamp(plan.Concurrency, 1, 50);
+        int workerCount = Math.Min(concurrency, probes.Count);
         var results = new FuzzResult?[probes.Count];
+        int nextIndex = -1;
         int completed = 0;
-        using var gate = new SemaphoreSlim(concurrency);
-        var tasks = new List<Task>(probes.Count);
-        OperationCanceledException? canceled = null;
-        try
-        {
-            for (int i = 0; i < probes.Count; i++)
-            {
-                try { await gate.WaitAsync(ct); }
-                catch (OperationCanceledException oce) { canceled = oce; break; }
 
-                int index = i;
-                var (method, path, url) = probes[i];
-                tasks.Add(Task.Run(async () =>   // no ct here: the body always runs to its finally and releases the gate
+        var workers = new Task[workerCount];
+        for (int w = 0; w < workerCount; w++)
+        {
+            workers[w] = Task.Run(async () =>
+            {
+                while (!ct.IsCancellationRequested)
                 {
+                    int index = Interlocked.Increment(ref nextIndex);
+                    if (index >= probes.Count) return;
+
+                    var (method, path, url) = probes[index];
                     try
                     {
                         if (plan.DelayMs > 0) await Task.Delay(plan.DelayMs, ct);
                         var request = new ApiRequest
                         {
-                            Method = new HttpMethod(method),
+                            Method = ParseMethod(method),
                             Url = url,
                             Headers = plan.Headers,
                             Timeout = TimeSpan.FromSeconds(100)
@@ -111,7 +111,7 @@ public static class EndpointFuzzer
                         int done = Interlocked.Increment(ref completed);
                         progress?.Report(new FuzzProgress(done, probes.Count, result));
                     }
-                    catch (OperationCanceledException) { /* cancelled mid-probe; leave the slot null */ }
+                    catch (OperationCanceledException) { return; }
                     catch (Exception ex)
                     {
                         // A send that throws (rather than returning ApiResponse.Error) must not fault the batch —
@@ -121,19 +121,28 @@ public static class EndpointFuzzer
                         int done = Interlocked.Increment(ref completed);
                         progress?.Report(new FuzzProgress(done, probes.Count, result));
                     }
-                    finally { gate.Release(); }
-                }));
-            }
-        }
-        finally
-        {
-            // Always wait for every dispatched probe before the semaphore is disposed, even on early
-            // cancellation — otherwise a still-running probe calls Release() on a disposed semaphore.
-            try { await Task.WhenAll(tasks); } catch { /* per-probe faults are already captured as results */ }
+                }
+            }, CancellationToken.None);
         }
 
-        if (canceled is not null) throw canceled;
+        await Task.WhenAll(workers);
         ct.ThrowIfCancellationRequested();
-        return new FuzzReport(results.Where(r => r is not null).Select(r => r!).ToList());
+
+        var finalResults = new List<FuzzResult>(probes.Count);
+        foreach (var r in results)
+            if (r is not null) finalResults.Add(r);
+        return new FuzzReport(finalResults);
     }
+
+    private static HttpMethod ParseMethod(string method) => method switch
+    {
+        "GET" => HttpMethod.Get,
+        "HEAD" => HttpMethod.Head,
+        "POST" => HttpMethod.Post,
+        "PUT" => HttpMethod.Put,
+        "DELETE" => HttpMethod.Delete,
+        "PATCH" => HttpMethod.Patch,
+        "OPTIONS" => HttpMethod.Options,
+        _ => new HttpMethod(method)
+    };
 }

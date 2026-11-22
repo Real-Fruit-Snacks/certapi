@@ -80,25 +80,13 @@ public sealed class GrpcCaller : IAsyncDisposable
         if (_protoset is not null) return _protoset.Services;
 
         var names = await _reflection.ListServicesAsync(ct);
+        var loaded = await _descriptors.LoadServicesAsync(names, ct);
         var services = new List<GrpcServiceInfo>(names.Count);
         foreach (var name in names)
         {
-            IReadOnlyList<GrpcMethodInfo> methods;
-            try
-            {
-                var service = await _descriptors.FindServiceAsync(name, ct);
-                // Shares DescriptorPool.Describe's projection with the descriptor-set listing rather
-                // than re-deriving GrpcMethodInfo from the descriptor a second way — but deliberately
-                // keeps constructing GrpcServiceInfo below with `name` (what reflection was asked
-                // for), not `service.FullName` (what Describe would use): the two are the same string
-                // in every case this codebase has seen, but nothing here guarantees it, and the
-                // reflection path has always reported the name it asked for.
-                methods = DescriptorPool.Describe(service).Methods;
-            }
-            catch (GrpcMethodNotFoundException)
-            {
-                methods = Array.Empty<GrpcMethodInfo>();
-            }
+            IReadOnlyList<GrpcMethodInfo> methods = loaded.TryGetValue(name, out var service)
+                ? DescriptorPool.Describe(service).Methods
+                : Array.Empty<GrpcMethodInfo>();
             services.Add(new GrpcServiceInfo(name, methods));
         }
         return services;

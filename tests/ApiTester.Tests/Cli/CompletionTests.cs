@@ -87,7 +87,7 @@ public class CompletionTests
         Assert.Equal(new[] { "list", "add", "remove" }, Complete("trust", ""));
         Assert.Equal(new[] { "path", "show", "profiles", "init" }, Complete("config", ""));
         Assert.Contains("curl", Complete("import", ""));
-        Assert.Equal(new[] { "powershell" }, Complete("completion", ""));
+        Assert.Equal(new[] { "powershell", "bash", "zsh" }, Complete("completion", ""));
         Assert.Empty(Complete("mock", ""));
         Assert.Empty(Complete("send", ""));
     }
@@ -166,8 +166,16 @@ public class CompletionTests
     public void Another_shell_is_refused_with_the_one_that_works()
     {
         var se = new StringWriter();
-        Assert.Equal(2, CliApp.Run(new[] { "completion", "bash" }, new StringWriter(), se, null, Services()));
+        Assert.Equal(2, CliApp.Run(new[] { "completion", "fish" }, new StringWriter(), se, null, Services()));
         Assert.Contains("certapi completion powershell", se.ToString());
+
+        var bash = new StringWriter();
+        Assert.Equal(0, CliApp.Run(new[] { "completion", "bash" }, bash, new StringWriter(), null, Services()));
+        Assert.Contains("complete -F _certapi_complete", bash.ToString());
+
+        var zsh = new StringWriter();
+        Assert.Equal(0, CliApp.Run(new[] { "completion", "zsh" }, zsh, new StringWriter(), null, Services()));
+        Assert.Contains("compdef _certapi", zsh.ToString());
     }
 
     [Fact]

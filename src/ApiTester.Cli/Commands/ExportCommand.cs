@@ -11,6 +11,8 @@ public static class ExportCommand
                certapi export workspace -o <file> [--workspace <file>] [--include-secrets]
                certapi export markdown -o <folder> [--workspace <file>] [--into <name>]
                                        [--index] [--include-secrets]
+               certapi export code <curl|powershell|python|csharp> <Collection/Request>
+                                   [-o <file>] [--env <name>] [--workspace <file>]
 
         openapi: writes collections (optionally one root folder) as an OpenAPI 3.0
         document — auth is exported as a security scheme only, never the secrets.
@@ -57,12 +59,24 @@ public static class ExportCommand
         bool noTemplateIds = args.Flag("--no-template-ids");
         bool includeSecrets = args.Flag("--include-secrets");
         string? workspace = args.Value("--workspace");
+        string? envName = args.Value("--env");
         string? into = args.Value("--into");
         bool index = args.Flag("--index");
         string? outFile = args.Value("-o", "--output");
         var positionals = args.Positionals();
-        if (positionals.Count is < 1 or > 2 || outFile is null) throw new CliUsageException(Help);
+        if (positionals.Count == 0) throw new CliUsageException(Help);
         string kind = positionals[0].ToLowerInvariant();
+        if (kind == "code")
+        {
+            if (positionals.Count != 3) throw new CliUsageException(Help);
+            if (fromHar is not null || host is not null || noTemplateIds || includeSecrets || into is not null || index)
+                throw new CliUsageException("Those options do not apply to 'export code'.");
+            var codeState = CliWorkspace.Load(workspace, services.LiveStatePath, stderr);
+            return ExportCode(codeState, positionals[1], positionals[2], envName, outFile, stdout, stderr);
+        }
+        if (envName is not null)
+            throw new CliUsageException("--env only applies to 'export code'.");
+        if (positionals.Count is < 1 or > 2 || outFile is null) throw new CliUsageException(Help);
 
         if (includeSecrets && (fromHar is not null || kind is not ("workspace" or "markdown")))
             throw new CliUsageException(
@@ -109,19 +123,16 @@ public static class ExportCommand
             case "workspace":
             {
                 if (positionals.Count != 1) throw new CliUsageException(Help);
-                var clone = state.DeepClone();
-                clone.WindowWidth = clone.WindowHeight = clone.WindowLeft = clone.WindowTop = null;
-                clone.WindowMaximized = false;
-
                 if (includeSecrets)
                 {
-                    var result = clone.SaveTo(outFile);
+                    var result = state.SaveTo(outFile, SecretProtection.Default, stripWindowGeometry: true);
                     stderr.WriteLine($"Workspace exported to {outFile} — it includes auth values and history, so treat it as private. " +
                         "The secrets in it are encrypted for your Windows user, so another user or another machine will not be able to read them.");
                     CliWorkspace.ReportSaveResult(result, outFile, stderr);
                 }
                 else
                 {
+                    var clone = state.SnapshotForSave(stripWindowGeometry: true);
                     var summary = StateSecrets.Strip(clone);
                     var result = clone.SaveTo(outFile);
                     stderr.WriteLine(summary.Any
@@ -188,6 +199,48 @@ public static class ExportCommand
 
         File.WriteAllText(outFile, OpenApiExporter.ToJson(pc));
         stderr.WriteLine($"Exported {count} operation(s) from {Path.GetFileName(harFile)} to {outFile}.");
+        return ExitCodes.Ok;
+    }
+
+    private static int ExportCode(
+        AppState state, string language, string targetPath, string? envName,
+        string? outFile, TextWriter stdout, TextWriter stderr)
+    {
+        var targets = CliWorkspace.ResolveTargets(state, targetPath, all: false);
+        if (targets.Count != 1)
+            throw new CliUsageException($"'{targetPath}' matched {targets.Count} saved requests; name one request.");
+        var model = targets[0].Node.Request!;
+        var vars = CliWorkspace.BuildVars(state, envName, Array.Empty<string>());
+        string R(string s) => VariableResolver.Resolve(s, vars).Result;
+
+        string url = model.ExportUrl(vars.Count > 0 ? R : null);
+        var headers = new List<KeyValuePair<string, string>>();
+        foreach (var h in model.Headers)
+            if (h.Enabled && !string.IsNullOrWhiteSpace(h.Name))
+                headers.Add(new(R(h.Name.Trim()), R(h.Value ?? "")));
+        switch (model.AuthType)
+        {
+            case "Bearer" when !string.IsNullOrWhiteSpace(model.AuthSecret):
+                headers.Add(new("Authorization", "Bearer " + R(model.AuthSecret!.Trim())));
+                break;
+            case "Basic":
+                headers.Add(new("Authorization", "Basic " + Convert.ToBase64String(
+                    System.Text.Encoding.UTF8.GetBytes($"{R(model.AuthUser ?? "")}:{R(model.AuthSecret ?? "")}"))));
+                break;
+        }
+        string? body = string.IsNullOrEmpty(model.Body) ? null : R(model.Body!);
+        string? contentType = model.ContentType == "(none)" ? null : model.ContentType;
+        var codeReq = new CodeRequest(model.Method, url, headers, body, model.IgnoreServerCert, model.CertThumbprint, contentType);
+        string snippet;
+        try { snippet = CodeGenerator.Generate(language, codeReq); }
+        catch (ArgumentException ex) { throw new CliUsageException(ex.Message); }
+
+        if (outFile is not null)
+        {
+            File.WriteAllText(outFile, snippet + "\n");
+            stderr.WriteLine($"Exported {language} snippet to {outFile}.");
+        }
+        else stdout.WriteLine(snippet);
         return ExitCodes.Ok;
     }
 

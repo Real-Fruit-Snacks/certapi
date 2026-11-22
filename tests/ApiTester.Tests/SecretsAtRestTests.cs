@@ -874,4 +874,104 @@ public class SecretsAtRestTests
         }
         finally { DeleteWithBackups(path); }
     }
+
+    [Fact]
+    public void PeekTheme_reads_theme_streaming_including_bom_missing_and_corrupt_files()
+    {
+        var path = TempPath("peek-theme");
+        try
+        {
+            Assert.Null(AppState.PeekTheme(path));
+
+            // Large nested collections before Theme to force multi-chunk scanning.
+            var state = BuildLegacyWorkspace();
+            state.Theme = "Light";
+            for (int i = 0; i < 40; i++)
+                state.History.Add(new HistoryEntry { Method = "GET", Url = $"/items/{i}", Body = new string('a', 512) });
+            var json = JsonSerializer.Serialize(state);
+            File.WriteAllBytes(path, Encoding.UTF8.GetPreamble().Concat(Encoding.UTF8.GetBytes(json)).ToArray());
+
+            Assert.Equal("Light", AppState.PeekTheme(path));
+
+            // Corrupt JSON falls back cleanly to null without throwing.
+            File.WriteAllText(path, "{ \"Theme\": ");
+            Assert.Null(AppState.PeekTheme(path));
+        }
+        finally { DeleteWithBackups(path); }
+    }
+
+    [Fact]
+    public void NeedsSecretUpgrade_handles_empty_non_object_and_trailing_whitespace()
+    {
+        var path = TempPath("upgrade-edge");
+        try
+        {
+            Assert.False(AppState.NeedsSecretUpgrade(path));
+
+            File.WriteAllText(path, "");
+            Assert.True(AppState.NeedsSecretUpgrade(path));
+
+            File.WriteAllText(path, "[]");
+            Assert.True(AppState.NeedsSecretUpgrade(path));
+
+            File.WriteAllText(path, $"{{ \"SchemaVersion\": {AppState.CurrentSchemaVersion} }}   \r\n");
+            Assert.False(AppState.NeedsSecretUpgrade(path));
+
+            File.WriteAllText(path, $"{{ \"SchemaVersion\": {AppState.CurrentSchemaVersion}, \"Theme\": \"Dark\" }} trailing-garbage");
+            Assert.True(AppState.NeedsSecretUpgrade(path));
+
+            File.WriteAllText(path, "{ \"SchemaVersion\": 2 }");
+            Assert.True(AppState.NeedsSecretUpgrade(path));
+        }
+        finally { DeleteWithBackups(path); }
+    }
+
+    [Fact]
+    public void SaveTo_with_stripWindowGeometry_preserves_live_geometry_and_reuses_protector()
+    {
+        var path1 = TempPath("geom-1");
+        var path2 = TempPath("geom-2");
+        try
+        {
+            var state = BuildStateWithAllSecretKinds();
+            state.WindowWidth = 1400;
+            state.WindowHeight = 900;
+            state.WindowLeft = 100;
+            state.WindowTop = 50;
+            state.WindowMaximized = true;
+
+            state.SaveTo(path1);
+            var loaded = AppState.LoadFrom(path1);
+            var firstRaw = File.ReadAllText(path1);
+
+            loaded.SaveTo(path2, SecretProtection.Default, stripWindowGeometry: true);
+
+            // Live state keeps its window geometry intact.
+            Assert.Equal(1400, loaded.WindowWidth);
+            Assert.Equal(900, loaded.WindowHeight);
+            Assert.Equal(100, loaded.WindowLeft);
+            Assert.Equal(50, loaded.WindowTop);
+            Assert.True(loaded.WindowMaximized);
+
+            // Exported file stripped geometry and reused the stored ciphertext for unchanged secrets.
+            var exported = AppState.LoadFrom(path2);
+            Assert.Null(exported.WindowWidth);
+            Assert.Null(exported.WindowHeight);
+            Assert.Null(exported.WindowLeft);
+            Assert.Null(exported.WindowTop);
+            Assert.False(exported.WindowMaximized);
+            Assert.Equal(PlainToken, Assert.Single(exported.SessionTokens).Token);
+
+            using var doc1 = JsonDocument.Parse(firstRaw);
+            using var doc2 = JsonDocument.Parse(File.ReadAllText(path2));
+            Assert.Equal(
+                doc1.RootElement.GetProperty("SessionTokens")[0].GetProperty("Token").GetString(),
+                doc2.RootElement.GetProperty("SessionTokens")[0].GetProperty("Token").GetString());
+        }
+        finally
+        {
+            DeleteWithBackups(path1);
+            DeleteWithBackups(path2);
+        }
+    }
 }

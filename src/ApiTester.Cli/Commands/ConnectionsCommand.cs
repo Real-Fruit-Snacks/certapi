@@ -132,7 +132,7 @@ public static class ConnectionsCommand
                     requests = c.Requests,
                 }),
                 reusing = connections.Length > 0 && connections.Sum(c => c.Requests) > connections.Length,
-            }, new System.Text.Json.JsonSerializerOptions { WriteIndented = true }));
+            }, IndentedJson));
             return 0;
         }
 
@@ -143,6 +143,8 @@ public static class ConnectionsCommand
                            + ". A failed request may still have opened a connection.");
         return 0;
     }
+
+    private static readonly System.Text.Json.JsonSerializerOptions IndentedJson = new() { WriteIndented = true };
 
     private static int ParseCount(string? raw, string flag, int fallback)
     {
