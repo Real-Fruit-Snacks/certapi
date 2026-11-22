@@ -6,6 +6,12 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.103.1] - 2026-11-22
+
+### Changed
+- Updated in-app `F1` help (`HelpWindow`) to cover the Tools menu (Benchmark, gRPC, Doctor, Cert Inspector, Smart-Card PIN), `certapi cors`, full MCP toolset, `.http`/Postman/Insomnia/WSDL imports, Bash/Zsh completions, and `Ctrl+K`/`Ctrl+F` shortcuts.
+- Synced `README.md`, GitHub Pages (`docs/index.html`), and wiki pages (`05`, `11`, `17`, `20`, `21`, `22`, `23`, `28`) with all `1.102.0`–`1.103.0` features.
+
 ## [1.103.0] - 2026-11-22
 
 ### Added
@@ -3698,7 +3704,8 @@ Initial release.
 - Save any response (including binary) to a file.
 - Self-contained single-file executable — no installer, no admin rights, no runtime dependency.
 
-[Unreleased]: https://github.com/Real-Fruit-Snacks/certapi/compare/v1.103.0...HEAD
+[Unreleased]: https://github.com/Real-Fruit-Snacks/certapi/compare/v1.103.1...HEAD
+[1.103.1]: https://github.com/Real-Fruit-Snacks/certapi/compare/v1.103.0...v1.103.1
 [1.103.0]: https://github.com/Real-Fruit-Snacks/certapi/compare/v1.102.0...v1.103.0
 [1.102.0]: https://github.com/Real-Fruit-Snacks/certapi/compare/v1.101.0...v1.102.0
 [1.101.0]: https://github.com/Real-Fruit-Snacks/certapi/compare/v1.100.2...v1.101.0
