@@ -157,6 +157,30 @@ An imported document or schema (`wsdl:import`, `xsd:import`, `xsd:include`) is *
 warning, never fetched** — this reads only the file you name and touches no network. If operations
 seem missing, import the file the warning names as well.
 
+## Import a `.http` file (VS Code / JetBrains)
+
+```powershell
+certapi import http .\api.http
+certapi import http .\api.http --into "orders" --workspace .\suite.json
+```
+
+In the app: **Import ▾ › Import .http file…** (Postman, Insomnia v4, and WSDL imports are also
+available directly under **Import ▾**).
+
+Reads standard `###` request blocks, `@variable = value` declarations (converting `{{var}}`
+references into an environment), methods, URLs, headers, and bodies.
+
+## Export as code snippets
+
+Generate a ready-to-run client snippet from any saved request on the command line:
+
+```powershell
+certapi export code curl "Orders/Create order" --env Staging
+certapi export code powershell "Orders/Create order" -o call.ps1
+certapi export code python "Orders/Create order"
+certapi export code csharp "Orders/Create order"
+```
+
 ## Export as OpenAPI
 
 Export your collections (or a folder) as an OpenAPI document — useful for sharing the shape of an

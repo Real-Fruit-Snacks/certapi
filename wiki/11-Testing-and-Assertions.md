@@ -14,9 +14,12 @@ On the **Tests** tab, add one or more assertion rows. Each has:
   - **Body** — a value in the JSON (JavaScript Object Notation) body at a **Path** (e.g. `data.id`)
   - **Body-text** — the raw body as text
   - **CORS** — how a browser page on the origin in **Path** would take the response: Value
-    `allowed`, `credentials` (also with cookies or the client certificate) or `blocked`, with
-    `Equals` (or `NotEquals`). The request is sent with that `Origin` header unless it already has
-    one, and the Diagnostics view shows the CORS verdict for any request that carries an `Origin`
+    `allowed`, `credentials` (also with cookies or the client certificate), `blocked`, or
+    `exposes <Header-Name>` (and `!exposes <Header-Name>` on the CLI) to assert whether a response
+    header is readable by scripts, with `Equals` or `NotEquals`. The request is sent with that
+    `Origin` header unless it already has one, multiple distinct CORS origins on a `GET`/`HEAD`
+    request are probed individually so reflecting servers are caught, and the Diagnostics view
+    shows the CORS verdict for any request that carries an `Origin`
 - **Operator** — `Equals`, `NotEquals`, `Contains`, `Matches` (regex), `Exists`, `NotExists`,
   `LessThan`, `GreaterThan`, and `schema` (the JSON at the Path matches a JSON Schema — see below)
 - **Value** — the expected value (not needed for `Exists`/`NotExists`)
@@ -35,6 +38,7 @@ After a send, the Tests tab shows each rule's pass/fail and the actual value.
 | Body | Equals | `data.ok` | `true` | a JSON field's value |
 | Body-text | Matches | | `"id":\s*\d+` | a regex over the whole body |
 | CORS | Equals | `https://app.example.com` | `credentials` | a page there can read it, with credentials |
+| CORS | Equals | `https://app.example.com` | `exposes X-Correlation-Id` | a script there can read `X-Correlation-Id` |
 
 ## JSON Schema assertions
 

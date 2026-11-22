@@ -220,12 +220,17 @@ Results open as tabs or save as a collection.
 
 | Control | Default | What it does |
 |---|---|---|
-| **Page origin** | the last one used, else `http://localhost:3000` | The origin of the page making the call; comma-separated for several |
+| **Method / URL** | active request | One or more comma-separated HTTP methods (`GET,PUT`) and an `http(s)://` or `ws(s)://` URL |
+| **Page origin** | the last one used, else `http://localhost:3000` | The origin of the page making the call; comma-separated for a matrix |
+| **Headers** | active request's headers | Editable `Name: Value` lines sent by the script |
 | **With credentials** | on | The page sends cookies / `credentials: "include"` — the only way a browser presents a client certificate — so every rule is the strict one |
-| **Private network** | off | Check Private Network Access as well |
+| **Private network** | off | Check Private Network Access as well (also noted automatically when calling a private address from a public origin) |
 | **Send unsafe methods** | off | Send the request itself for a method other than GET or HEAD; otherwise it is only preflighted |
-| **Preflight without the certificate** | off | Send the preflight without the client certificate, as the Fetch standard does |
-| **Fix for** | (none) | Add the server configuration that grants what was checked: all, ASP.NET Core, nginx, Express, Spring, IIS, AWS API Gateway |
+| **Preflight only** | off | Never send the actual request; check only the browser preflight |
+| **Preflight without cert** | off | Send the preflight without the client certificate, as the Fetch standard does |
+| **From HAR…** | — | Load a browser HAR capture and judge every cross-origin request recorded in it |
+| **Fix** | (none) | Add the server configuration that grants what was checked: all, ASP.NET Core, nginx, Express, Spring, IIS, AWS API Gateway, Azure APIM, YARP, Cloudflare, Caddy, Traefik, Apache, FastAPI, Go |
+| **Copy / Copy Fix / JSON…** | — | Copy the full report or generated server config to the clipboard, or save the structured JSON report |
 
 Nothing here is saved with the request. See [Checking CORS](16-Response-Views.md#checking-cors).
 

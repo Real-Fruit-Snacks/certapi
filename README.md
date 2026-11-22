@@ -72,10 +72,10 @@ Two front ends over one engine (`ApiTester.Core`). The desktop app covers everyt
 | `certapi crawl <url>` | Walks a site's links with the certificate: broken links, or an offline mirror |
 | `certapi fuzz <url>` | Probes a wordlist to map an undocumented API |
 | `certapi bench <url>` | p50/p90/p99 latency over a pooled connection; retries forced off |
-| `certapi import` / `certapi export` | cURL, Postman, OpenAPI, HAR, workspaces, markdown notes |
+| `certapi import` / `certapi export` | cURL, Postman, Insomnia, Bruno, OpenAPI, WSDL, `.http`, HAR, workspaces, code snippets (`export code`), markdown notes |
 | `certapi mcp` | Model Context Protocol server for an AI agent, behind a host allowlist |
 
-Also: `certs`, `trust`, `proxy`, `connections`, `config`, `selftest`, and `completion` for PowerShell tab completion. `certapi <command> --help` lists every flag, curl habits (`-k`, `-i`, `-u`, `send -d @file`, …) work, and a mistyped flag names the one you meant; the [CLI reference](wiki/21-CLI-Reference.md) has them on one page.
+Also: `certs`, `trust`, `proxy`, `connections`, `config`, `selftest`, and `completion` for PowerShell, Bash and Zsh tab completion. `certapi <command> --help` lists every flag, curl habits (`-k`, `-i`, `-u`, `send -d @file`, …) work, and a mistyped flag names the one you meant; the [CLI reference](wiki/21-CLI-Reference.md) has them on one page.
 
 ```powershell
 certapi send https://internal.corp/api/orders --cert "CN=matt"

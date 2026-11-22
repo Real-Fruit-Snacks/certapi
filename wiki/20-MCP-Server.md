@@ -55,7 +55,11 @@ directory. A secret is never written into the file: `--cert-pin` is refused (put
 | `grpc_call` | Invoke a gRPC method — unary, server-streaming, client-streaming, or bidirectional — with the pinned certificate |
 | `ws_exchange` | Open a WebSocket on an allowed host, send text messages, and return what comes back — until a count, a time or a close |
 | `sse_read` | Read a Server-Sent Events stream on an allowed host and return the events that arrive — until a count, a time or the end of the stream |
-| `cors_check` | Would a browser page on an origin be allowed to make this request? Sends the preflight a browser would, then the request with `Origin`, and returns the verdict, each rule that passed or failed, and the headers a script could read |
+| `cors_check` | Would a browser page on an origin (or matrix of origins × methods) be allowed to make this request? Sends the preflight a browser would, then the request with `Origin` (or probes `ws://`/`wss://` WebSockets, compares two URLs via `diffUrl`, runs a security `audit`, or prints server config fixes via `suggest`) |
+| `doctor` | Run the stage-by-stage connection doctor (DNS, TCP, proxy, TLS handshake, server chain, acceptable CAs, HTTP response) against an allowed URL |
+| `inspect_cert` | Inspect a certificate from the Windows certificate store (by thumbprint or subject) or a local file offline — thumbprints, SANs, EKUs, key size/algorithm, hardware/smart-card provider, chain status |
+| `inspect_token` | Decode a JWT header, claims, issuer, audiences, scopes, roles, and expiry completely offline (from a raw token or a captured session token for an origin) |
+| `diff_known_good` | Diff the live response of a saved request against its recorded known-good baseline (status, headers, and JSON body) |
 | `self_test` | Prove the mTLS path end-to-end |
 
 ### Tool arguments
@@ -70,7 +74,11 @@ directory. A secret is never written into the file: `--cert-pin` is refused (put
 | `grpc_call` | `address` and `method` (`Service/Method`) required; `data` (one message, or an array of messages for a streaming request); `metadata` (an object); `maxMessages` (default 100) |
 | `ws_exchange` | `url` (`ws://` or `wss://`, required); `messages` (text to send, in order); `headers`; `maxMessages` (default 20; 0 sends only); `seconds` (default 10) |
 | `sse_read` | `url` (required); `headers`; `lastEventId` (sent as `Last-Event-ID`, to resume); `maxEvents` (default 20); `seconds` (default 10) |
-| `cors_check` | `url` and `origin` required; `method` (default `GET`); `headers` (what the page's script sets); `body`; `contentType`; `credentials` (default false); `sendActual` (send the request itself for a method other than GET or HEAD; default false, so only the preflight is sent); `privateNetwork` (check Private Network Access too); `audit` (probe for misconfigurations instead, graded high to info, with `origin` as the trusted origin). Redirects are followed as a browser follows them, and each hop's host must be on the allowlist |
+| `cors_check` | `url` (`http(s)://` or `ws(s)://`, required); `origin` or `origins` (array; optional when `audit` is true); `method` or `methods` (array, default `GET`); `headers` (what the page's script sets); `body`; `contentType`; `credentials` (default false); `sendActual` (default false); `preflightOnly` (default false); `preflightWithoutCert` (default false); `privateNetwork` (default false); `audit` (probe for misconfigurations, graded high to info); `suggest` (framework name or `"all"`); `maxAge` (seconds for `suggest`, default 600); `diffUrl` (second allowed URL to compare CORS policies against). Redirects are followed hop by hop, and every host must be on the allowlist |
+| `doctor` | `url` (required); `checkRevocation` (default false) |
+| `inspect_cert` | `cert` (store thumbprint/subject) or `certFile` (local path); `store` (`CurrentUser` / `LocalMachine`); `password`; `checkRevocation` (default false) |
+| `inspect_token` | `token` (raw JWT) or `origin` (look up captured session token in workspace) |
+| `diff_known_good` | `path` (saved request path, required); `env`; `vars` (an object) |
 | `list_saved`, `list_environments`, `self_test` | none |
 
 A stream tool always returns: it listens until its count is reached, its time is up (never longer

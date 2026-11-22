@@ -90,7 +90,16 @@ Three more that save time:
   and run `certapi cors --from-har page.har`: every cross-origin request, with the reason for each
   one that failed.
 - **The fix.** Add `--suggest` (or `--suggest nginx`, `aspnet`, `express`, `spring`, `iis`,
-  `apigateway`) for the server configuration that grants exactly what the page needs.
+  `apigateway`, `apim`, `yarp`, `cloudflare`, `caddy`, `traefik`, `apache`, `fastapi`, `go`, with
+  optional `--max-age <seconds>`) for the server configuration that grants exactly what the page
+  needs.
+- **Staging vs production drift & full-spec sweeps.** `certapi cors <staging-url> --diff <prod-url> --origin <o>`
+  shows every header or verdict difference between two environments, and
+  `certapi cors --from-openapi spec.json --base-url <url> --origin <o>` sweeps every documented
+  operation at once.
+- **Cross-site cookies & CORP.** When `--credentials` is set, `certapi cors` also flags `Set-Cookie`
+  headers missing `SameSite=None; Secure` (or `Partitioned` for CHIPS), plus `Cross-Origin-Resource-Policy`,
+  `COEP`/`COOP`, and `Timing-Allow-Origin`.
 - **A mutual-TLS API whose preflight never arrives.** If the server demands the client certificate
   during the TLS handshake, a browser's preflight — which carries no credentials — can be refused
   before CORS is reached. `certapi cors … --preflight-without-cert` shows it; the cure is optional

@@ -441,8 +441,8 @@ public partial class HelpWindow : Window
         P("Bring requests in from elsewhere with the Import ▾ menu next to the tabs."),
         Sub("PASTE CURL"),
         P("Paste a curl command and it opens a ready-to-send tab with the method, URL, query parameters, headers, body, and auth filled in. It understands -X, -H, -d / --data, -u (Basic auth), -k (insecure), an Authorization: Bearer header (mapped to the Bearer helper), quoting, and line continuations."),
-        Sub("IMPORT OPENAPI / SWAGGER"),
-        P("Choose a JSON OpenAPI 3.x or Swagger 2.0 file and it builds a collection of requests, grouped into folders by tag, with the server (OpenAPI) or host/basePath (Swagger) used as each request's website."),
+        Sub("IMPORT OPENAPI, POSTMAN, INSOMNIA, WSDL & .HTTP"),
+        P("Under Import ▾ you can import OpenAPI 3.x / Swagger 2.0 JSON, Postman v2.0/v2.1 collections, Insomnia v4 exports, WSDL 1.1/SOAP 1.2 documents, and VS Code / JetBrains .http files directly into collections and environments (on the CLI: certapi import curl|openapi|postman|insomnia|bruno|wsdl|http|har)."),
         Sub("CAPTURE & REPLAY HAR"),
         P("Import ▾ → “Export Network trace as HAR…” writes the current tab's Network trace to an " +
           "HTTP Archive (HAR) file — every request logged, with each redirect hop kept as its own " +
@@ -502,9 +502,10 @@ public partial class HelpWindow : Window
             "certapi mock runs a standing local test server to fire requests at — it echoes each request and serves /status/<code>, /sse, /token, /windows-auth, /cookie-auth, and a WebSocket echo, over http, --tls, or --mtls (generating the certs). Point the app at it to try every feature without a real API. --har <file> replays a captured session instead — the built-in routes aren't served while replaying, and --no-match-status (default 404) sets what a request matching nothing gets back.",
             "certapi serve <upstream> --port <n> runs a local gateway on 127.0.0.1: point an app's base URL at the port and it reaches a certificate-protected site with your client certificate attached — no mTLS code in the app. Mount several upstreams behind the one port with --upstream /api=https://api.internal, add --browser when the caller is a web page (below), and add --tls to serve the gateway itself over HTTPS.",
             "certapi grpc list <address> discovers the services and methods a gRPC server advertises via server reflection; certapi grpc call <address> <Service/Method> -d '<json>' invokes one — unary, server-streaming, client-streaming, or bidirectional, chosen from the method's own definition — with your Windows-store client certificate attached exactly as send uses it. A response prints as JSON — one compact object per line for a streaming method as each arrives — and --max-messages <n> stops a stream early. See the note below for what this command deliberately does not do.",
-            "certapi mcp runs a Model Context Protocol server so an AI agent can make mTLS calls with a certificate you pin at launch, bounded by a host allowlist — send_request, list_certificates, list_saved, run_saved, and self_test tools over stdio.",
-            "certapi import / export move cURL commands, OpenAPI documents, and whole workspaces in and out.",
-            "Exit codes are script-friendly: 0 success, 1 failure, 2 usage error, 3 data error. Run certapi <command> --help for all options, and certapi completion powershell | Out-String | Invoke-Expression for tab completion. certapi update installs the newest release, checked against GitHub's SHA-256."),
+            "certapi cors <url> --origin <o> checks a cross-origin request the way a browser does — preflight, redirects, cross-site Set-Cookie, CORP/COEP/COOP, Timing-Allow-Origin, Private Network Access, --audit (WebSockets too), --diff <other-url>, --from-har, --from-openapi, and --suggest for 14 frameworks (also in the app via CORS…).",
+            "certapi mcp runs a Model Context Protocol server so an AI agent can make mTLS calls with a certificate you pin at launch, bounded by a host allowlist — send_request, run_saved, run_chain, list_saved, list_environments, list_certificates, grpc_list, grpc_call, ws_exchange, sse_read, cors_check, doctor, inspect_cert, inspect_token, diff_known_good, and self_test tools over stdio.",
+            "certapi import / export move cURL, Postman, Insomnia, Bruno, OpenAPI, WSDL, .http, HAR, workspaces, code snippets (export code), and markdown notes in and out.",
+            "Exit codes are script-friendly: 0 success, 1 failure, 2 usage error, 3 data error. Run certapi <command> --help for all options, and certapi completion powershell|bash|zsh for tab completion. certapi update installs the newest release, checked against GitHub's SHA-256."),
         Sub("BENCHING AN ENDPOINT"),
         P("certapi bench sends the same request over and over down the same client-certificate path " +
           "the rest of the tool uses, so what it measures is what a real send does. Percentiles come " +
@@ -521,8 +522,8 @@ public partial class HelpWindow : Window
                 "the CONNECT tunnel is opened once and reused. " +
                 "Retries are also forced off during a bench, because a " +
                 "retry turns a failure into a slow success and hides the failure rate the bench exists " +
-                "to measure — --bench-retries measures it anyway. There is no window for the bench: it " +
-                "is a command-line concern."),
+                "to measure — --bench-retries measures it anyway. In the desktop app, open Tools ▾ → " +
+                "Benchmark current request… to run a benchmark interactively."),
         Sub("THE GATEWAY, FROM A BROWSER"),
         P("One certapi serve can front several upstreams: --upstream /api=https://api.internal mounts " +
           "a host at a path prefix and repeats as often as you like, so GET /api/orders reaches " +
@@ -568,15 +569,15 @@ public partial class HelpWindow : Window
                 "a space, an embedded colon — is refused the same way: the header could never " +
                 "match, so the rule would be dropped rather than applied."),
         NoteBox("While the app is open, headless runs skip writing results (the app would overwrite them when it closes) — scheduled checks record normally."),
-        NoteBox("certapi grpc is command-line only — there is no window for it. certapi grpc call " +
-                "handles unary, server-streaming, client-streaming, and bidirectional methods, choosing " +
-                "the kind from the service's own definition rather than a flag. It normally learns a " +
-                "service's methods from server reflection, but a server with reflection turned off can " +
-                "still be reached by supplying a compiled descriptor set with --protoset (produced by " +
-                "protoc --descriptor_set_out=... --include_imports). And certapi serve does not proxy " +
-                "gRPC, because HttpListener (what the gateway is built on) is HTTP/1.1-only — certapi " +
-                "grpc reaches the service directly with your certificate instead of going through the " +
-                "gateway."));
+        NoteBox("In the desktop app, open Tools ▾ → gRPC Client… to browse services and invoke calls " +
+                "interactively. On the CLI, certapi grpc call handles unary, server-streaming, " +
+                "client-streaming, and bidirectional methods, choosing the kind from the service's own " +
+                "definition rather than a flag. It normally learns a service's methods from server " +
+                "reflection, but a server with reflection turned off can still be reached by supplying a " +
+                "compiled descriptor set with --protoset (produced by protoc --descriptor_set_out=... " +
+                "--include_imports). And certapi serve does not proxy gRPC, because HttpListener (what " +
+                "the gateway is built on) is HTTP/1.1-only — certapi grpc reaches the service directly " +
+                "with your certificate instead of going through the gateway."));
 
     private UIElement Rendered() => Section("Rendered website",
         P("The Rendered response tab opens the current request's URL as a web page instead of raw text — useful when the target is a site rather than an API."),
@@ -593,6 +594,8 @@ public partial class HelpWindow : Window
         {
             ("Ctrl+Enter / Enter", "Send the request (Enter works in the URL box)"),
             ("Esc", "Cancel an in-flight request"),
+            ("Ctrl+K", "Open Quick Jump (tabs, collections, environments, tools)"),
+            ("Ctrl+F", "Focus the response find box"),
             ("Ctrl+L", "Focus the URL box"),
             ("Ctrl+S", "Save the response to a file"),
             ("Ctrl+H", "Toggle the sidebar"),

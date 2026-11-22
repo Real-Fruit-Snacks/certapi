@@ -67,8 +67,10 @@ PowerShell / Python / C# snippet), plus **Save…**. Use the **pop-out** button 
 - **Request tabs** across the top let you keep several requests open at once (`Ctrl+T` new,
   `Ctrl+W` close). At the right of the tab strip sit **CORS…** ([checking
   CORS](16-Response-Views.md#checking-cors)), **Discover…** ([endpoint
-  discovery](14-Endpoint-Discovery.md)) and **Import ▾** (cURL, OpenAPI, HAR and workspace import and
-  export, and **Trusted certificates…**).
+  discovery](14-Endpoint-Discovery.md)), **Tools ▾** (**Connection Doctor…**, **Benchmark current
+  request…**, **gRPC Client…**, **Inspect selected certificate…**, **Unlock smart-card PIN…**, and
+  **Quick Jump** `Ctrl+K`), and **Import ▾** (cURL, OpenAPI, HAR, `.http`, Postman, Insomnia v4,
+  WSDL, workspace import/export, and **Trusted certificates…**).
 - The **sidebar** (`Ctrl+H`) holds **Collections** (your saved library), **History** (recent
   requests) and **Chains** (saved request sequences). See
   [Collections & History](10-Collections-and-History.md).
