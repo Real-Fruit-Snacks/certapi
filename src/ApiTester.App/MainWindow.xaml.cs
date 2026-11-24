@@ -1819,10 +1819,10 @@ public partial class MainWindow : Window
         catch (Exception ex)
         {
             bool light = ((App)Application.Current).CurrentTheme == "Light";
-            string bg = light ? "#FFFFFF" : "#13151A";
-            string fg = light ? "#C8324C" : "#FF6E7A";
+            string bg = light ? "#F5F7F9" : "#0D0E12";
+            string fg = light ? "#B91C2E" : "#FF5C6C";
             var bytes = Encoding.UTF8.GetBytes(
-                $"<html><body style='font-family:'IBM Plex Mono',Consolas,monospace;background:{bg};color:{fg};padding:24px'>" +
+                $"<html><body style=\"font-family:'Azeret Mono',Consolas,monospace;background:{bg};color:{fg};padding:24px\">" +
                 "<h2>Could not load this resource</h2><pre>" +
                 System.Net.WebUtility.HtmlEncode(ex.Message) + "</pre></body></html>");
             e.Response = environment.CreateWebResourceResponse(

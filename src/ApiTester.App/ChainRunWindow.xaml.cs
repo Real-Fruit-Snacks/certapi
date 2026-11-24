@@ -353,10 +353,10 @@ public partial class ChainRunWindow : Window
     private sealed record VerdictPalette(Brush Pending, Brush Pass, Brush Fail, Brush Skip);
 
     private static readonly VerdictPalette DarkVerdicts = new(
-        Pending: Frozen("#8A8F99"), Pass: Frozen("#3DDC97"), Fail: Frozen("#FF6E7A"), Skip: Frozen("#FFC247"));
+        Pending: Frozen("#8A8F99"), Pass: Frozen("#3DDC97"), Fail: Frozen("#FF5C6C"), Skip: Frozen("#FFC247"));
 
     private static readonly VerdictPalette LightVerdicts = new(
-        Pending: Frozen("#6B6F78"), Pass: Frozen("#167A4E"), Fail: Frozen("#C8324C"), Skip: Frozen("#9A6700"));
+        Pending: Frozen("#535B69"), Pass: Frozen("#127247"), Fail: Frozen("#B91C2E"), Skip: Frozen("#885800"));
 
     private static VerdictPalette Verdicts =>
         string.Equals((Application.Current as App)?.CurrentTheme, "Light", StringComparison.OrdinalIgnoreCase)

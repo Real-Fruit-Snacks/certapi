@@ -40,12 +40,12 @@ DOCS = os.path.dirname(HERE)
 FONTS = os.path.join(DOCS, "fonts")
 ASSETS = os.path.join(DOCS, "assets")
 
-# RFS Nightshift and Dayshift
+# Cyclorama Dawn v2.1.0 (Steel & Beacon Orange + Signal Crimson Fault)
 THEMES = {
-    "dark": dict(bg="#0C0D10", plate="#13151A", line="#262A33", ink="#E8E6E1", mute="#8A8F99",
-                 ember="#FF6A3D", amber="#FFC247", mint="#3DDC97", rasp="#F06292"),
-    "light": dict(bg="#F6F5F2", plate="#FFFFFF", line="#D6D3CB", ink="#1A1B1E", mute="#666A73",
-                  ember="#C03B0A", amber="#925F00", mint="#15794D", rasp="#B0306A"),
+    "dark": dict(bg="#050507", plate="#0C0C10", line="#2A2C35", ink="#F4F5F8", mute="#B3B5C0",
+                 steel="#74B8E8", ember="#F06E2B", amber="#FFC247", mint="#3DDC97", rasp="#FF5C6C"),
+    "light": dict(bg="#F5F7F9", plate="#FFFFFF", line="#D2DAE2", ink="#0D1016", mute="#525B69",
+                  steel="#164669", ember="#BD4811", amber="#885800", mint="#127247", rasp="#B91C2E"),
 }
 
 # --------------------------------------------------------------------------------------------
@@ -165,11 +165,11 @@ def band_path(stage, start_deg):
 
 _fonts = {}
 FACES = {
-    "sans": ("source-sans-3-latin.woff2", {"wght": 600}),
-    "serif": ("source-serif-4-latin.woff2", {"wght": 600, "opsz": 60}),
-    "mono": ("source-code-pro-latin.woff2", {"wght": 500}),
-    "mono4": ("source-code-pro-latin.woff2", {"wght": 400}),
-    "sans4": ("source-sans-3-latin.woff2", {"wght": 400}),
+    "sans": ("albert-sans-latin.woff2", {"wght": 600}),
+    "serif": ("big-shoulders-stencil-latin.woff2", {"wght": 800}),
+    "mono": ("azeret-mono-latin.woff2", {"wght": 500}),
+    "mono4": ("azeret-mono-latin.woff2", {"wght": 400}),
+    "sans4": ("albert-sans-latin.woff2", {"wght": 400}),
 }
 
 
@@ -423,16 +423,17 @@ def readme(theme, still=False):
                     f'<g fill="{c["mute"]}">{g.line("CLIENT CERTIFICATE PRESENTED", x, 298, "sans", 13, 0.14)}</g>'
                     f'<g fill="{c["amber"] if has else c["mute"]}">{g.line(pres, x, 326, "sans4", fit(pres, "sans4", 19))}</g></g>')
         ok = r["code"].startswith("2")
-        answer = f'{r["code"]} {r["reason"]}'
+        answer = f'{r["code"]} {r["reason"]}'.upper()
         note = "HTTP/1.1 · all six stages in %d ms" % r["total"]
         side.append(f'<g class="r-{run}">'
                     f'<g fill="{c["mute"]}">{g.line("THE SERVER ANSWERED", x, 384, "sans", 13, 0.14)}</g>'
-                    f'<g fill="{c["mint"] if ok else c["rasp"]}">{g.line(answer, x, 434, "serif", fit(answer, "serif", 46))}</g>'
-                    f'<g fill="{c["mute"]}">{g.line(note, x, 466, "mono4", fit(note, "mono4", 14.5))}</g></g>')
+                    f'<g fill="{c["mint"] if ok else c["rasp"]}">{g.line(answer, x, 436, "serif", fit(answer, "serif", 52))}</g>'
+                    f'<g fill="{c["mute"]}">{g.line(note, x, 468, "mono4", fit(note, "mono4", 14))}</g></g>')
     side.append(f'<rect x="{x}" y="518" width="{colw}" height="1" fill="{c["line"]}"/>')
-    side.append(f'<g fill="{c["mute"]}">{g.line(RUN_NOTE, x, 548, "mono4", fit(RUN_NOTE, "mono4", 14))}</g>')
+    side.append(f'<g fill="{c["mute"]}">{g.line(RUN_NOTE, x, 548, "mono4", fit(RUN_NOTE, "mono4", 13.5))}</g>')
 
-    defs = ("<defs>" + g.defs() + bands("b-") + "".join(gap_mask(st, f"m-{st}") for st in ORDER) + "</defs>")
+    grad = f'<linearGradient id="horizon" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="{c["steel"]}"/><stop offset="1" stop-color="{c["ember"]}"/></linearGradient>'
+    defs = ("<defs>" + grad + g.defs() + bands("b-") + "".join(gap_mask(st, f"m-{st}") for st in ORDER) + "</defs>")
     if still:
         box = f'{SEAL["x"]} {SEAL["y"]} {800 * SEAL["s"]:.0f} {800 * SEAL["s"]:.0f}'
         o = [f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="{box}" width="800" height="800">', f"<style>{''.join(base)}</style>", defs]
@@ -440,7 +441,8 @@ def readme(theme, still=False):
     else:
         o = [f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {W} {H}" width="{W}" height="{H}" role="img">',
              f"<style>{css_text}</style>", defs,
-             f'<rect x="0.5" y="0.5" width="{W - 1}" height="{H - 1}" rx="20" fill="{c["bg"]}" stroke="{c["line"]}"/>']
+             f'<rect x="0.5" y="0.5" width="{W - 1}" height="{H - 1}" rx="16" fill="{c["bg"]}" stroke="{c["line"]}"/>',
+             f'<rect x="16" y="1" width="{W - 32}" height="3" rx="1.5" fill="url(#horizon)"/>']
         o += seal + side
     o.append("</svg>")
     return "".join(o)

@@ -27,12 +27,12 @@ internal static class SyntaxHighlighter
         SolidColorBrush Punct, SolidColorBrush Default, SolidColorBrush Tag, SolidColorBrush Attr);
 
     private static readonly Palette Dark = new(
-        Key: B("#5CB8FF"), String: B("#3DDC97"), Number: B("#FFC247"), Literal: B("#B78CFF"),
-        Punct: B("#5E636D"), Default: B("#C4C3BE"), Tag: B("#5CB8FF"), Attr: B("#FF6A3D"));
+        Key: B("#74B8E8"), String: B("#3DDC97"), Number: B("#FFC247"), Literal: B("#FF9254"),
+        Punct: B("#676B78"), Default: B("#D6D8E0"), Tag: B("#74B8E8"), Attr: B("#FF9254"));
 
     private static readonly Palette Light = new(
-        Key: B("#0B5FA5"), String: B("#167A4E"), Number: B("#9A6700"), Literal: B("#6D3BD1"),
-        Punct: B("#8E929B"), Default: B("#3A3C42"), Tag: B("#0B5FA5"), Attr: B("#C43F11"));
+        Key: B("#164669"), String: B("#127247"), Number: B("#885800"), Literal: B("#AD3D0A"),
+        Punct: B("#6E7784"), Default: B("#252A34"), Tag: B("#164669"), Attr: B("#AD3D0A"));
 
     private static Palette Current =>
         string.Equals((Application.Current as App)?.CurrentTheme, "Light", StringComparison.OrdinalIgnoreCase)

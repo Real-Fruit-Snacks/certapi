@@ -41,16 +41,16 @@ internal static class NativeTheme
             int useDark = light ? 0 : 1;
             DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, ref useDark, sizeof(int));
 
-            int caption = light ? Rgb(0xff, 0xff, 0xff)  // Bg.Panel
-                                : Rgb(0x13, 0x15, 0x1a);
+            int caption = light ? Rgb(0xff, 0xff, 0xff)  // Bg.Panel (Alabaster Day)
+                                : Rgb(0x05, 0x05, 0x07); // Bg.Window (Beacon Horizon LX 263)
             DwmSetWindowAttribute(hwnd, DWMWA_CAPTION_COLOR, ref caption, sizeof(int));
 
-            int text = light ? Rgb(0x1a, 0x1b, 0x1e)      // Text.Normal
-                             : Rgb(0xe8, 0xe6, 0xe1);
+            int text = light ? Rgb(0x0d, 0x10, 0x16)      // Text.Normal
+                             : Rgb(0xf4, 0xf5, 0xf8);
             DwmSetWindowAttribute(hwnd, DWMWA_TEXT_COLOR, ref text, sizeof(int));
 
-            int border = light ? Rgb(0xd6, 0xd3, 0xcb)    // Border
-                               : Rgb(0x26, 0x2a, 0x33);
+            int border = light ? Rgb(0xd2, 0xda, 0xe2)    // Border
+                               : Rgb(0x2a, 0x2c, 0x35);
             DwmSetWindowAttribute(hwnd, DWMWA_BORDER_COLOR, ref border, sizeof(int));
         }
         catch

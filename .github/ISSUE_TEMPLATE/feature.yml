@@ -1,20 +1,18 @@
-name: Feature
-description: Something it should do and doesn't
-labels: [enhancement]
+name: Feature request
+description: Propose a concrete local-first capability or improvement
+labels: ["enhancement"]
 body:
   - type: textarea
     id: problem
     attributes:
-      label: The problem
-      description: What you are trying to do against which kind of endpoint, and what gets in the way today
+      label: Problem to solve
+      description: Describe the workflow gap and real inputs/outputs involved.
     validations:
       required: true
   - type: textarea
-    id: shape
+    id: proposal
     attributes:
-      label: What it might look like
-      description: A flag, a tab, a command. Optional.
-  - type: textarea
-    id: workaround
-    attributes:
-      label: Current workaround
+      label: Proposed behavior
+      description: Concrete CLI flags, UI controls, or file format you have in mind.
+    validations:
+      required: true

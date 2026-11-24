@@ -4,33 +4,32 @@
                     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
                     mc:Ignorable="po">
 
-    <!-- ============ RFS palette — Nightshift (default) ============
-         Values from Real-Fruit-Snacks/rfs-brand/BRAND.md. Bg.Raised, Border.Strong, Text.Soft and
-         Text.Faint are derived one step from the brand tokens; everything else is verbatim.
-         Accent = Ember (brand, one per screen). Signal = Mint and only ever means "OK".
-         Dayshift overrides every key in Palette.Light.xaml. -->
-    <SolidColorBrush x:Key="Bg.Window"   Color="#0C0D10" po:Freeze="True"/>
-    <SolidColorBrush x:Key="Bg.Panel"    Color="#13151A" po:Freeze="True"/>
-    <SolidColorBrush x:Key="Bg.Input"    Color="#1A1D24" po:Freeze="True"/>
-    <SolidColorBrush x:Key="Bg.Raised"   Color="#22262F" po:Freeze="True"/>
-    <SolidColorBrush x:Key="Border"        Color="#262A33" po:Freeze="True"/>
-    <SolidColorBrush x:Key="Border.Strong" Color="#333945" po:Freeze="True"/>
-    <SolidColorBrush x:Key="Accent"      Color="#FF6A3D" po:Freeze="True"/>
-    <SolidColorBrush x:Key="Accent.Alt"  Color="#FFC247" po:Freeze="True"/>
+    <!-- ============ RFS Cyclorama Dawn v2.1.0 — Beacon Horizon (Dark default) ============
+         Values from Real-Fruit-Snacks/rfs-brand/brand/tokens/rfs.tokens.json.
+         Two chromatic poles: Glacial Steel (#74B8E8) + Maritime Beacon Orange (#F06E2B).
+         Signal = Mint (#3DDC97), Red = Signal Crimson (#FF5C6C). Light overrides in Palette.Light.xaml. -->
+    <SolidColorBrush x:Key="Bg.Window"   Color="#050507" po:Freeze="True"/>
+    <SolidColorBrush x:Key="Bg.Panel"    Color="#0C0C10" po:Freeze="True"/>
+    <SolidColorBrush x:Key="Bg.Input"    Color="#14141A" po:Freeze="True"/>
+    <SolidColorBrush x:Key="Bg.Raised"   Color="#1C1E26" po:Freeze="True"/>
+    <SolidColorBrush x:Key="Border"        Color="#2A2C35" po:Freeze="True"/>
+    <SolidColorBrush x:Key="Border.Strong" Color="#676B78" po:Freeze="True"/>
+    <SolidColorBrush x:Key="Accent"      Color="#F06E2B" po:Freeze="True"/>
+    <SolidColorBrush x:Key="Accent.Alt"  Color="#74B8E8" po:Freeze="True"/>
     <SolidColorBrush x:Key="Warm"        Color="#FFC247" po:Freeze="True"/>
     <SolidColorBrush x:Key="Signal"      Color="#3DDC97" po:Freeze="True"/>
-    <SolidColorBrush x:Key="Text.Normal" Color="#E8E6E1" po:Freeze="True"/>
-    <SolidColorBrush x:Key="Text.Soft"   Color="#C4C3BE" po:Freeze="True"/>
-    <SolidColorBrush x:Key="Text.Muted"  Color="#8A8F99" po:Freeze="True"/>
-    <SolidColorBrush x:Key="Text.Faint"  Color="#5E636D" po:Freeze="True"/>
-    <SolidColorBrush x:Key="Text.OnAccent" Color="#0C0D10" po:Freeze="True"/>
-    <SolidColorBrush x:Key="Red"         Color="#FF6E7A" po:Freeze="True"/>
+    <SolidColorBrush x:Key="Text.Normal" Color="#F4F5F8" po:Freeze="True"/>
+    <SolidColorBrush x:Key="Text.Soft"   Color="#D6D8E0" po:Freeze="True"/>
+    <SolidColorBrush x:Key="Text.Muted"  Color="#B3B5C0" po:Freeze="True"/>
+    <SolidColorBrush x:Key="Text.Faint"  Color="#676B78" po:Freeze="True"/>
+    <SolidColorBrush x:Key="Text.OnAccent" Color="#050507" po:Freeze="True"/>
+    <SolidColorBrush x:Key="Red"         Color="#FF5C6C" po:Freeze="True"/>
     <!-- Accent interaction states + a translucent selection tint. Overridden in Palette.Light.xaml. -->
-    <SolidColorBrush x:Key="Accent.Hover"   Color="#FF8259" po:Freeze="True"/>
-    <SolidColorBrush x:Key="Accent.Pressed" Color="#E85A2E" po:Freeze="True"/>
-    <SolidColorBrush x:Key="Accent.Tint"    Color="#24FF6A3D" po:Freeze="True"/>
+    <SolidColorBrush x:Key="Accent.Hover"   Color="#FF9254" po:Freeze="True"/>
+    <SolidColorBrush x:Key="Accent.Pressed" Color="#BD4811" po:Freeze="True"/>
+    <SolidColorBrush x:Key="Accent.Tint"    Color="#24F06E2B" po:Freeze="True"/>
 
-    <FontFamily x:Key="Mono">IBM Plex Mono, Cascadia Code, Consolas, Courier New</FontFamily>
+    <FontFamily x:Key="Mono">Azeret Mono, Cascadia Mono, Consolas, Courier New</FontFamily>
 
     <!-- ============ Scrollbars (thin, dark) ============ -->
     <Style x:Key="ScrollPage" TargetType="RepeatButton">

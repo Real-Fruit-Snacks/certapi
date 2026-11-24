@@ -4,29 +4,27 @@
                     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
                     mc:Ignorable="po">
 
-    <!-- ============ RFS palette — Dayshift (light) ============ -->
-    <!-- Same keys as Nightshift in TerminalWorkbench.xaml. This dictionary is merged over the base
-         palette at runtime; every palette reference is a DynamicResource, so adding/removing this
-         overlay repaints the whole UI live. Values from BRAND.md; Bg.Input, Border.Strong, Text.Soft
-         and Text.Faint derived one step. Every accent is >= 4.5:1 on white. -->
-    <SolidColorBrush x:Key="Bg.Window"   Color="#F6F5F2" po:Freeze="True"/>
+    <!-- ============ RFS Cyclorama Dawn v2.1.0 — Alabaster Day (Light) ============ -->
+    <!-- Same keys as TerminalWorkbench.xaml. Merged over the base palette at runtime.
+         Every accent is >= 4.5:1 on white. Red = Signal Crimson (#B91C2E). -->
+    <SolidColorBrush x:Key="Bg.Window"   Color="#F5F7F9" po:Freeze="True"/>
     <SolidColorBrush x:Key="Bg.Panel"    Color="#FFFFFF" po:Freeze="True"/>
-    <SolidColorBrush x:Key="Bg.Input"    Color="#FAF9F7" po:Freeze="True"/>
-    <SolidColorBrush x:Key="Bg.Raised"   Color="#ECEAE4" po:Freeze="True"/>
-    <SolidColorBrush x:Key="Border"        Color="#D6D3CB" po:Freeze="True"/>
-    <SolidColorBrush x:Key="Border.Strong" Color="#BDB9AF" po:Freeze="True"/>
-    <SolidColorBrush x:Key="Accent"      Color="#C43F11" po:Freeze="True"/>
-    <SolidColorBrush x:Key="Accent.Alt"  Color="#9A6700" po:Freeze="True"/>
-    <SolidColorBrush x:Key="Warm"        Color="#9A6700" po:Freeze="True"/>
-    <SolidColorBrush x:Key="Signal"      Color="#167A4E" po:Freeze="True"/>
-    <SolidColorBrush x:Key="Text.Normal" Color="#1A1B1E" po:Freeze="True"/>
-    <SolidColorBrush x:Key="Text.Soft"   Color="#3A3C42" po:Freeze="True"/>
-    <SolidColorBrush x:Key="Text.Muted"  Color="#6B6F78" po:Freeze="True"/>
-    <SolidColorBrush x:Key="Text.Faint"  Color="#8E929B" po:Freeze="True"/>
+    <SolidColorBrush x:Key="Bg.Input"    Color="#F5F7F9" po:Freeze="True"/>
+    <SolidColorBrush x:Key="Bg.Raised"   Color="#E9EEF3" po:Freeze="True"/>
+    <SolidColorBrush x:Key="Border"        Color="#D2DAE2" po:Freeze="True"/>
+    <SolidColorBrush x:Key="Border.Strong" Color="#6E7784" po:Freeze="True"/>
+    <SolidColorBrush x:Key="Accent"      Color="#BD4811" po:Freeze="True"/>
+    <SolidColorBrush x:Key="Accent.Alt"  Color="#164669" po:Freeze="True"/>
+    <SolidColorBrush x:Key="Warm"        Color="#885800" po:Freeze="True"/>
+    <SolidColorBrush x:Key="Signal"      Color="#127247" po:Freeze="True"/>
+    <SolidColorBrush x:Key="Text.Normal" Color="#0D1016" po:Freeze="True"/>
+    <SolidColorBrush x:Key="Text.Soft"   Color="#252A34" po:Freeze="True"/>
+    <SolidColorBrush x:Key="Text.Muted"  Color="#525B69" po:Freeze="True"/>
+    <SolidColorBrush x:Key="Text.Faint"  Color="#6E7784" po:Freeze="True"/>
     <SolidColorBrush x:Key="Text.OnAccent" Color="#FFFFFF" po:Freeze="True"/>
-    <SolidColorBrush x:Key="Red"         Color="#C8324C" po:Freeze="True"/>
-    <SolidColorBrush x:Key="Accent.Hover"   Color="#D64D1E" po:Freeze="True"/>
-    <SolidColorBrush x:Key="Accent.Pressed" Color="#A83409" po:Freeze="True"/>
+    <SolidColorBrush x:Key="Red"         Color="#B91C2E" po:Freeze="True"/>
+    <SolidColorBrush x:Key="Accent.Hover"   Color="#9E3B0C" po:Freeze="True"/>
+    <SolidColorBrush x:Key="Accent.Pressed" Color="#832F08" po:Freeze="True"/>
     <SolidColorBrush x:Key="Accent.Tint"    Color="#F7DED3" po:Freeze="True"/>
 
 </ResourceDictionary>

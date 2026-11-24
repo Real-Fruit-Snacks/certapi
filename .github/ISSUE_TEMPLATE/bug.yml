@@ -1,40 +1,34 @@
-name: Bug
-description: Something does not do what the handbook says it does
-labels: [bug]
+name: Bug report
+description: Report a reproducible defect or platform issue
+labels: ["bug"]
 body:
-  - type: input
-    id: version
+  - type: textarea
+    id: summary
     attributes:
-      label: Version
-      description: Output of `certapi --version`, or the app's About panel
-      placeholder: certapi 1.92.3
-    validations:
-      required: true
-  - type: input
-    id: os
-    attributes:
-      label: Windows version
-      placeholder: Windows 11 23H2
+      label: What happened
+      description: Plain description of the input, command or action, and actual output.
     validations:
       required: true
   - type: textarea
-    id: what
+    id: expected
     attributes:
-      label: What happened
-      description: The command or the window and clicks, what you expected, what you got. A redacted `--debug` log helps.
+      label: Expected behavior
+      description: What you expected to happen instead.
     validations:
       required: true
-  - type: dropdown
-    id: path
+  - type: textarea
+    id: repro
     attributes:
-      label: Network path
-      options: [Direct, Corporate proxy, PAC script, TLS interception, SOCKS / SSH jump host, Not sure]
-  - type: checkboxes
-    id: cert
+      label: Reproduction steps
+      placeholder: |
+        1. Run `tool --version`
+        2. Run `tool ...`
+    validations:
+      required: true
+  - type: input
+    id: env
     attributes:
-      label: Certificate
-      options:
-        - label: Windows store, exportable key
-        - label: Windows store, non-exportable or smart card
-        - label: File (.pfx / .pem)
-        - label: No certificate
+      label: OS and version
+      placeholder: "Windows 11 24H2 / Rust 1.84 / tool v1.0.0"
+    validations:
+      required: true
