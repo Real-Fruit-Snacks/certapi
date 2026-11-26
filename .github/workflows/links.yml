@@ -31,7 +31,7 @@ jobs:
             --exclude '\.corp\b' --exclude '\.internal\b' --exclude 'example\.com' --exclude 'localhost'
             --exclude '127\.0\.0\.1' --exclude '\{\{' --exclude '^https://client\.badssl\.com'
             --exclude '^https://github\.com/Real-Fruit-Snacks/certapi/(issues/new|security/advisories/new)'
-            README.md CONTRIBUTING.md SECURITY.md 'wiki/*.md' docs/index.html
+            README.md CONTRIBUTING.md SECURITY.md docs/USAGE.md 'wiki/*.md' docs/index.html
           fail: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -17,3 +17,4 @@ This repository is part of **Real-Fruit-Snacks** (**RFS**) and follows the **Cyc
 - **Scrollbars:** Never extend a vertical scrollbar to the top edge alongside a top header — use `.rfs-shell` + `.rfs-shell-header` + `.rfs-scroll-region`.
 - **Modals & Toasts:** Strictly forbid `window.alert()`, `window.confirm()`, and `window.prompt()`. Use branded native `<dialog class="rfs-dialog">` modals, and always prompt destructive actions (delete/clear/reset/overwrite) with `<dialog class="rfs-dialog is-destructive">`, `autofocus` on **Cancel**, and `.rfs-btn-fault` confirm. Tint toasts by semantic status (`.rfs-toast.is-{ok,warn,fail,info}`).
 - **CLIs:** Respect `NO_COLOR` and non-TTY stdout, keep bracketed ASCII prefixes (`[ok]`, `[!]`, `[x]`, `[i]`), and exit `0` (ok), `1` (runtime), `2` (usage).
+- **README & Docs (`BRAND.md` §14):** Keep `README.md` ultra-minimal (40–60 lines); put deeper guides in `docs/*.md` and `wiki/*.md` (never GitHub Wiki tab).
