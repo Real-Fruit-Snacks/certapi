@@ -6,7 +6,6 @@ usage: python3 docs/tools/make-assets.py [path/to/rfs-brand]
 
 Writes:
   docs/{icon.svg, favicon.ico, icon-192.png, icon-512.png, icon-maskable-512.png, apple-touch-icon.png}
-  docs/assets/{icon.svg, favicon.ico, icon-192.png, icon-512.png, apple-touch-icon.png}
   src/ApiTester.App/icon.ico   (multi-size 16..256px Windows WPF executable & window icon)
 
 Requires: resvg-py, pillow.
@@ -30,8 +29,6 @@ def main():
 
     for name in ("icon.svg", "favicon.ico", "icon-192.png", "icon-512.png", "icon-maskable-512.png", "apple-touch-icon.png"):
         shutil.copy2(os.path.join(web_dir, name), os.path.join(DOCS, name))
-    for name in ("icon.svg", "favicon.ico", "icon-192.png", "icon-512.png", "apple-touch-icon.png"):
-        shutil.copy2(os.path.join(web_dir, name), os.path.join(ASSETS, name))
 
     small_svg = open(os.path.join(mark_dir, "rfs-mark-small-dark.svg"), encoding="utf-8").read()
     large_svg = open(os.path.join(mark_dir, "rfs-mark-dark.svg"), encoding="utf-8").read()

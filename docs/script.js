@@ -22,20 +22,29 @@
     var next = currentTheme() === 'dark' ? 'light' : 'dark';
     var flip = function () {
       applyTheme(next);
-      try { localStorage.setItem('rfs-theme', next); } catch (err) {}
+      try {
+        localStorage.setItem('rfs-theme', next);
+        localStorage.setItem('color-scheme', next);
+      } catch (err) {}
     };
     if (!document.startViewTransition || still.matches) return flip();
-    var x = e.clientX || innerWidth - 40, y = e.clientY || 32;
+    var br = $('theme').getBoundingClientRect();
+    var x = e.clientX || (br.left + br.width / 2);
+    var y = e.clientY || (br.top + br.height / 2);
     var r = Math.hypot(Math.max(x, innerWidth - x), Math.max(y, innerHeight - y));
-    document.startViewTransition(flip).ready.then(function () {
-      root.animate(
+    var vt = document.startViewTransition(flip);
+    var animated = vt.ready.then(function () {
+      return root.animate(
         { clipPath: ['circle(0 at ' + x + 'px ' + y + 'px)', 'circle(' + r + 'px at ' + x + 'px ' + y + 'px)'] },
         { duration: 520, easing: 'cubic-bezier(.2,.7,.2,1)', pseudoElement: '::view-transition-new(root)' }
-      );
+      ).finished;
     });
+    Promise.allSettled([animated, vt.updateCallbackDone, vt.finished]);
   });
   window.addEventListener('storage', function (e) {
-    if (e.key === 'rfs-theme') applyTheme(e.newValue === 'light' || e.newValue === 'dayshift' ? 'light' : 'dark');
+    if (e.key === 'rfs-theme' || e.key === 'color-scheme') {
+      applyTheme(e.newValue === 'light' || e.newValue === 'dayshift' ? 'light' : 'dark');
+    }
   });
   applyTheme(currentTheme());
 
@@ -85,6 +94,21 @@
   }
 
   // ---- copy buttons ----
+  function fallbackCopy(text) {
+    try {
+      var ta = document.createElement('textarea');
+      ta.value = text;
+      ta.setAttribute('readonly', '');
+      ta.style.cssText = 'position:fixed;left:-9999px;top:0;opacity:0;';
+      document.body.appendChild(ta);
+      ta.select();
+      var ok = document.execCommand('copy');
+      ta.remove();
+      return ok;
+    } catch (err) {
+      return false;
+    }
+  }
   document.querySelectorAll('.copy').forEach(function (b) {
     var label = b.textContent;
     b.addEventListener('click', function () {
@@ -94,8 +118,11 @@
         clearTimeout(b._t);
         b._t = setTimeout(function () { b.textContent = label; }, 1800);
       };
-      if (navigator.clipboard) navigator.clipboard.writeText(b.dataset.copy).then(function () { done(true); }, function () { done(false); });
-      else done(false);
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(b.dataset.copy).then(function () { done(true); }, function () { done(fallbackCopy(b.dataset.copy)); });
+      } else {
+        done(fallbackCopy(b.dataset.copy));
+      }
     });
   });
 

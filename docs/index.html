@@ -24,7 +24,7 @@
 <script>
   (function () {
     try {
-      var t = localStorage.getItem('rfs-theme');
+      var t = localStorage.getItem('rfs-theme') || localStorage.getItem('color-scheme');
       if (t === 'light' || t === 'dayshift') {
         document.documentElement.dataset.theme = 'light';
         var cs = document.querySelector('meta[name="color-scheme"]');
@@ -72,7 +72,7 @@
 <section class="hero" aria-labelledby="hero-h">
   <div class="wrap hero-grid">
     <div class="hero-text">
-      <span class="rfs-badge"><span class="k">[c# / .net]</span> Windows certificate store · mTLS</span>
+      <span class="rfs-badge b-steel"><span class="k">[c# / .net]</span> Windows certificate store · mTLS</span>
       <h1 id="hero-h">SEND REQUESTS WITH THE CLIENT CERTIFICATE ALREADY IN YOUR WINDOWS&nbsp;STORE</h1>
       <div class="horizon-rule" aria-hidden="true"></div>
       <p class="sub">Some internal APIs don't take a password; they ask for a certificate. certapi picks yours from <code>CurrentUser\My</code> or <code>LocalMachine\My</code> and lets Windows sign the TLS handshake, so the private key never leaves the store and never has to be exportable. A <code>.pfx</code> or <code>.pem</code> file works too.</p>
@@ -95,10 +95,10 @@
     <div class="install" id="install">
       <div class="rfs-code-card">
         <div class="rfs-code-head">
-          <span class="rfs-code-lang"><span class="k">[powershell]</span> Portable install · no admin rights</span>
+          <span class="rfs-badge b-steel"><span class="k">[powershell]</span> Portable install · no admin rights</span>
           <button class="rfs-btn rfs-btn-horizon rfs-btn-sm copy" type="button" data-copy="mkdir &quot;$env:LOCALAPPDATA\certapi&quot; -Force; cd &quot;$env:LOCALAPPDATA\certapi&quot;&#10;curl.exe -LO https://github.com/Real-Fruit-Snacks/certapi/releases/latest/download/certapi.exe&#10;curl.exe -LO https://github.com/Real-Fruit-Snacks/certapi/releases/latest/download/ApiTester.App.exe">Copy</button>
         </div>
-        <pre><code><span class="rfs-tok-fn">mkdir</span> <span class="rfs-tok-str">"$env:LOCALAPPDATA\certapi"</span> <span class="rfs-tok-kw">-Force</span>; <span class="rfs-tok-fn">cd</span> <span class="rfs-tok-str">"$env:LOCALAPPDATA\certapi"</span>
+        <pre class="rfs-code-block"><code><span class="rfs-tok-fn">mkdir</span> <span class="rfs-tok-str">"$env:LOCALAPPDATA\certapi"</span> <span class="rfs-tok-kw">-Force</span>; <span class="rfs-tok-fn">cd</span> <span class="rfs-tok-str">"$env:LOCALAPPDATA\certapi"</span>
 <span class="rfs-tok-fn">curl.exe</span> <span class="rfs-tok-kw">-LO</span> <span class="rfs-tok-str">https://github.com/Real-Fruit-Snacks/certapi/releases/latest/download/certapi.exe</span>
 <span class="rfs-tok-fn">curl.exe</span> <span class="rfs-tok-kw">-LO</span> <span class="rfs-tok-str">https://github.com/Real-Fruit-Snacks/certapi/releases/latest/download/ApiTester.App.exe</span></code></pre>
       </div>
@@ -110,7 +110,7 @@
 <section id="why" class="why" aria-labelledby="why-h">
   <div class="wrap">
     <div>
-      <span class="rfs-badge"><span class="k">[mtls]</span> Zero key export</span>
+      <span class="rfs-badge b-beacon"><span class="k">[mtls]</span> Zero key export</span>
       <h2 id="why-h">SOME ENDPOINTS DON'T TAKE A PASSWORD</h2>
     </div>
     <div>
@@ -122,13 +122,13 @@
 
 <section id="doctor" class="doctor" aria-labelledby="doctor-h">
   <div class="wrap">
-    <span class="rfs-badge"><span class="k">[doctor]</span> Stage-by-stage trace</span>
+    <span class="rfs-badge b-steel"><span class="k">[doctor]</span> Stage-by-stage trace</span>
     <h2 id="doctor-h">WHICH CERTIFICATE DOES THIS SERVER WANT?</h2>
     <p class="lede"><code>certapi doctor</code> connects one stage at a time and names the stage that broke. At the TLS stage it reads the authorities the server will accept client certificates from, and checks them against every certificate in your store. This is the run the seal draws, exactly as certapi printed it.</p>
     <div class="transcript">
       <div class="rfs-code-card">
-        <div class="rfs-code-head"><span class="rfs-code-lang"><span class="k">[shell]</span> certapi doctor · recorded output</span></div>
-        <pre class="out"><code><span class="cmdline">PS&gt; certapi doctor https://client.badssl.com/ --cert-file badssl.com-client.p12 --cert-password badssl.com</span>
+        <div class="rfs-code-head"><span class="rfs-badge b-steel"><span class="k">[shell]</span> certapi doctor · recorded output</span></div>
+        <pre class="rfs-code-block out"><code><span class="cmdline">PS&gt; certapi doctor https://client.badssl.com/ --cert-file badssl.com-client.p12 --cert-password badssl.com</span>
 certapi doctor · https://client.badssl.com/
 
   [<b class="ok">ok</b>  ] url      https://client.badssl.com:443/  (5 ms)
@@ -166,14 +166,14 @@ All stages passed in 643 ms.</code></pre>
 
 <section id="headless" class="headless" aria-labelledby="headless-h">
   <div class="wrap">
-    <span class="rfs-badge"><span class="k">[cli]</span> Headless runner</span>
+    <span class="rfs-badge b-steel"><span class="k">[cli]</span> Headless runner</span>
     <h2 id="headless-h">CERTAPI ON THE COMMAND LINE</h2>
     <div class="split">
       <div>
         <p class="lede">The status line goes to stderr and the body to stdout, so a script can pipe one and read the other. Exit codes: 0 success, 1 failure, 2 usage, 3 data.</p>
         <div class="rfs-code-card">
-          <div class="rfs-code-head"><span class="rfs-code-lang"><span class="k">[shell]</span> send</span></div>
-          <pre class="out"><code><span class="cmdline">PS&gt; certapi send https://client.badssl.com/</span>
+          <div class="rfs-code-head"><span class="rfs-badge b-steel"><span class="k">[shell]</span> send</span></div>
+          <pre class="rfs-code-block out"><code><span class="cmdline">PS&gt; certapi send https://client.badssl.com/</span>
 <b class="refused">400 Bad Request</b> · 262 B · 680 ms · TLS 1.2
 &lt;title&gt;400 No required SSL certificate was sent&lt;/title&gt; …
 
@@ -185,10 +185,10 @@ All stages passed in 643 ms.</code></pre>
       <div>
         <div class="rfs-code-card">
           <div class="rfs-code-head">
-            <span class="rfs-code-lang"><span class="k">[powershell]</span> Common commands</span>
+            <span class="rfs-badge b-steel"><span class="k">[powershell]</span> Common commands</span>
             <button class="rfs-btn rfs-btn-outline rfs-btn-sm copy" type="button" data-copy='certapi send https://internal.corp/api/orders --cert "CN=matt"'>Copy</button>
           </div>
-          <pre class="sheet"><code><span class="rfs-tok-com"># one request, certificate from the store</span>
+          <pre class="rfs-code-block sheet"><code><span class="rfs-tok-com"># one request, certificate from the store</span>
 <span class="rfs-tok-fn">certapi</span> send https://internal.corp/api/orders <span class="rfs-tok-kw">--cert</span> <span class="rfs-tok-str">"CN=matt"</span>
 <span class="rfs-tok-com"># log in, capture the token, reuse it</span>
 <span class="rfs-tok-fn">certapi</span> send https://internal.corp/auth <span class="rfs-tok-kw">--capture</span> token=access_token <span class="rfs-tok-kw">--workspace</span> team.json
@@ -228,13 +228,13 @@ All stages passed in 643 ms.</code></pre>
 <section id="gateway" class="gateway" aria-labelledby="gateway-h">
   <div class="wrap split">
     <div>
-      <span class="rfs-badge"><span class="k">[serve]</span> Local loopback proxy</span>
+      <span class="rfs-badge b-beacon"><span class="k">[serve]</span> Local loopback proxy</span>
       <h2 id="gateway-h">FOR AN APP THAT CAN'T PRESENT A CERTIFICATE</h2>
       <p><code>certapi serve</code> is a local gateway that adds your certificate on the way out. Point the app at the port. It fronts one site or many: named sites, a certificate and settings per site, one origin each with <code>--vhost</code>, logins across hosts with <code>--browser</code>, a whole gateway kept in a profile. <code>--check</code> prints the table without binding anything. Requests to hosts you didn't allow are refused.</p>
     </div>
     <div class="rfs-code-card">
-      <div class="rfs-code-head"><span class="rfs-code-lang"><span class="k">[shell]</span> certapi serve</span></div>
-      <pre class="out"><code><span class="cmdline">PS&gt; certapi serve --port 8819 --cert-file badssl.com-client.p12 --cert-password badssl.com --upstream badssl=https://client.badssl.com</span>
+      <div class="rfs-code-head"><span class="rfs-badge b-steel"><span class="k">[shell]</span> certapi serve</span></div>
+      <pre class="rfs-code-block out"><code><span class="cmdline">PS&gt; certapi serve --port 8819 --cert-file badssl.com-client.p12 --cert-password badssl.com --upstream badssl=https://client.badssl.com</span>
 listening on http://127.0.0.1:8819/
   SITE    OPEN                           UPSTREAM                   CERT                       SETTINGS
   badssl  http://127.0.0.1:8819/badssl/  https://client.badssl.com  BadSSL Client Certificate  -
@@ -249,7 +249,7 @@ GET    /badssl/  -&gt; <b class="ok">200</b>  4787 ms
 
 <section id="whats-in-it" class="contents" aria-labelledby="contents-h">
   <div class="wrap">
-    <span class="rfs-badge"><span class="k">[engine]</span> Shared core</span>
+    <span class="rfs-badge b-steel"><span class="k">[engine]</span> Shared core</span>
     <h2 id="contents-h">ONE ENGINE, TWO FRONT ENDS</h2>
     <p class="lede">The desktop app and <code>certapi</code> share one engine, one request model and one workspace on disk, so a request built in the window runs from a script.</p>
     <dl class="fields">
@@ -266,7 +266,7 @@ GET    /badssl/  -&gt; <b class="ok">200</b>  4787 ms
 
 <section id="screens" class="screens" aria-labelledby="screens-h">
   <div class="wrap">
-    <span class="rfs-badge"><span class="k">[wpf]</span> Windows desktop</span>
+    <span class="rfs-badge b-steel"><span class="k">[wpf]</span> Windows desktop</span>
     <h2 id="screens-h">THE DESKTOP APP</h2>
     <figure class="shot">
       <img src="assets/screenshot.png" width="1180" height="780" alt="certapi desktop app: a GET to /api/orders on a local mock server, the Pretty response view showing the JSON it echoed back, and 200 OK, 249 bytes, 5 ms in the status bar" loading="lazy">
@@ -278,7 +278,7 @@ GET    /badssl/  -&gt; <b class="ok">200</b>  4787 ms
 <section id="tested" class="tested" aria-labelledby="tested-h">
   <div class="wrap split">
     <div>
-      <span class="rfs-badge"><span class="k">[ok]</span> Verification</span>
+      <span class="rfs-badge b-ok"><span class="k">[ok]</span> Verification</span>
       <h2 id="tested-h">TESTED ON</h2>
       <ul class="plain">
         <li>Windows 11 23H2 · .NET 10 SDK 10.0.404 or later</li>
@@ -288,7 +288,7 @@ GET    /badssl/  -&gt; <b class="ok">200</b>  4787 ms
       </ul>
     </div>
     <div>
-      <span class="rfs-badge"><span class="k">[!]</span> Limits</span>
+      <span class="rfs-badge b-warn"><span class="k">[!]</span> Limits</span>
       <h2>KNOWN ISSUES</h2>
       <ul class="plain">
         <li>The Rendered view and <code>certapi browse</code> need the Edge WebView2 runtime. Windows 10 and 11 ship it; without it that tab says so and the rest works.</li>
@@ -302,7 +302,7 @@ GET    /badssl/  -&gt; <b class="ok">200</b>  4787 ms
         <li>A proxy that itself requires a client certificate is not supported.</li>
         <li><code>--pac</code> and <code>--cert-pin</code> are Windows-only; <code>--sni</code> works on direct connections only.</li>
       </ul>
-      <p class="more">The full list is in the <a href="https://github.com/Real-Fruit-Snacks/certapi#known-issues">README</a>.</p>
+      <p class="more">The full list is in the <a href="https://github.com/Real-Fruit-Snacks/certapi/blob/main/docs/USAGE.md#known-issues">usage guide</a>.</p>
     </div>
   </div>
 </section>
@@ -310,7 +310,7 @@ GET    /badssl/  -&gt; <b class="ok">200</b>  4787 ms
 <section id="keys" class="keys" aria-labelledby="keys-h">
   <div class="wrap split">
     <div>
-      <span class="rfs-badge"><span class="k">[keys]</span> Desktop bindings</span>
+      <span class="rfs-badge b-beacon"><span class="k">[keys]</span> Desktop bindings</span>
       <h2 id="keys-h">SHORTCUTS IN THE APP</h2>
     </div>
     <table>
@@ -331,7 +331,7 @@ GET    /badssl/  -&gt; <b class="ok">200</b>  4787 ms
 
 <footer>
   <div class="wrap footer-inner">
-    <p><a href="https://github.com/Real-Fruit-Snacks/certapi">Source</a> · <a href="https://github.com/Real-Fruit-Snacks/certapi/blob/main/wiki/README.md">Handbook</a> · <a href="https://github.com/Real-Fruit-Snacks/certapi/blob/main/CHANGELOG.md">Changelog</a> · <a href="https://github.com/Real-Fruit-Snacks/certapi/blob/main/SECURITY.md">Security</a> · <a href="https://real-fruit-snacks.github.io/rfs-brand/">rfs-brand</a> · MIT</p>
+    <p><a href="https://github.com/Real-Fruit-Snacks/certapi">Source</a> · <a href="https://github.com/Real-Fruit-Snacks/certapi/blob/main/docs/USAGE.md">Usage</a> · <a href="https://github.com/Real-Fruit-Snacks/certapi/blob/main/wiki/README.md">Handbook</a> · <a href="https://github.com/Real-Fruit-Snacks/certapi/blob/main/CHANGELOG.md">Changelog</a> · <a href="https://github.com/Real-Fruit-Snacks/certapi/blob/main/SECURITY.md">Security</a> · <a href="https://real-fruit-snacks.github.io/rfs-brand/">rfs-brand</a> · MIT</p>
     <p>A <a href="https://real-fruit-snacks.github.io/">Real-Fruit-Snacks</a> tool · Set in Big Shoulders Stencil, Albert Sans, and Azeret Mono.</p>
   </div>
 </footer>
