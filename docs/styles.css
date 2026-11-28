@@ -58,7 +58,7 @@
 
 /* ---------- base reset ---------- */
 *, *::before, *::after { box-sizing: border-box; }
-html { height: 100%; overflow: hidden; background: var(--rfs-bg); -webkit-text-size-adjust: 100%; }
+html { height: 100%; overflow: hidden; overflow: clip; background: var(--rfs-bg); -webkit-text-size-adjust: 100%; }
 body {
   margin: 0; padding: 0;
   background: var(--rfs-bg); color: var(--rfs-text);
